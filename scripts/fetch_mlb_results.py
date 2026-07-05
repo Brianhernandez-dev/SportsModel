@@ -46,6 +46,7 @@ for day in daterange(START_DATE, END_DATE):
             if status != "Final":
                 continue
 
+            mlb_game_id = game.get("gamePk")
             home_team = game["teams"]["home"]["team"]["name"]
             away_team = game["teams"]["away"]["team"]["name"]
             home_score = game["teams"]["home"].get("score")
@@ -57,27 +58,29 @@ for day in daterange(START_DATE, END_DATE):
             home_win = home_score > away_score
 
             cur.execute(
-                """
+             """
                 INSERT INTO historical_games (
-                    game_date,
-                    home_team,
-                    away_team,
-                    home_score,
-                    away_score,
-                    home_win
-                )
-                VALUES (%s, %s, %s, %s, %s, %s);
-                """,
+                mlb_game_id,
+                game_date,
+                home_team,
+                away_team,
+                home_score,
+                away_score,
+                home_win
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (mlb_game_id) DO NOTHING;
+            """,
                 (
-                    day,
-                    home_team,
-                    away_team,
-                    home_score,
-                    away_score,
-                    home_win,
+                mlb_game_id,
+                day,
+                home_team,
+                away_team,
+                home_score,
+                away_score,
+                home_win,
                 ),
             )
-
             inserted += 1
 
 conn.commit()

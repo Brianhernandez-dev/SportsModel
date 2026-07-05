@@ -32,26 +32,14 @@ def main():
     print(f"Total historical games: {total_games}")
 
     cur.execute("""
-        SELECT game_date, away_team, home_team, away_score, home_score
+        SELECT mlb_game_id, COUNT(*)
         FROM historical_games
-        ORDER BY game_date DESC
-        LIMIT 10;
-    """)
-    rows = cur.fetchall()
-
-    print("\nMost recent 10 historical games:")
-    for row in rows:
-        print(row)
-
-    cur.execute("""
-        SELECT game_date, away_team, home_team, COUNT(*)
-        FROM historical_games
-        GROUP BY game_date, away_team, home_team
+        GROUP BY mlb_game_id
         HAVING COUNT(*) > 1;
     """)
     duplicates = cur.fetchall()
 
-    print(f"\nDuplicate historical games found: {len(duplicates)}")
+    print(f"\nDuplicate MLB game IDs found: {len(duplicates)}")
 
     if duplicates:
         for dup in duplicates[:20]:
@@ -65,7 +53,7 @@ def main():
            OR home_team IS NULL
            OR away_team IS NULL
            OR game_date IS NULL;
-    """)
+                """)
     bad_rows = cur.fetchone()[0]
 
     print(f"Rows with missing critical data: {bad_rows}")
