@@ -1,8 +1,9 @@
 import os
-import requests
-import psycopg2
-from dotenv import load_dotenv
 from datetime import datetime, timezone
+
+import psycopg2
+import requests
+from dotenv import load_dotenv
 
 load_dotenv()
 
@@ -21,109 +22,112 @@ REGIONS = "us"
 MARKETS = "h2h,totals"
 ODDS_FORMAT = "american"
 
-url = f"https://api.the-odds-api.com/v4/sports/{SPORT}/odds"
 
-params = {
-    "apiKey": API_KEY,
-    "regions": REGIONS,
-    "markets": MARKETS,
-    "oddsFormat": ODDS_FORMAT,
-}
+def main():
+    url = f"https://api.the-odds-api.com/v4/sports/{SPORT}/odds"
 
-response = requests.get(url, params=params, timeout=30)
+    params = {
+        "apiKey": API_KEY,
+        "regions": REGIONS,
+        "markets": MARKETS,
+        "oddsFormat": ODDS_FORMAT,
+    }
 
-print("Status Code:", response.status_code)
-print("Remaining Requests:", response.headers.get("x-requests-remaining"))
-print("Used Requests:", response.headers.get("x-requests-used"))
+    response = requests.get(url, params=params, timeout=30)
 
-if response.status_code != 200:
-    print(response.text)
-    raise SystemExit("API request failed.")
+    print("Status Code:", response.status_code)
+    print("Remaining Requests:", response.headers.get("x-requests-remaining"))
+    print("Used Requests:", response.headers.get("x-requests-used"))
 
-games = response.json()
-print(f"Games returned: {len(games)}")
+    if response.status_code != 200:
+        print(response.text)
+        raise SystemExit("API request failed.")
 
-conn = psycopg2.connect(**DB_CONFIG)
-cur = conn.cursor()
+    games = response.json()
+    print(f"Games returned: {len(games)}")
 
-snapshot_time = datetime.now(timezone.utc)
+    conn = psycopg2.connect(**DB_CONFIG)
+    cur = conn.cursor()
 
-for game in games:
-    commence_time = game.get("commence_time")
-    home_team = game.get("home_team")
-    away_team = game.get("away_team")
+    snapshot_time = datetime.now(timezone.utc)
 
-    cur.execute(
-        """
-        INSERT INTO teams (team_name)
-        VALUES (%s)
-        ON CONFLICT (team_name) DO NOTHING;
-        """,
-        (home_team,),
-    )
-
-    cur.execute(
-        """
-        INSERT INTO teams (team_name)
-        VALUES (%s)
-        ON CONFLICT (team_name) DO NOTHING;
-        """,
-        (away_team,),
-    )
-
-    cur.execute("SELECT team_id FROM teams WHERE team_name = %s;", (home_team,))
-    home_team_id = cur.fetchone()[0]
-
-    cur.execute("SELECT team_id FROM teams WHERE team_name = %s;", (away_team,))
-    away_team_id = cur.fetchone()[0]
-
-cur.execute(
-    """
-    INSERT INTO games (game_date, home_team_id, away_team_id)
-    VALUES (%s, %s, %s)
-    ON CONFLICT (game_date, home_team_id, away_team_id)
-    DO NOTHING
-    RETURNING game_id;
-    """,
-    (commence_time, home_team_id, away_team_id),
-)
-
-result = cur.fetchone()
-
-if result:
-    game_id = result[0]
-else:
-    cur.execute(
-        """
-        SELECT game_id
-        FROM games
-        WHERE game_date = %s
-          AND home_team_id = %s
-          AND away_team_id = %s;
-        """,
-        (commence_time, home_team_id, away_team_id),
-    )
-    game_id = cur.fetchone()[0]
-
-    for bookmaker in game.get("bookmakers", []):
-        book_name = bookmaker.get("title")
+    for game in games:
+        odds_api_event_id = game.get("id")
+        commence_time = game.get("commence_time")
+        home_team = game.get("home_team")
+        away_team = game.get("away_team")
 
         cur.execute(
             """
-            INSERT INTO sportsbooks (name)
+            INSERT INTO teams (team_name)
             VALUES (%s)
-            ON CONFLICT (name) DO NOTHING;
+            ON CONFLICT (team_name) DO NOTHING;
             """,
-            (book_name,),
+            (home_team,),
         )
 
-        cur.execute("SELECT sportsbook_id FROM sportsbooks WHERE name = %s;", (book_name,))
-        sportsbook_id = cur.fetchone()[0]
+        cur.execute(
+            """
+            INSERT INTO teams (team_name)
+            VALUES (%s)
+            ON CONFLICT (team_name) DO NOTHING;
+            """,
+            (away_team,),
+        )
 
-        for market in bookmaker.get("markets", []):
-            market_type = market.get("key")
+        cur.execute("SELECT team_id FROM teams WHERE team_name = %s;", (home_team,))
+        home_team_id = cur.fetchone()[0]
 
-            if market_type == "h2h":
+        cur.execute("SELECT team_id FROM teams WHERE team_name = %s;", (away_team,))
+        away_team_id = cur.fetchone()[0]
+
+        cur.execute(
+            """
+            INSERT INTO games (
+                odds_api_event_id,
+                game_date,
+                home_team_id,
+                away_team_id
+            )
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (odds_api_event_id)
+            DO UPDATE SET
+                game_date = EXCLUDED.game_date,
+                home_team_id = EXCLUDED.home_team_id,
+                away_team_id = EXCLUDED.away_team_id
+            RETURNING game_id;
+            """,
+            (
+                odds_api_event_id,
+                commence_time,
+                home_team_id,
+                away_team_id,
+            ),
+        )
+
+        game_id = cur.fetchone()[0]
+
+        for bookmaker in game.get("bookmakers", []):
+            book_name = bookmaker.get("title")
+
+            cur.execute(
+                """
+                INSERT INTO sportsbooks (name)
+                VALUES (%s)
+                ON CONFLICT (name) DO NOTHING;
+                """,
+                (book_name,),
+            )
+
+            cur.execute("SELECT sportsbook_id FROM sportsbooks WHERE name = %s;", (book_name,))
+            sportsbook_id = cur.fetchone()[0]
+
+            for market in bookmaker.get("markets", []):
+                market_type = market.get("key")
+
+                if market_type != "h2h":
+                    continue
+
                 home_price = None
                 away_price = None
 
@@ -135,15 +139,32 @@ else:
 
                 cur.execute(
                     """
-                    INSERT INTO odds_snapshots
-                    (game_id, sportsbook_id, market_type, home_price, away_price, snapshot_time)
+                    INSERT INTO odds_snapshots (
+                        game_id,
+                        sportsbook_id,
+                        market_type,
+                        home_price,
+                        away_price,
+                        snapshot_time
+                    )
                     VALUES (%s, %s, %s, %s, %s, %s);
                     """,
-                    (game_id, sportsbook_id, market_type, home_price, away_price, snapshot_time),
+                    (
+                        game_id,
+                        sportsbook_id,
+                        market_type,
+                        home_price,
+                        away_price,
+                        snapshot_time,
+                    ),
                 )
 
-conn.commit()
-cur.close()
-conn.close()
+    conn.commit()
+    cur.close()
+    conn.close()
 
-print("MLB odds inserted successfully.")
+    print("MLB odds inserted successfully.")
+
+
+if __name__ == "__main__":
+    main()
