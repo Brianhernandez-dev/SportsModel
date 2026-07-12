@@ -6,3 +6,7 @@ from .consensus_market import (
     ConsensusMarket,
     ConsensusSelection,
 )
+from .expected_value import (
+    ExpectedValueMarket,
+    ExpectedValueSelection,
+)
