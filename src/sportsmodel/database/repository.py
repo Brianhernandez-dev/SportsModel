@@ -1,5 +1,5 @@
 from sportsmodel.database.connection import get_connection
-from sportsmodel.models import MarketSnapshot
+from sportsmodel.models import GameResult, MarketSnapshot
 
 
 def get_market_snapshots(
@@ -71,6 +71,49 @@ def get_market_snapshots(
                 line_value=row[5],
                 price=row[6],
                 snapshot_time=row[7],
+            )
+            for row in rows
+        ]
+
+    finally:
+        connection.close()
+
+def get_game_results() -> list[GameResult]:
+    """
+    Return final scores linked to canonical games.
+
+    Only complete historical results with both scores are returned.
+    """
+
+    query = """
+        SELECT
+            g.game_id,
+            hg.home_team,
+            hg.away_team,
+            hg.home_score,
+            hg.away_score
+        FROM games g
+        JOIN historical_games hg
+            ON hg.historical_game_id = g.historical_game_id
+        WHERE hg.home_score IS NOT NULL
+          AND hg.away_score IS NOT NULL
+        ORDER BY g.game_id;
+    """
+
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(query)
+            rows = cursor.fetchall()
+
+        return [
+            GameResult(
+                game_id=row[0],
+                home_team=row[1],
+                away_team=row[2],
+                home_score=row[3],
+                away_score=row[4],
             )
             for row in rows
         ]
