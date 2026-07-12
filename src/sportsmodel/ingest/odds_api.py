@@ -8,7 +8,7 @@ from sportsmodel.database.connection import get_connection
 
 SPORT = "baseball_mlb"
 REGIONS = "us"
-MARKETS = "h2h,totals"
+MARKETS = "h2h,spreads,totals"
 ODDS_FORMAT = "american"
 SOURCE_NAME = "odds_api"
 
@@ -68,12 +68,7 @@ def get_or_create_game(
     home_team_id,
     away_team_id,
 ):
-    """
-    Return the canonical game_id for an Odds API event.
-
-    First check game_sources for an existing provider mapping. If no mapping
-    exists, look for a matching canonical game before creating a new one.
-    """
+    """Return the canonical game ID for an Odds API event."""
 
     cursor.execute(
         """
@@ -96,9 +91,14 @@ def get_or_create_game(
         FROM games
         WHERE game_date = %s
           AND home_team_id = %s
-          AND away_team_id = %s;
+          AND away_team_id = %s
+        LIMIT 1;
         """,
-        (commence_time, home_team_id, away_team_id),
+        (
+            commence_time,
+            home_team_id,
+            away_team_id,
+        ),
     )
 
     existing_game = cursor.fetchone()
@@ -116,7 +116,11 @@ def get_or_create_game(
             VALUES (%s, %s, %s)
             RETURNING game_id;
             """,
-            (commence_time, home_team_id, away_team_id),
+            (
+                commence_time,
+                home_team_id,
+                away_team_id,
+            ),
         )
 
         game_id = cursor.fetchone()[0]
@@ -131,14 +135,57 @@ def get_or_create_game(
         VALUES (%s, %s, %s)
         ON CONFLICT (source_name, external_game_id) DO NOTHING;
         """,
-        (game_id, SOURCE_NAME, external_game_id),
+        (
+            game_id,
+            SOURCE_NAME,
+            external_game_id,
+        ),
     )
 
     return game_id
 
 
+def save_market_selection(
+    cursor,
+    game_id,
+    sportsbook_id,
+    market_type,
+    selection_name,
+    line_value,
+    price,
+    snapshot_time,
+):
+    """Store one sportsbook market selection snapshot."""
+
+    cursor.execute(
+        """
+        INSERT INTO odds_market_snapshots (
+            game_id,
+            sportsbook_id,
+            market_type,
+            selection_name,
+            line_value,
+            price,
+            snapshot_time,
+            source_name
+        )
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s);
+        """,
+        (
+            game_id,
+            sportsbook_id,
+            market_type,
+            selection_name,
+            line_value,
+            price,
+            snapshot_time,
+            SOURCE_NAME,
+        ),
+    )
+
+
 def fetch_live_odds():
-    """Fetch current MLB odds and store moneyline snapshots."""
+    """Fetch current MLB moneyline, spread, and total odds."""
 
     api_key = os.getenv("ODDS_API_KEY")
 
@@ -172,7 +219,10 @@ def fetch_live_odds():
 
     games = response.json()
     snapshot_time = datetime.now(timezone.utc)
-    snapshots_inserted = 0
+
+    games_processed = 0
+    selections_inserted = 0
+    selections_skipped = 0
 
     print(f"Games returned: {len(games)}")
 
@@ -208,6 +258,8 @@ def fetch_live_odds():
                         away_team_id=away_team_id,
                     )
 
+                    games_processed += 1
+
                     for bookmaker in game.get("bookmakers", []):
                         sportsbook_name = bookmaker.get("title")
 
@@ -220,46 +272,43 @@ def fetch_live_odds():
                         )
 
                         for market in bookmaker.get("markets", []):
-                            if market.get("key") != "h2h":
-                                continue
+                            market_type = market.get("key")
 
-                            home_price = None
-                            away_price = None
+                            if market_type not in {
+                                "h2h",
+                                "spreads",
+                                "totals",
+                            }:
+                                continue
 
                             for outcome in market.get("outcomes", []):
-                                if outcome.get("name") == home_team:
-                                    home_price = outcome.get("price")
-                                elif outcome.get("name") == away_team:
-                                    away_price = outcome.get("price")
+                                selection_name = outcome.get("name")
+                                price = outcome.get("price")
+                                line_value = outcome.get("point")
 
-                            if home_price is None or away_price is None:
-                                continue
+                                if (
+                                    not selection_name
+                                    or price is None
+                                ):
+                                    selections_skipped += 1
+                                    continue
 
-                            cursor.execute(
-                                """
-                                INSERT INTO odds_snapshots (
-                                    game_id,
-                                    sportsbook_id,
-                                    market_type,
-                                    home_price,
-                                    away_price,
-                                    snapshot_time
+                                save_market_selection(
+                                    cursor=cursor,
+                                    game_id=game_id,
+                                    sportsbook_id=sportsbook_id,
+                                    market_type=market_type,
+                                    selection_name=selection_name,
+                                    line_value=line_value,
+                                    price=price,
+                                    snapshot_time=snapshot_time,
                                 )
-                                VALUES (%s, %s, %s, %s, %s, %s);
-                                """,
-                                (
-                                    game_id,
-                                    sportsbook_id,
-                                    "h2h",
-                                    home_price,
-                                    away_price,
-                                    snapshot_time,
-                                ),
-                            )
 
-                            snapshots_inserted += 1
+                                selections_inserted += 1
 
     finally:
         connection.close()
 
-    print(f"Moneyline snapshots inserted: {snapshots_inserted}")
+    print(f"Games processed: {games_processed}")
+    print(f"Market selections inserted: {selections_inserted}")
+    print(f"Selections skipped: {selections_skipped}")
