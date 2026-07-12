@@ -1,5 +1,3 @@
-BEGIN;
-
 CREATE TABLE odds_ingestion_runs (
     odds_ingestion_run_id BIGSERIAL PRIMARY KEY,
     sport VARCHAR(50) NOT NULL,
@@ -62,5 +60,3 @@ REFERENCES odds_ingestion_runs (odds_ingestion_run_id);
 
 CREATE INDEX idx_odds_market_snapshots_ingestion_run
 ON odds_market_snapshots (odds_ingestion_run_id);
-
-COMMIT;
