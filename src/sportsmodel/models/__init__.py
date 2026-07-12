@@ -1,3 +1,5 @@
+from sportsmodel.models.game_result import GameResult
+from sportsmodel.models.settled_bet import BetOutcome, SettledBet
 from sportsmodel.models.bet_candidate import BetCandidate
 from sportsmodel.models.closing_line_value import (
     ClosingLineValueMarket,
@@ -16,4 +18,5 @@ from .expected_value import (
     ExpectedValueMarket,
     ExpectedValueSelection,
 )
+
 
