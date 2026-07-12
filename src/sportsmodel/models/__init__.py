@@ -1,3 +1,7 @@
+from sportsmodel.models.closing_line_value import (
+    ClosingLineValueMarket,
+    ClosingLineValueSelection,
+)
 from .movement import LineMovement
 from .snapshot import MarketSnapshot
 from .complete_market import CompleteMarket
