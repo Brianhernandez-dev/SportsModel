@@ -94,7 +94,7 @@ def get_game_results() -> list[GameResult]:
             hg.away_score
         FROM games g
         JOIN historical_games hg
-            ON hg.historical_game_id = g.historical_game_id
+            ON hg.game_id = g.game_id
         WHERE hg.home_score IS NOT NULL
           AND hg.away_score IS NOT NULL
         ORDER BY g.game_id;
