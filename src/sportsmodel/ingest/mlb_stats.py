@@ -1,3 +1,6 @@
+from sportsmodel.ingest.game_matching import (
+    get_or_create_canonical_game,
+)
 from datetime import date, datetime, timedelta, timezone
 
 import requests
@@ -55,14 +58,6 @@ def parse_game_datetime(game):
         game_date_value.replace("Z", "+00:00")
     ).astimezone(timezone.utc)
 
-
-def get_or_create_game(
-    cursor,
-    external_game_id,
-    game_datetime,
-    home_team_id,
-    away_team_id,
-):
     """
     Return the canonical game_id for an MLB Stats API game.
 
@@ -263,9 +258,10 @@ def fetch_historical_results(
                                 away_team,
                             )
 
-                            game_id = get_or_create_game(
-                                cursor=cursor,
-                                external_game_id=mlb_game_id,
+                            game_id = get_or_create_canonical_game(
+                                cursor,
+                                source_name=SOURCE_NAME,
+                                external_game_id=str(mlb_game_id),
                                 game_datetime=game_datetime,
                                 home_team_id=home_team_id,
                                 away_team_id=away_team_id,

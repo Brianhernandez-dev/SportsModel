@@ -5,6 +5,10 @@ import requests
 
 from sportsmodel.database.connection import get_connection
 
+from sportsmodel.ingest.game_matching import (
+    get_or_create_canonical_game,
+)
+
 
 SPORT = "baseball_mlb"
 REGIONS = "us"
