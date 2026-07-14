@@ -163,3 +163,13 @@ def test_rejects_impossible_threshold():
             [],
             minimum_expected_value=Decimal("-1.01"),
         )
+def test_keeps_only_first_qualifying_snapshot_per_contract():
+    ...
+
+
+def test_different_lines_are_separate_contracts():
+    ...
+
+
+def test_same_selection_at_different_sportsbooks_is_not_deduplicated():
+    ...
