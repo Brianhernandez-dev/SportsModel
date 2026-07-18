@@ -1,3 +1,4 @@
+from sportsmodel.models.backtest_report import BacktestReport
 from sportsmodel.models.game_result import GameResult
 from sportsmodel.models.settled_bet import BetOutcome, SettledBet
 from sportsmodel.models.bet_candidate import BetCandidate
@@ -18,5 +19,6 @@ from .expected_value import (
     ExpectedValueMarket,
     ExpectedValueSelection,
 )
+
 
 

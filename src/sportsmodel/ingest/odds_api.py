@@ -5,6 +5,10 @@ import requests
 
 from sportsmodel.database.connection import get_connection
 
+from sportsmodel.ingest.game_matching import (
+    get_or_create_canonical_game,
+)
+
 
 SPORT = "baseball_mlb"
 REGIONS = "us"
@@ -12,6 +16,14 @@ MARKETS = "h2h,spreads,totals"
 ODDS_FORMAT = "american"
 SOURCE_NAME = "odds_api"
 
+def parse_commence_time(value: str) -> datetime:
+    """
+    Convert an Odds API commence time to a timezone-aware UTC datetime.
+    """
+
+    return datetime.fromisoformat(
+        value.replace("Z", "+00:00")
+    ).astimezone(timezone.utc)
 
 def create_ingestion_run(connection):
     """Create and commit a new odds-ingestion audit record."""
@@ -158,13 +170,6 @@ def get_sportsbook_id(cursor, sportsbook_name):
     return cursor.fetchone()[0]
 
 
-def get_or_create_game(
-    cursor,
-    external_game_id,
-    commence_time,
-    home_team_id,
-    away_team_id,
-):
     """Return the canonical game ID for an Odds API event."""
 
     cursor.execute(
@@ -362,10 +367,11 @@ def fetch_live_odds():
                 home_team_id = get_team_id(cursor, home_team)
                 away_team_id = get_team_id(cursor, away_team)
 
-                game_id = get_or_create_game(
-                    cursor=cursor,
+                game_id = get_or_create_canonical_game(
+                    cursor,
+                    source_name=SOURCE_NAME,
                     external_game_id=external_game_id,
-                    commence_time=commence_time,
+                    game_datetime=parse_commence_time(commence_time),
                     home_team_id=home_team_id,
                     away_team_id=away_team_id,
                 )
