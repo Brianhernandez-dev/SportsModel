@@ -367,10 +367,11 @@ def fetch_live_odds():
                 home_team_id = get_team_id(cursor, home_team)
                 away_team_id = get_team_id(cursor, away_team)
 
-                game_id = get_or_create_game(
-                    cursor=cursor,
+                game_id = get_or_create_canonical_game(
+                    cursor,
+                    source_name=SOURCE_NAME,
                     external_game_id=external_game_id,
-                    commence_time=commence_time,
+                    game_datetime=parse_commence_time(commence_time),
                     home_team_id=home_team_id,
                     away_team_id=away_team_id,
                 )
