@@ -16,6 +16,14 @@ MARKETS = "h2h,spreads,totals"
 ODDS_FORMAT = "american"
 SOURCE_NAME = "odds_api"
 
+def parse_commence_time(value: str) -> datetime:
+    """
+    Convert an Odds API commence time to a timezone-aware UTC datetime.
+    """
+
+    return datetime.fromisoformat(
+        value.replace("Z", "+00:00")
+    ).astimezone(timezone.utc)
 
 def create_ingestion_run(connection):
     """Create and commit a new odds-ingestion audit record."""
@@ -162,13 +170,6 @@ def get_sportsbook_id(cursor, sportsbook_name):
     return cursor.fetchone()[0]
 
 
-def get_or_create_game(
-    cursor,
-    external_game_id,
-    commence_time,
-    home_team_id,
-    away_team_id,
-):
     """Return the canonical game ID for an Odds API event."""
 
     cursor.execute(
