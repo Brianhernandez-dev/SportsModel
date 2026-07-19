@@ -141,6 +141,57 @@ def get_team_id_by_source(
     finally:
         connection.close()
 
+def get_team_ids_by_source(
+    source_name: str,
+    external_team_ids: list[int],
+    *,
+    connection_factory: ConnectionFactory = get_connection,
+) -> dict[int, int]:
+    """
+    Return a mapping of external team IDs to canonical team IDs.
+
+    Example
+    -------
+    {
+        109: 1,
+        144: 5,
+    }
+    """
+
+    if not external_team_ids:
+        return {}
+
+    query = """
+        SELECT
+            external_team_id,
+            team_id
+        FROM baseball_team_sources
+        WHERE source_name = %s
+          AND external_team_id = ANY(%s);
+    """
+
+    connection = connection_factory()
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                query,
+                (
+                    source_name,
+                    [str(team_id) for team_id in external_team_ids],
+                ),
+            )
+
+            rows = cursor.fetchall()
+
+        return {
+            int(external_team_id): team_id
+            for external_team_id, team_id in rows
+        }
+
+    finally:
+        connection.close()
+
 
 def get_team_id_by_name(
     team_name: str,

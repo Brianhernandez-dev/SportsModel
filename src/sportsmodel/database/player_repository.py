@@ -330,3 +330,55 @@ def add_baseball_player_source(
 
     finally:
         connection.close()
+         
+def get_player_ids_by_source(
+    source_name: str,
+    external_player_ids: list[int],
+    *,
+    connection_factory: ConnectionFactory = get_connection,
+) -> dict[int, int]:
+    """
+    Return a mapping of external player IDs to canonical player IDs.
+
+    Example
+    -------
+    {
+        660271: 15,
+        592450: 27,
+        668678: 41,
+    }
+    """
+
+    if not external_player_ids:
+        return {}
+
+    query = """
+        SELECT
+            external_player_id,
+            baseball_player_id
+        FROM baseball_player_sources
+        WHERE source_name = %s
+          AND external_player_id = ANY(%s);
+    """
+
+    connection = connection_factory()
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                query,
+                (
+                    source_name,
+                    [str(player_id) for player_id in external_player_ids],
+                ),
+            )
+
+            rows = cursor.fetchall()
+
+        return {
+            int(external_player_id): baseball_player_id
+            for external_player_id, baseball_player_id in rows
+        }
+
+    finally:
+        connection.close()
