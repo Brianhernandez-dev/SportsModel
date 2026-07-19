@@ -1,3 +1,5 @@
+import sportsmodel.ingest.boxscore_parser as boxscore_parser
+
 from sportsmodel.ingest.boxscore_parser import (
     parse_game_metadata,
     parse_pitcher_statistics,
@@ -316,3 +318,110 @@ def test_parse_pitcher_statistics() -> None:
     assert home_starter.hold_recorded is False
     assert home_starter.blown_save_recorded is False
     assert home_starter.source_name == "mlb_stats_api"
+
+
+def test_parse_boxscore_orchestrates_component_parsers(
+    monkeypatch,
+) -> None:
+    boxscore = {"boxscore": "payload"}
+    live_feed = {"live_feed": "payload"}
+
+    expected_team_statistics = (object(), object())
+    expected_pitcher_statistics = (object(), object(), object())
+
+    captured_calls: dict[str, object] = {}
+
+    def fake_parse_game_metadata(
+        received_live_feed,
+    ) -> tuple[int, bool]:
+        captured_calls["live_feed"] = received_live_feed
+        return 2, True
+
+    def fake_parse_team_statistics(
+        received_boxscore,
+        *,
+        game_id: int,
+        team_ids_by_mlb_id: dict[int, int],
+    ):
+        captured_calls["team_boxscore"] = received_boxscore
+        captured_calls["team_game_id"] = game_id
+        captured_calls["team_ids_by_mlb_id"] = team_ids_by_mlb_id
+
+        return expected_team_statistics
+
+    def fake_parse_pitcher_statistics(
+        received_boxscore,
+        *,
+        game_id: int,
+        team_ids_by_mlb_id: dict[int, int],
+        player_ids_by_mlb_id: dict[int, int],
+    ):
+        captured_calls["pitcher_boxscore"] = received_boxscore
+        captured_calls["pitcher_game_id"] = game_id
+        captured_calls[
+            "pitcher_team_ids_by_mlb_id"
+        ] = team_ids_by_mlb_id
+        captured_calls[
+            "player_ids_by_mlb_id"
+        ] = player_ids_by_mlb_id
+
+        return expected_pitcher_statistics
+
+    monkeypatch.setattr(
+        boxscore_parser,
+        "parse_game_metadata",
+        fake_parse_game_metadata,
+    )
+    monkeypatch.setattr(
+        boxscore_parser,
+        "parse_team_statistics",
+        fake_parse_team_statistics,
+    )
+    monkeypatch.setattr(
+        boxscore_parser,
+        "parse_pitcher_statistics",
+        fake_parse_pitcher_statistics,
+    )
+
+    team_ids_by_mlb_id = {
+        1: 101,
+        2: 102,
+    }
+    player_ids_by_mlb_id = {
+        100: 1001,
+        200: 2001,
+    }
+
+    result = boxscore_parser.parse_boxscore(
+        boxscore=boxscore,
+        live_feed=live_feed,
+        game_pk=777159,
+        game_id=10,
+        team_ids_by_mlb_id=team_ids_by_mlb_id,
+        player_ids_by_mlb_id=player_ids_by_mlb_id,
+    )
+
+    assert result.game_pk == 777159
+    assert result.game_number == 2
+    assert result.double_header is True
+    assert result.team_statistics is expected_team_statistics
+    assert result.pitcher_statistics is expected_pitcher_statistics
+
+    assert captured_calls["live_feed"] is live_feed
+    assert captured_calls["team_boxscore"] is boxscore
+    assert captured_calls["team_game_id"] == 10
+    assert (
+        captured_calls["team_ids_by_mlb_id"]
+        is team_ids_by_mlb_id
+    )
+
+    assert captured_calls["pitcher_boxscore"] is boxscore
+    assert captured_calls["pitcher_game_id"] == 10
+    assert (
+        captured_calls["pitcher_team_ids_by_mlb_id"]
+        is team_ids_by_mlb_id
+    )
+    assert (
+        captured_calls["player_ids_by_mlb_id"]
+        is player_ids_by_mlb_id
+    )

@@ -179,11 +179,39 @@ def parse_game_metadata(
 
 
 def parse_boxscore(
+    *,
     boxscore: dict[str, Any],
     live_feed: dict[str, Any],
+    game_pk: int,
+    game_id: int,
+    team_ids_by_mlb_id: dict[int, int],
+    player_ids_by_mlb_id: dict[int, int],
 ) -> ParsedBoxScore:
     """
     Parse MLB API responses into immutable SportsModel models.
     """
 
-    raise NotImplementedError
+    game_number, double_header = parse_game_metadata(
+        live_feed,
+    )
+
+    team_statistics = parse_team_statistics(
+        boxscore,
+        game_id=game_id,
+        team_ids_by_mlb_id=team_ids_by_mlb_id,
+    )
+
+    pitcher_statistics = parse_pitcher_statistics(
+        boxscore,
+        game_id=game_id,
+        team_ids_by_mlb_id=team_ids_by_mlb_id,
+        player_ids_by_mlb_id=player_ids_by_mlb_id,
+    )
+
+    return ParsedBoxScore(
+        game_pk=game_pk,
+        game_number=game_number,
+        double_header=double_header,
+        team_statistics=team_statistics,
+        pitcher_statistics=pitcher_statistics,
+    )
