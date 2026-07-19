@@ -17,6 +17,26 @@ def main() -> None:
         f"{summary.unique_players_discovered}"
     )
     print(
+        "Team mappings created: "
+        f"{summary.team_mappings_created}"
+    )
+    print(
+        "Assignments created: "
+        f"{summary.assignments_created}"
+    )
+    print(
+        "Assignments updated: "
+        f"{summary.assignments_updated}"
+    )
+    print(
+        "Assignments transferred: "
+        f"{summary.assignments_transferred}"
+    )
+    print(
+        "Assignments skipped: "
+        f"{summary.assignments_skipped}"
+    )
+    print(
         "Players received: "
         f"{summary.player_sync.players_received}"
     )
