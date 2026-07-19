@@ -106,6 +106,85 @@ def create_baseball_player(
         connection.close()
 
 
+def update_baseball_player(
+    player: BaseballPlayer,
+    *,
+    connection_factory: ConnectionFactory = get_connection,
+) -> BaseballPlayer:
+    """
+    Update and return an existing canonical baseball player.
+    """
+
+    if player.baseball_player_id is None:
+        raise ValueError(
+            "baseball_player_id is required when updating a player."
+        )
+
+    query = """
+        UPDATE baseball_players
+        SET
+            full_name = %s,
+            bats = %s,
+            throws = %s,
+            primary_position = %s,
+            active_from = %s,
+            active_through = %s,
+            is_active = %s,
+            last_synced_at = %s,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE baseball_player_id = %s
+        RETURNING
+            baseball_player_id,
+            full_name,
+            bats,
+            throws,
+            primary_position,
+            active_from,
+            active_through,
+            is_active,
+            last_synced_at,
+            created_at,
+            updated_at;
+    """
+
+    connection = connection_factory()
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                query,
+                (
+                    player.full_name,
+                    player.bats,
+                    player.throws,
+                    player.primary_position,
+                    player.active_from,
+                    player.active_through,
+                    player.is_active,
+                    player.last_synced_at,
+                    player.baseball_player_id,
+                ),
+            )
+            row = cursor.fetchone()
+
+        if row is None:
+            raise LookupError(
+                "Baseball player does not exist: "
+                f"{player.baseball_player_id}"
+            )
+
+        connection.commit()
+
+        return _row_to_baseball_player(row)
+
+    except Exception:
+        connection.rollback()
+        raise
+
+    finally:
+        connection.close()
+
+
 def get_baseball_player_by_id(
     baseball_player_id: int,
     *,
