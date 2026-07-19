@@ -3,6 +3,7 @@ from sportsmodel.models.parsed_boxscore import ParsedBoxScore
 
 def test_parsed_boxscore_creation() -> None:
     parsed = ParsedBoxScore(
+        game_id=430,
         game_pk=777159,
         game_number=1,
         double_header=False,
@@ -10,6 +11,7 @@ def test_parsed_boxscore_creation() -> None:
         pitcher_statistics=(),
     )
 
+    assert parsed.game_id == 430
     assert parsed.game_pk == 777159
     assert parsed.game_number == 1
     assert parsed.double_header is False
