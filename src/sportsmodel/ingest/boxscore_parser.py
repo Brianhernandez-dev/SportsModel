@@ -3,6 +3,10 @@ from __future__ import annotations
 from typing import Any
 
 from sportsmodel.models.parsed_boxscore import ParsedBoxScore
+from sportsmodel.models.player_game_pitching_statistics import (
+    PitchingDecision,
+    PlayerGamePitchingStatistics,
+)
 from sportsmodel.models.team_game_statistics import TeamGameStatistics
 
 
@@ -66,12 +70,97 @@ def parse_team_statistics(
 
 def parse_pitcher_statistics(
     boxscore: dict[str, Any],
-) -> tuple:
+    *,
+    game_id: int,
+    team_ids_by_mlb_id: dict[int, int],
+    player_ids_by_mlb_id: dict[int, int],
+) -> tuple[PlayerGamePitchingStatistics, ...]:
     """
-    Parse individual pitcher statistics.
+    Parse pitcher appearance statistics.
+
+    Pitchers are processed in the appearance order supplied by MLB.
     """
 
-    raise NotImplementedError
+    parsed_pitchers: list[PlayerGamePitchingStatistics] = []
+
+    for side in ("away", "home"):
+        team_data = boxscore["teams"][side]
+
+        mlb_team_id = int(team_data["team"]["id"])
+        team_id = team_ids_by_mlb_id[mlb_team_id]
+
+        players = team_data["players"]
+
+        for appearance_order, mlb_player_id in enumerate(
+            team_data["pitchers"],
+            start=1,
+        ):
+            player = players[f"ID{mlb_player_id}"]
+            pitching = player.get("stats", {}).get("pitching")
+
+            if not pitching:
+                continue
+
+            baseball_player_id = player_ids_by_mlb_id[
+                int(mlb_player_id)
+            ]
+
+            win_recorded = pitching.get("wins", 0) > 0
+            loss_recorded = pitching.get("losses", 0) > 0
+            save_recorded = pitching.get("saves", 0) > 0
+            hold_recorded = pitching.get("holds", 0) > 0
+            blown_save_recorded = pitching.get("blownSaves", 0) > 0
+
+            decision: PitchingDecision | None = None
+
+            if win_recorded:
+                decision = PitchingDecision.WIN
+            elif loss_recorded:
+                decision = PitchingDecision.LOSS
+            elif save_recorded:
+                decision = PitchingDecision.SAVE
+            elif hold_recorded:
+                decision = PitchingDecision.HOLD
+            elif blown_save_recorded:
+                decision = PitchingDecision.BLOWN_SAVE
+
+            parsed_pitchers.append(
+                PlayerGamePitchingStatistics(
+                    game_id=game_id,
+                    team_id=team_id,
+                    baseball_player_id=baseball_player_id,
+                    appearance_order=appearance_order,
+                    is_starter=appearance_order == 1,
+                    pitching_outs=pitching["outs"],
+                    batters_faced=pitching.get("battersFaced"),
+                    hits_allowed=pitching["hits"],
+                    runs_allowed=pitching["runs"],
+                    earned_runs_allowed=pitching["earnedRuns"],
+                    home_runs_allowed=pitching["homeRuns"],
+                    walks_allowed=pitching["baseOnBalls"],
+                    intentional_walks_allowed=pitching.get(
+                        "intentionalWalks",
+                        0,
+                    ),
+                    strikeouts=pitching["strikeOuts"],
+                    hit_batters=pitching.get(
+                        "hitBatsmen",
+                        pitching.get("hitByPitch", 0),
+                    ),
+                    pitches_thrown=pitching.get(
+                        "numberOfPitches",
+                        pitching.get("pitchesThrown"),
+                    ),
+                    strikes_thrown=pitching.get("strikes"),
+                    decision=decision,
+                    save_recorded=save_recorded,
+                    hold_recorded=hold_recorded,
+                    blown_save_recorded=blown_save_recorded,
+                    source_name="mlb_stats_api",
+                )
+            )
+
+    return tuple(parsed_pitchers)
 
 
 def parse_game_metadata(
@@ -84,13 +173,9 @@ def parse_game_metadata(
     game = live_feed["gameData"]["game"]
 
     game_number = int(game["gameNumber"])
-
     double_header = game["doubleHeader"] == "Y"
 
-    return (
-        game_number,
-        double_header,
-    )
+    return game_number, double_header
 
 
 def parse_boxscore(
