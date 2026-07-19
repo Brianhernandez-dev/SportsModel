@@ -177,7 +177,6 @@ def parse_game_metadata(
 
     return game_number, double_header
 
-
 def parse_boxscore(
     *,
     boxscore: dict[str, Any],
@@ -209,6 +208,7 @@ def parse_boxscore(
     )
 
     return ParsedBoxScore(
+        game_id=game_id,
         game_pk=game_pk,
         game_number=game_number,
         double_header=double_header,

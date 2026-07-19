@@ -326,8 +326,19 @@ def test_parse_boxscore_orchestrates_component_parsers(
     boxscore = {"boxscore": "payload"}
     live_feed = {"live_feed": "payload"}
 
-    expected_team_statistics = (object(), object())
-    expected_pitcher_statistics = (object(), object(), object())
+    class StubStatistics:
+        def __init__(self, game_id: int) -> None:
+            self.game_id = game_id
+
+    expected_team_statistics = (
+        StubStatistics(game_id=10),
+        StubStatistics(game_id=10),
+    )
+    expected_pitcher_statistics = (
+        StubStatistics(game_id=10),
+        StubStatistics(game_id=10),
+        StubStatistics(game_id=10),
+    )
 
     captured_calls: dict[str, object] = {}
 
@@ -401,6 +412,7 @@ def test_parse_boxscore_orchestrates_component_parsers(
         player_ids_by_mlb_id=player_ids_by_mlb_id,
     )
 
+    assert result.game_id == 10
     assert result.game_pk == 777159
     assert result.game_number == 2
     assert result.double_header is True
