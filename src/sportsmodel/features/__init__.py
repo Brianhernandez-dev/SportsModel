@@ -6,6 +6,9 @@ from sportsmodel.features.definitions import (
     FeatureDefinition,
     FeatureGroup,
 )
+from sportsmodel.features.provider import (
+    FeatureDataProvider,
+)
 from sportsmodel.features.validation import (
     FeatureValidationError,
     validate_feature_generation_context,
@@ -13,6 +16,7 @@ from sportsmodel.features.validation import (
 )
 
 __all__ = [
+    "FeatureDataProvider",
     "FeatureDataType",
     "FeatureDefinition",
     "FeatureGenerationContext",
