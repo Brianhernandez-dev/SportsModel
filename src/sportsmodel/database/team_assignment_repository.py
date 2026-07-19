@@ -218,6 +218,49 @@ def get_current_player_team_assignment(
     finally:
         connection.close()
 
+def get_all_current_player_team_assignments(
+    *,
+    connection_factory: ConnectionFactory = get_connection,
+) -> list[BaseballPlayerTeamAssignment]:
+    """
+    Return every player-team assignment currently marked active.
+    """
+
+    query = """
+        SELECT
+            baseball_player_team_assignment_id,
+            baseball_player_id,
+            team_id,
+            roster_status_code,
+            roster_status_description,
+            jersey_number,
+            position_code,
+            position_name,
+            valid_from,
+            valid_through,
+            is_current,
+            last_synced_at,
+            created_at,
+            updated_at
+        FROM baseball_player_team_assignments
+        WHERE is_current = TRUE
+        ORDER BY baseball_player_id;
+    """
+
+    connection = connection_factory()
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(query)
+            rows = cursor.fetchall()
+
+        return [
+            _row_to_player_team_assignment(row)
+            for row in rows
+        ]
+
+    finally:
+        connection.close()
 
 def create_player_team_assignment(
     assignment: BaseballPlayerTeamAssignment,

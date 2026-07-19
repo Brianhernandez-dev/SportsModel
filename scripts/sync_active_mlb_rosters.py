@@ -37,6 +37,10 @@ def main() -> None:
         f"{summary.assignments_skipped}"
     )
     print(
+        "Assignments closed: "
+        f"{summary.assignments_closed}"
+    )
+    print(
         "Players received: "
         f"{summary.player_sync.players_received}"
     )

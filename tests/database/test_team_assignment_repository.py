@@ -7,6 +7,7 @@ from sportsmodel.database.team_assignment_repository import (
     add_baseball_team_source,
     close_current_player_team_assignment,
     create_player_team_assignment,
+    get_all_current_player_team_assignments,
     get_current_player_team_assignment,
     get_team_id_by_name,
     get_team_id_by_source,
@@ -17,12 +18,17 @@ from sportsmodel.models.baseball_player_team_assignment import (
 )
 from sportsmodel.models.baseball_team_source import BaseballTeamSource
 
-
 class FakeCursor:
-    def __init__(self, row: tuple[Any, ...] | None = None) -> None:
+    def __init__(
+        self,
+        row: tuple[Any, ...] | None = None,
+        rows: list[tuple[Any, ...]] | None = None,
+    ) -> None:
         self.row = row
-        self.executed_query: str | None = None
-        self.executed_parameters: tuple[Any, ...] | None = None
+        self.rows = rows or []
+
+        self.executed_query = None
+        self.executed_parameters = None
 
     def __enter__(self) -> "FakeCursor":
         return self
@@ -40,6 +46,9 @@ class FakeCursor:
 
     def fetchone(self) -> tuple[Any, ...] | None:
         return self.row
+
+    def fetchall(self) -> list[tuple[Any, ...]]:
+        return self.rows
 
 
 class FakeConnection:
@@ -271,6 +280,46 @@ def test_update_current_player_team_assignment() -> None:
         301,
     )
 
+def test_get_all_current_player_team_assignments() -> None:
+    cursor = FakeCursor(
+        rows=[
+            _assignment_row(
+                assignment_id=301,
+                player_id=101,
+                team_id=2,
+            ),
+            _assignment_row(
+                assignment_id=302,
+                player_id=102,
+                team_id=3,
+            ),
+        ]
+    )
+    connection = FakeConnection(cursor)
+
+    results = get_all_current_player_team_assignments(
+        connection_factory=lambda: connection,
+    )
+
+    assert len(results) == 2
+    assert results[0].baseball_player_id == 101
+    assert results[0].team_id == 2
+    assert results[1].baseball_player_id == 102
+    assert results[1].team_id == 3
+    assert cursor.executed_parameters is None
+    assert connection.closed is True
+
+
+def test_get_all_current_player_team_assignments_returns_empty_list() -> None:
+    cursor = FakeCursor(rows=[])
+    connection = FakeConnection(cursor)
+
+    results = get_all_current_player_team_assignments(
+        connection_factory=lambda: connection,
+    )
+
+    assert results == []
+    assert connection.closed is True
 
 def test_update_current_player_team_assignment_requires_id() -> None:
     assignment = BaseballPlayerTeamAssignment(

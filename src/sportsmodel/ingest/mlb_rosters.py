@@ -11,6 +11,7 @@ from sportsmodel.database.team_assignment_repository import (
     add_baseball_team_source,
     close_current_player_team_assignment,
     create_player_team_assignment,
+    get_all_current_player_team_assignments,
     get_current_player_team_assignment,
     get_team_id_by_name,
     get_team_id_by_source,
@@ -69,6 +70,7 @@ class RosterDiscoverySummary:
     assignments_updated: int
     assignments_transferred: int
     assignments_skipped: int
+    assignments_closed: int
 
     player_sync: PlayerSyncSummary
 
@@ -388,6 +390,9 @@ def sync_roster_assignment(
 def sync_active_mlb_rosters() -> RosterDiscoverySummary:
     """
     Discover MLB rosters, sync players, and persist current team assignments.
+
+    Current assignments for players missing from the active-roster snapshot
+    are closed only when the complete roster snapshot is considered safe.
     """
 
     team_payloads = fetch_active_mlb_teams()
@@ -463,9 +468,27 @@ def sync_active_mlb_rosters() -> RosterDiscoverySummary:
     assignments_updated = 0
     assignments_transferred = 0
     assignments_skipped = 0
+    assignments_closed = 0
 
     synced_at = datetime.now(timezone.utc)
     assignment_date = synced_at.date()
+
+    active_baseball_player_ids: set[int] = set()
+    all_active_players_resolved = True
+
+    for external_player_id in player_ids:
+        player = get_baseball_player_by_source(
+            SOURCE_NAME,
+            external_player_id,
+        )
+
+        if player is None or player.baseball_player_id is None:
+            all_active_players_resolved = False
+            continue
+
+        active_baseball_player_ids.add(
+            player.baseball_player_id
+        )
 
     for canonical_team_id, roster_entry in roster_entries:
         try:
@@ -491,6 +514,41 @@ def sync_active_mlb_rosters() -> RosterDiscoverySummary:
         ):
             assignments_skipped += 1
 
+    all_teams_processed = (
+        teams_processed == len(team_payloads)
+        and teams_skipped == 0
+    )
+
+    all_roster_entries_normalized = (
+        len(roster_entries) == roster_entries_received
+    )
+
+    lifecycle_cleanup_is_safe = (
+        all_teams_processed
+        and all_roster_entries_normalized
+        and all_active_players_resolved
+        and assignments_skipped == 0
+    )
+
+    if lifecycle_cleanup_is_safe:
+        current_assignments = (
+            get_all_current_player_team_assignments()
+        )
+
+        for current_assignment in current_assignments:
+            baseball_player_id = (
+                current_assignment.baseball_player_id
+            )
+
+            if baseball_player_id in active_baseball_player_ids:
+                continue
+
+            close_current_player_team_assignment(
+                baseball_player_id,
+                assignment_date,
+            )
+            assignments_closed += 1
+
     return RosterDiscoverySummary(
         teams_received=len(team_payloads),
         teams_processed=teams_processed,
@@ -502,5 +560,6 @@ def sync_active_mlb_rosters() -> RosterDiscoverySummary:
         assignments_updated=assignments_updated,
         assignments_transferred=assignments_transferred,
         assignments_skipped=assignments_skipped,
+        assignments_closed=assignments_closed,
         player_sync=player_sync,
     )
