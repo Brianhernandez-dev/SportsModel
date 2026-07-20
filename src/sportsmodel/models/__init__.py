@@ -32,3 +32,5 @@ from sportsmodel.models.player_game_pitching_statistics import (
 from sportsmodel.models.team_game_statistics import (
     TeamGameStatistics,
 )
+
+from sportsmodel.models.baseball_game import BaseballGame
