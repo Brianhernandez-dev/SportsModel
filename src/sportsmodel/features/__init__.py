@@ -25,3 +25,4 @@ __all__ = [
     "validate_feature_generation_context",
     "validate_source_event_times",
 ]
+from sportsmodel.features.generation_service import FeatureGenerationService
