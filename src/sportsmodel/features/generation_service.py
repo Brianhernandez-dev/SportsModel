@@ -4,6 +4,9 @@ from sportsmodel.database.game_repository import (
     GameRepository,
     PostgresGameRepository,
 )
+from sportsmodel.database.pitcher_statistics_repository import (
+    PitcherStatisticsRepository,
+)
 from sportsmodel.database.team_statistics_repository import (
     TeamStatisticsRepository,
 )
@@ -41,6 +44,9 @@ class FeatureGenerationService:
         team_statistics_repository: (
             TeamStatisticsRepository | None
         ) = None,
+        pitcher_statistics_repository: (
+            PitcherStatisticsRepository | None
+        ) = None,
         game_feature_vector_builder: (
             GameFeatureVectorBuilder | None
         ) = None,
@@ -52,6 +58,9 @@ class FeatureGenerationService:
         )
         self._team_statistics_repository = (
             team_statistics_repository
+        )
+        self._pitcher_statistics_repository = (
+            pitcher_statistics_repository
         )
         self._game_feature_vector_builder = (
             game_feature_vector_builder
@@ -71,6 +80,9 @@ class FeatureGenerationService:
             context,
             team_statistics_repository=(
                 self._team_statistics_repository
+            ),
+            pitcher_statistics_repository=(
+                self._pitcher_statistics_repository
             ),
         )
 

@@ -17,7 +17,29 @@ GET_COMPLETED_GAMES_QUERY = """
         g.home_team_id,
         g.away_team_id,
         hg.home_score,
-        hg.away_score
+        hg.away_score,
+        (
+            SELECT pgps.baseball_player_id
+            FROM player_game_pitching_statistics pgps
+            WHERE pgps.game_id = g.game_id
+              AND pgps.team_id = g.home_team_id
+              AND pgps.is_starter = TRUE
+            ORDER BY
+                pgps.appearance_order ASC,
+                pgps.baseball_player_id ASC
+            LIMIT 1
+        ) AS home_starting_pitcher_id,
+        (
+            SELECT pgps.baseball_player_id
+            FROM player_game_pitching_statistics pgps
+            WHERE pgps.game_id = g.game_id
+              AND pgps.team_id = g.away_team_id
+              AND pgps.is_starter = TRUE
+            ORDER BY
+                pgps.appearance_order ASC,
+                pgps.baseball_player_id ASC
+            LIMIT 1
+        ) AS away_starting_pitcher_id
     FROM games AS g
     JOIN historical_games AS hg
         ON hg.game_id = g.game_id
@@ -88,4 +110,6 @@ def _map_completed_game(
         game=game,
         home_score=row[4],
         away_score=row[5],
+        home_starting_pitcher_id=row[6],
+        away_starting_pitcher_id=row[7],
     )

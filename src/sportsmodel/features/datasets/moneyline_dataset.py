@@ -122,6 +122,12 @@ class MoneylineTrainingDatasetBuilder:
                     cutoff_time=(
                         completed_game.game.game_start_time
                     ),
+                    home_starting_pitcher_id=(
+                        completed_game.home_starting_pitcher_id
+                    ),
+                    away_starting_pitcher_id=(
+                        completed_game.away_starting_pitcher_id
+                    ),
                 )
             )
 

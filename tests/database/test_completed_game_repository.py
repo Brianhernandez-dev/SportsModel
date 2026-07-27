@@ -80,6 +80,8 @@ def test_get_all_returns_completed_games() -> None:
                 20,
                 5,
                 3,
+                1001,
+                1002,
             ),
             (
                 102,
@@ -88,6 +90,8 @@ def test_get_all_returns_completed_games() -> None:
                 40,
                 2,
                 6,
+                None,
+                2002,
             ),
         ]
     )
@@ -106,9 +110,13 @@ def test_get_all_returns_completed_games() -> None:
     assert games[0].game.away_team_id == 20
     assert games[0].home_score == 5
     assert games[0].away_score == 3
+    assert games[0].home_starting_pitcher_id == 1001
+    assert games[0].away_starting_pitcher_id == 1002
     assert games[0].home_team_won is True
 
     assert games[1].game.game_id == 102
+    assert games[1].home_starting_pitcher_id is None
+    assert games[1].away_starting_pitcher_id == 2002
     assert games[1].home_team_won is False
 
     assert (

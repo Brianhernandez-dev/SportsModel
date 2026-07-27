@@ -92,6 +92,14 @@ def test_builder_generates_labeled_moneyline_rows() -> None:
         first_call.kwargs["cutoff_time"]
         == first_game.game.game_start_time
     )
+    assert (
+        first_call.kwargs["home_starting_pitcher_id"]
+        == first_game.home_starting_pitcher_id
+    )
+    assert (
+        first_call.kwargs["away_starting_pitcher_id"]
+        == first_game.away_starting_pitcher_id
+    )
 
 
 def test_builder_skips_tied_games() -> None:
@@ -160,6 +168,8 @@ def _build_completed_game(
     game_id: int,
     home_score: int,
     away_score: int,
+    home_starting_pitcher_id: int | None = 30,
+    away_starting_pitcher_id: int | None = 40,
 ) -> CompletedGame:
     return CompletedGame(
         game=BaseballGame(
@@ -177,6 +187,12 @@ def _build_completed_game(
         ),
         home_score=home_score,
         away_score=away_score,
+        home_starting_pitcher_id=(
+            home_starting_pitcher_id
+        ),
+        away_starting_pitcher_id=(
+            away_starting_pitcher_id
+        ),
     )
 
 
