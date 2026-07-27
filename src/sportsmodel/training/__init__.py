@@ -66,6 +66,10 @@ __all__ = [
     "MoneylineWalkForwardFold",
     "ProbabilityCalibrationBin",
     "WalkForwardPrediction",
+    "DEFAULT_WALK_FORWARD_REGULARIZATION_CANDIDATES",
+    "MoneylineWalkForwardComparison",
+    "MoneylineWalkForwardVariant",
+    "compare_raw_and_matchup_walk_forward",
     "evaluate_moneyline_walk_forward",
     "tune_moneyline_regularization",
 ]
@@ -75,4 +79,10 @@ from sportsmodel.training.moneyline_walk_forward import (
     ProbabilityCalibrationBin,
     WalkForwardPrediction,
     evaluate_moneyline_walk_forward,
+)
+from sportsmodel.training.moneyline_walk_forward_experiment import (
+    DEFAULT_WALK_FORWARD_REGULARIZATION_CANDIDATES,
+    MoneylineWalkForwardComparison,
+    MoneylineWalkForwardVariant,
+    compare_raw_and_matchup_walk_forward,
 )
