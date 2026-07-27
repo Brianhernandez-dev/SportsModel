@@ -11,6 +11,8 @@ from sportsmodel.training.moneyline_baseline import (
     load_trained_moneyline_baseline,
     save_trained_moneyline_baseline,
     train_moneyline_baseline,
+    train_tuned_moneyline_baseline,
+    tune_moneyline_regularization,
 )
 
 
@@ -215,6 +217,70 @@ def test_trained_artifact_round_trip_preserves_predictions(
     assert actual_probability == pytest.approx(
         expected_probability
     )
+
+
+def test_tuning_scores_each_candidate_on_chronological_folds() -> None:
+    dataset = _build_dataset(
+        example_count=60,
+    )
+
+    result = tune_moneyline_regularization(
+        dataset,
+        test_fraction=0.20,
+        regularization_candidates=(
+            0.01,
+            0.10,
+            1.00,
+        ),
+        validation_splits=3,
+    )
+
+    assert len(result.candidates) == 3
+    assert result.validation_splits == 3
+    assert result.selected_c in {
+        0.01,
+        0.10,
+        1.00,
+    }
+
+    assert all(
+        len(candidate.fold_log_losses) == 3
+        for candidate in result.candidates
+    )
+
+    best_candidate = min(
+        result.candidates,
+        key=lambda candidate: (
+            candidate.mean_log_loss,
+            candidate.regularization_c,
+        ),
+    )
+
+    assert result.selected_c == (
+        best_candidate.regularization_c
+    )
+
+
+def test_tuned_training_uses_selected_regularization() -> None:
+    evaluation, tuning = train_tuned_moneyline_baseline(
+        _build_dataset(
+            example_count=60,
+        ),
+        test_fraction=0.20,
+        regularization_candidates=(
+            0.01,
+            0.10,
+            1.00,
+        ),
+        validation_splits=3,
+    )
+
+    assert (
+        evaluation.artifact.regularization_c
+        == tuning.selected_c
+    )
+    assert evaluation.training_rows == 48
+    assert evaluation.test_rows == 12
 
 
 def _build_dataset(

@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from math import nan
 from pathlib import Path
+from statistics import fmean
 from typing import Mapping
 
 import joblib
@@ -14,6 +15,7 @@ from sklearn.metrics import (
     log_loss,
     roc_auc_score,
 )
+from sklearn.model_selection import TimeSeriesSplit
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
@@ -34,7 +36,18 @@ METADATA_COLUMNS = frozenset(
 
 DEFAULT_TEST_FRACTION = 0.20
 DEFAULT_TOP_FEATURE_COUNT = 15
-MODEL_ARTIFACT_FORMAT_VERSION = "1.0.0"
+DEFAULT_REGULARIZATION_C = 1.0
+DEFAULT_REGULARIZATION_CANDIDATES = (
+    0.01,
+    0.03,
+    0.10,
+    0.30,
+    1.00,
+    3.00,
+    10.00,
+)
+DEFAULT_TUNING_SPLITS = 4
+MODEL_ARTIFACT_FORMAT_VERSION = "1.1.0"
 
 
 @dataclass(frozen=True)
@@ -105,6 +118,35 @@ class FeatureCoefficient:
 
 
 @dataclass(frozen=True)
+class RegularizationCandidateResult:
+    """
+    Chronological validation result for one regularization value.
+    """
+
+    regularization_c: float
+
+    fold_log_losses: tuple[float, ...]
+
+    mean_log_loss: float
+
+
+@dataclass(frozen=True)
+class RegularizationTuningResult:
+    """
+    Result of selecting logistic-regression regularization.
+    """
+
+    selected_c: float
+
+    validation_splits: int
+
+    candidates: tuple[
+        RegularizationCandidateResult,
+        ...,
+    ]
+
+
+@dataclass(frozen=True)
 class TrainedMoneylineBaseline:
     """
     Fitted Moneyline baseline model and preprocessing metadata.
@@ -117,6 +159,10 @@ class TrainedMoneylineBaseline:
     dropped_all_missing_features: tuple[str, ...]
 
     dropped_constant_features: tuple[str, ...]
+
+    dropped_duplicate_features: tuple[str, ...]
+
+    regularization_c: float
 
     training_rows: int
 
@@ -437,6 +483,7 @@ def train_moneyline_baseline(
     *,
     test_fraction: float = DEFAULT_TEST_FRACTION,
     top_feature_count: int = DEFAULT_TOP_FEATURE_COUNT,
+    regularization_c: float = DEFAULT_REGULARIZATION_C,
 ) -> MoneylineBaselineEvaluation:
     """
     Train and evaluate a regularized logistic-regression baseline.
@@ -445,6 +492,11 @@ def train_moneyline_baseline(
     if top_feature_count <= 0:
         raise ValueError(
             "Top feature count must be greater than zero."
+        )
+
+    if regularization_c <= 0:
+        raise ValueError(
+            "Regularization C must be greater than zero."
         )
 
     split = chronological_train_test_split(
@@ -457,6 +509,7 @@ def train_moneyline_baseline(
         active_feature_names,
         dropped_all_missing_features,
         dropped_constant_features,
+        dropped_duplicate_features,
     ) = _select_training_features(
         feature_names=dataset.feature_names,
         training_examples=split.training_examples,
@@ -487,28 +540,8 @@ def train_moneyline_baseline(
         for example in split.test_examples
     ]
 
-    pipeline = Pipeline(
-        steps=[
-            (
-                "imputer",
-                SimpleImputer(
-                    strategy="median",
-                    add_indicator=True,
-                ),
-            ),
-            (
-                "scaler",
-                StandardScaler(),
-            ),
-            (
-                "classifier",
-                LogisticRegression(
-                    solver="lbfgs",
-                    max_iter=5000,
-                    random_state=42,
-                ),
-            ),
-        ]
+    pipeline = _build_pipeline(
+        regularization_c=regularization_c,
     )
 
     pipeline.fit(
@@ -591,6 +624,10 @@ def train_moneyline_baseline(
         dropped_constant_features=(
             dropped_constant_features
         ),
+        dropped_duplicate_features=(
+            dropped_duplicate_features
+        ),
+        regularization_c=regularization_c,
         training_rows=len(training_examples),
         training_end_time=(
             training_examples[-1].game_start_time
@@ -636,6 +673,223 @@ def train_moneyline_baseline(
     )
 
 
+def tune_moneyline_regularization(
+    dataset: MoneylineTrainingDataset,
+    *,
+    test_fraction: float = DEFAULT_TEST_FRACTION,
+    regularization_candidates: tuple[
+        float,
+        ...,
+    ] = DEFAULT_REGULARIZATION_CANDIDATES,
+    validation_splits: int = DEFAULT_TUNING_SPLITS,
+) -> RegularizationTuningResult:
+    """
+    Select regularization using expanding chronological folds.
+
+    Only the outer training partition participates in tuning. The latest
+    outer test partition remains excluded until final evaluation.
+    """
+
+    _validate_regularization_candidates(
+        regularization_candidates
+    )
+
+    if validation_splits < 2:
+        raise ValueError(
+            "Validation split count must be at least two."
+        )
+
+    outer_split = chronological_train_test_split(
+        dataset,
+        test_fraction=test_fraction,
+    )
+
+    tuning_examples = outer_split.training_examples
+
+    if len(tuning_examples) <= validation_splits:
+        raise ValueError(
+            "Not enough training examples for the requested "
+            "chronological validation splits."
+        )
+
+    splitter = TimeSeriesSplit(
+        n_splits=validation_splits,
+    )
+
+    candidate_results: list[
+        RegularizationCandidateResult
+    ] = []
+
+    for regularization_c in regularization_candidates:
+        fold_log_losses: list[float] = []
+
+        for training_indexes, validation_indexes in (
+            splitter.split(tuning_examples)
+        ):
+            fold_training_examples = tuple(
+                tuning_examples[index]
+                for index in training_indexes
+            )
+
+            fold_validation_examples = tuple(
+                tuning_examples[index]
+                for index in validation_indexes
+            )
+
+            (
+                active_indexes,
+                active_feature_names,
+                _,
+                _,
+                _,
+            ) = _select_training_features(
+                feature_names=dataset.feature_names,
+                training_examples=(
+                    fold_training_examples
+                ),
+            )
+
+            if not active_feature_names:
+                raise ValueError(
+                    "No usable features remain in a tuning fold."
+                )
+
+            training_targets = [
+                example.home_team_won
+                for example in fold_training_examples
+            ]
+
+            if len(set(training_targets)) < 2:
+                raise ValueError(
+                    "A tuning fold contains only one training "
+                    "target class."
+                )
+
+            validation_targets = [
+                example.home_team_won
+                for example in fold_validation_examples
+            ]
+
+            pipeline = _build_pipeline(
+                regularization_c=regularization_c,
+            )
+
+            pipeline.fit(
+                _build_feature_matrix(
+                    examples=fold_training_examples,
+                    active_indexes=active_indexes,
+                ),
+                training_targets,
+            )
+
+            validation_probabilities = [
+                float(probability)
+                for probability in pipeline.predict_proba(
+                    _build_feature_matrix(
+                        examples=fold_validation_examples,
+                        active_indexes=active_indexes,
+                    )
+                )[:, 1]
+            ]
+
+            fold_log_losses.append(
+                float(
+                    log_loss(
+                        validation_targets,
+                        validation_probabilities,
+                        labels=[
+                            False,
+                            True,
+                        ],
+                    )
+                )
+            )
+
+        candidate_results.append(
+            RegularizationCandidateResult(
+                regularization_c=regularization_c,
+                fold_log_losses=tuple(
+                    fold_log_losses
+                ),
+                mean_log_loss=fmean(
+                    fold_log_losses
+                ),
+            )
+        )
+
+    selected_candidate = min(
+        candidate_results,
+        key=lambda candidate: (
+            candidate.mean_log_loss,
+            candidate.regularization_c,
+        ),
+    )
+
+    return RegularizationTuningResult(
+        selected_c=(
+            selected_candidate.regularization_c
+        ),
+        validation_splits=validation_splits,
+        candidates=tuple(candidate_results),
+    )
+
+
+def train_tuned_moneyline_baseline(
+    dataset: MoneylineTrainingDataset,
+    *,
+    test_fraction: float = DEFAULT_TEST_FRACTION,
+    top_feature_count: int = DEFAULT_TOP_FEATURE_COUNT,
+    regularization_candidates: tuple[
+        float,
+        ...,
+    ] = DEFAULT_REGULARIZATION_CANDIDATES,
+    validation_splits: int = DEFAULT_TUNING_SPLITS,
+) -> tuple[
+    MoneylineBaselineEvaluation,
+    RegularizationTuningResult,
+]:
+    """
+    Tune regularization and evaluate the selected model.
+    """
+
+    tuning_result = tune_moneyline_regularization(
+        dataset,
+        test_fraction=test_fraction,
+        regularization_candidates=(
+            regularization_candidates
+        ),
+        validation_splits=validation_splits,
+    )
+
+    evaluation = train_moneyline_baseline(
+        dataset,
+        test_fraction=test_fraction,
+        top_feature_count=top_feature_count,
+        regularization_c=tuning_result.selected_c,
+    )
+
+    return evaluation, tuning_result
+
+
+def _validate_regularization_candidates(
+    candidates: tuple[float, ...],
+) -> None:
+    if not candidates:
+        raise ValueError(
+            "At least one regularization candidate is required."
+        )
+
+    if any(candidate <= 0 for candidate in candidates):
+        raise ValueError(
+            "Regularization candidates must be greater than zero."
+        )
+
+    if len(candidates) != len(set(candidates)):
+        raise ValueError(
+            "Regularization candidates must be unique."
+        )
+
+
 def _select_training_features(
     *,
     feature_names: tuple[str, ...],
@@ -648,11 +902,17 @@ def _select_training_features(
     tuple[str, ...],
     tuple[str, ...],
     tuple[str, ...],
+    tuple[str, ...],
 ]:
     active_indexes: list[int] = []
     active_feature_names: list[str] = []
     dropped_all_missing: list[str] = []
     dropped_constant: list[str] = []
+    dropped_duplicate: list[str] = []
+    observed_signatures: dict[
+        tuple[float | None, ...],
+        str,
+    ] = {}
 
     for index, feature_name in enumerate(
         feature_names
@@ -688,6 +948,18 @@ def _select_training_features(
             )
             continue
 
+        value_signature = tuple(values)
+
+        if value_signature in observed_signatures:
+            dropped_duplicate.append(
+                feature_name
+            )
+            continue
+
+        observed_signatures[value_signature] = (
+            feature_name
+        )
+
         active_indexes.append(index)
         active_feature_names.append(
             feature_name
@@ -698,6 +970,7 @@ def _select_training_features(
         tuple(active_feature_names),
         tuple(dropped_all_missing),
         tuple(dropped_constant),
+        tuple(dropped_duplicate),
     )
 
 
@@ -720,6 +993,36 @@ def _build_feature_matrix(
         ]
         for example in examples
     ]
+
+
+def _build_pipeline(
+    *,
+    regularization_c: float,
+) -> Pipeline:
+    return Pipeline(
+        steps=[
+            (
+                "imputer",
+                SimpleImputer(
+                    strategy="median",
+                    add_indicator=True,
+                ),
+            ),
+            (
+                "scaler",
+                StandardScaler(),
+            ),
+            (
+                "classifier",
+                LogisticRegression(
+                    C=regularization_c,
+                    solver="lbfgs",
+                    max_iter=5000,
+                    random_state=42,
+                ),
+            ),
+        ]
+    )
 
 
 def _calculate_metrics(
