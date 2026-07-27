@@ -239,9 +239,11 @@ def _game(
     *,
     game_pk: int,
     final: bool,
+    game_type: str = "R",
 ) -> dict:
     return {
         "gamePk": game_pk,
+        "gameType": game_type,
         "gameDate": "2025-04-01T19:05:00Z",
         "status": {
             "detailedState": (
@@ -270,3 +272,44 @@ def _game(
             },
         },
     }
+
+def test_backfill_skips_non_regular_season_games() -> None:
+    connection = FakeConnection()
+    boxscore_called = False
+
+    def boxscore_ingestor(**kwargs):
+        nonlocal boxscore_called
+        boxscore_called = True
+
+    summary = fetch_historical_results(
+        start_date=date(2025, 3, 1),
+        end_date=date(2025, 3, 1),
+        progress_callback=None,
+        schedule_fetcher=lambda _: {
+            "dates": [
+                {
+                    "games": [
+                        _game(
+                            game_pk=1,
+                            final=True,
+                            game_type="S",
+                        ),
+                    ]
+                }
+            ]
+        },
+        connection_factory=lambda: connection,
+        boxscore_ingestor=boxscore_ingestor,
+    )
+
+    assert summary.games_received == 1
+    assert summary.games_processed == 0
+    assert summary.games_skipped == 1
+    assert summary.boxscores_processed == 0
+    assert summary.boxscores_failed == 0
+    assert boxscore_called is False
+
+    assert connection.committed is True
+    assert connection.rolled_back is False
+    assert connection.closed is True
+

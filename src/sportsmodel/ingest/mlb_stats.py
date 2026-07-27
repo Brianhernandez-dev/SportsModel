@@ -17,6 +17,7 @@ from sportsmodel.ingest.game_matching import (
 
 SOURCE_NAME = "mlb_stats"
 MLB_SCHEDULE_URL = "https://statsapi.mlb.com/api/v1/schedule"
+REGULAR_SEASON_GAME_TYPE = "R"
 
 
 ScheduleFetcher = Callable[[date], dict[str, Any]]
@@ -619,6 +620,9 @@ def _parse_finalized_schedule_game(
     )
 
     if not is_final:
+        return None
+
+    if game.get("gameType") != REGULAR_SEASON_GAME_TYPE:
         return None
 
     game_pk = game.get("gamePk")
