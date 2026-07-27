@@ -62,5 +62,17 @@ __all__ = [
     "train_moneyline_baseline",
     "train_tuned_moneyline_baseline",
     "transform_to_matchup_difference_dataset",
+    "MoneylineWalkForwardEvaluation",
+    "MoneylineWalkForwardFold",
+    "ProbabilityCalibrationBin",
+    "WalkForwardPrediction",
+    "evaluate_moneyline_walk_forward",
     "tune_moneyline_regularization",
 ]
+from sportsmodel.training.moneyline_walk_forward import (
+    MoneylineWalkForwardEvaluation,
+    MoneylineWalkForwardFold,
+    ProbabilityCalibrationBin,
+    WalkForwardPrediction,
+    evaluate_moneyline_walk_forward,
+)
