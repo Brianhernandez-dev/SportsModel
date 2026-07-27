@@ -6,3 +6,5 @@ db/
 logs/
 .DS_Store
 .vscode/
+
+data/training/
