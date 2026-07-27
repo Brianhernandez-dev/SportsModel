@@ -20,11 +20,17 @@ def get_or_create_canonical_game(
     Matching order:
 
     1. Existing source mapping.
-    2. Same home team and away team within the configured time window.
+    2. Same home team and away team within the configured time window,
+       excluding games already mapped by this source.
     3. Create a new canonical game.
 
     The team orientation must match exactly. Reversed home and away teams
     are not treated as the same game.
+
+    Excluding an existing mapping from the same source prevents distinct
+    doubleheader games with similar scheduled start times from sharing one
+    canonical game ID. A game mapped by another source remains eligible for
+    cross-source matching.
     """
 
     external_game_id = str(external_game_id)
@@ -52,18 +58,27 @@ def get_or_create_canonical_game(
 
     cursor.execute(
         """
-        SELECT game_id
-        FROM games
-        WHERE home_team_id = %s
-          AND away_team_id = %s
-          AND game_date BETWEEN %s AND %s
+        SELECT candidate.game_id
+        FROM games AS candidate
+        WHERE candidate.home_team_id = %s
+          AND candidate.away_team_id = %s
+          AND candidate.game_date BETWEEN %s AND %s
+          AND NOT EXISTS (
+              SELECT 1
+              FROM game_sources AS existing_mapping
+              WHERE
+                  existing_mapping.game_id = candidate.game_id
+                  AND existing_mapping.source_name = %s
+          )
         ORDER BY
             ABS(
                 EXTRACT(
-                    EPOCH FROM (game_date - %s)
+                    EPOCH FROM (
+                        candidate.game_date - %s
+                    )
                 )
             ),
-            game_id
+            candidate.game_id
         LIMIT 1;
         """,
         (
@@ -71,6 +86,7 @@ def get_or_create_canonical_game(
             away_team_id,
             window_start,
             window_end,
+            source_name,
             game_datetime,
         ),
     )

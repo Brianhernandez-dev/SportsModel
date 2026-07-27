@@ -84,6 +84,7 @@ def test_nearby_matching_game_is_reused():
         20,
         GAME_TIME - timedelta(minutes=15),
         GAME_TIME + timedelta(minutes=15),
+        "mlb_stats",
         GAME_TIME,
     )
 
