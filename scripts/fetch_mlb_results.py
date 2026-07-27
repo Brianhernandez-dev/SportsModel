@@ -1,5 +1,5 @@
-from sportsmodel.ingest.mlb_stats import fetch_historical_results
+from sportsmodel.ingest.mlb_results_cli import main
 
 
 if __name__ == "__main__":
-    fetch_historical_results()
+    raise SystemExit(main())
