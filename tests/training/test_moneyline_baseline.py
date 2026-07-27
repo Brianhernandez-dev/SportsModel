@@ -8,6 +8,8 @@ from sportsmodel.training.moneyline_baseline import (
     MoneylineTrainingExample,
     chronological_train_test_split,
     load_moneyline_training_csv,
+    load_trained_moneyline_baseline,
+    save_trained_moneyline_baseline,
     train_moneyline_baseline,
 )
 
@@ -162,6 +164,57 @@ def test_artifact_requires_all_active_prediction_features() -> None:
         evaluation.artifact.predict_home_win_probability(
             {}
         )
+
+
+def test_trained_artifact_round_trip_preserves_predictions(
+    tmp_path,
+) -> None:
+    dataset = _build_dataset(
+        example_count=40,
+    )
+
+    evaluation = train_moneyline_baseline(
+        dataset,
+        test_fraction=0.25,
+    )
+
+    model_path = tmp_path / "moneyline.joblib"
+
+    feature_mapping = dict(
+        zip(
+            dataset.feature_names,
+            dataset.examples[-1].feature_values,
+            strict=True,
+        )
+    )
+
+    expected_probability = (
+        evaluation.artifact
+        .predict_home_win_probability(
+            feature_mapping
+        )
+    )
+
+    save_trained_moneyline_baseline(
+        evaluation.artifact,
+        model_path,
+    )
+
+    loaded_model = load_trained_moneyline_baseline(
+        model_path
+    )
+
+    actual_probability = (
+        loaded_model.predict_home_win_probability(
+            feature_mapping
+        )
+    )
+
+    assert model_path.exists()
+    assert loaded_model.feature_schema_version == "1.1.0"
+    assert actual_probability == pytest.approx(
+        expected_probability
+    )
 
 
 def _build_dataset(

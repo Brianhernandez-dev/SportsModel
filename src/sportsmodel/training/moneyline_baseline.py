@@ -5,6 +5,7 @@ from math import nan
 from pathlib import Path
 from typing import Mapping
 
+import joblib
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
@@ -33,6 +34,7 @@ METADATA_COLUMNS = frozenset(
 
 DEFAULT_TEST_FRACTION = 0.20
 DEFAULT_TOP_FEATURE_COUNT = 15
+MODEL_ARTIFACT_FORMAT_VERSION = "1.0.0"
 
 
 @dataclass(frozen=True)
@@ -158,6 +160,17 @@ class TrainedMoneylineBaseline:
 
 
 @dataclass(frozen=True)
+class PersistedMoneylineBaseline:
+    """
+    Versioned serialized Moneyline model artifact.
+    """
+
+    artifact_format_version: str
+
+    model: TrainedMoneylineBaseline
+
+
+@dataclass(frozen=True)
 class MoneylineBaselineEvaluation:
     """
     Evaluation result for the fitted Moneyline baseline.
@@ -186,6 +199,62 @@ class MoneylineBaselineEvaluation:
     top_negative_coefficients: tuple[FeatureCoefficient, ...]
 
     artifact: TrainedMoneylineBaseline
+
+
+def save_trained_moneyline_baseline(
+    model: TrainedMoneylineBaseline,
+    path: Path,
+) -> None:
+    """
+    Serialize a fitted Moneyline model and preprocessing pipeline.
+    """
+
+    path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    persisted_model = PersistedMoneylineBaseline(
+        artifact_format_version=(
+            MODEL_ARTIFACT_FORMAT_VERSION
+        ),
+        model=model,
+    )
+
+    joblib.dump(
+        persisted_model,
+        path,
+    )
+
+
+def load_trained_moneyline_baseline(
+    path: Path,
+) -> TrainedMoneylineBaseline:
+    """
+    Load and validate a serialized Moneyline model artifact.
+    """
+
+    persisted_model = joblib.load(path)
+
+    if not isinstance(
+        persisted_model,
+        PersistedMoneylineBaseline,
+    ):
+        raise TypeError(
+            "Serialized artifact is not a persisted Moneyline "
+            "baseline model."
+        )
+
+    if (
+        persisted_model.artifact_format_version
+        != MODEL_ARTIFACT_FORMAT_VERSION
+    ):
+        raise ValueError(
+            "Unsupported Moneyline model artifact format: "
+            f"{persisted_model.artifact_format_version}"
+        )
+
+    return persisted_model.model
 
 
 def load_moneyline_training_csv(

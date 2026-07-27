@@ -8,3 +8,6 @@ logs/
 .vscode/
 
 data/training/
+data/training/*.csv
+data/models/*.joblib
+data/models/*_report.json
