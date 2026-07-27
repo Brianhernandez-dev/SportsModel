@@ -2,6 +2,9 @@
 
 import pytest
 
+from sportsmodel.database.pitcher_statistics_repository import (
+    PitcherStatisticsRepository,
+)
 from sportsmodel.database.team_statistics_repository import (
     TeamStatisticsRepository,
 )
@@ -14,6 +17,9 @@ from sportsmodel.features.context import (
 )
 from sportsmodel.features.provider import (
     FeatureDataProvider,
+)
+from sportsmodel.models.historical_pitcher_start import (
+    HistoricalPitcherStart,
 )
 from sportsmodel.models.historical_team_game import (
     HistoricalTeamGame,
@@ -55,6 +61,42 @@ class FakeTeamStatisticsRepository(
 
         return self.games_by_team.get(
             team_id,
+            (),
+        )[:limit]
+
+
+class FakePitcherStatisticsRepository(
+    PitcherStatisticsRepository,
+):
+    def __init__(
+        self,
+        starts_by_player: dict[
+            int,
+            tuple[HistoricalPitcherStart, ...],
+        ] | None = None,
+    ) -> None:
+        self.starts_by_player = starts_by_player or {}
+        self.calls: list[
+            tuple[int, datetime, int]
+        ] = []
+
+    def get_completed_starts_before(
+        self,
+        *,
+        player_id: int,
+        cutoff_time: datetime,
+        limit: int,
+    ) -> tuple[HistoricalPitcherStart, ...]:
+        self.calls.append(
+            (
+                player_id,
+                cutoff_time,
+                limit,
+            )
+        )
+
+        return self.starts_by_player.get(
+            player_id,
             (),
         )[:limit]
 
@@ -179,9 +221,14 @@ def build_provider(
         games_by_team=games_by_team or {},
     )
 
+    pitcher_repository = (
+        FakePitcherStatisticsRepository()
+    )
+
     provider = FeatureDataProvider(
         context,
         team_statistics_repository=repository,
+        pitcher_statistics_repository=pitcher_repository,
     )
 
     return provider, repository
@@ -290,7 +337,7 @@ def test_builder_assembles_complete_game_vector() -> None:
     )
 
     assert len(repository.calls) == 2
-    assert provider.cache_size == 2
+    assert provider.cache_size == 4
 
 
 def test_builder_preserves_known_starting_pitchers() -> None:
@@ -415,4 +462,4 @@ def test_repeated_build_reuses_team_history_cache() -> None:
 
     assert first_vector == second_vector
     assert len(repository.calls) == 2
-    assert provider.cache_size == 2
+    assert provider.cache_size == 4

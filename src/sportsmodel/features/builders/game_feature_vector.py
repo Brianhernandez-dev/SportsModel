@@ -1,6 +1,9 @@
 from sportsmodel.features.builders.base import (
     FeatureBuilder,
 )
+from sportsmodel.features.builders.starting_pitcher import (
+    StartingPitcherFeatureBuilder,
+)
 from sportsmodel.features.builders.team_feature_vector import (
     TeamFeatureVectorBuilder,
 )
@@ -13,12 +16,9 @@ from sportsmodel.features.provider import (
 from sportsmodel.models.game_feature_vector import (
     GameFeatureVector,
 )
-from sportsmodel.models.starting_pitcher_features import (
-    StartingPitcherFeatures,
-)
 
 
-DEFAULT_FEATURE_SCHEMA_VERSION = "1.0.0"
+DEFAULT_FEATURE_SCHEMA_VERSION = "1.1.0"
 
 
 class GameFeatureVectorBuilder(
@@ -28,9 +28,8 @@ class GameFeatureVectorBuilder(
     Assemble the complete pregame feature vector for one MLB game.
 
     Team batting and pitching features are generated through the team
-    feature-vector builders. Starting-pitcher statistics temporarily use
-    explicit unavailable-statistic objects until the dedicated pitcher
-    feature builder is implemented.
+    feature-vector builders. Starting-pitcher statistics are generated
+    from completed historical starts available before the cutoff.
     """
 
     def __init__(
@@ -94,17 +93,23 @@ class GameFeatureVectorBuilder(
             home_team=home_team,
             away_team=away_team,
             home_starting_pitcher=(
-                _build_placeholder_starting_pitcher_features(
+                StartingPitcherFeatureBuilder(
                     player_id=(
                         context.home_starting_pitcher_id
                     ),
+                ).build(
+                    context,
+                    provider,
                 )
             ),
             away_starting_pitcher=(
-                _build_placeholder_starting_pitcher_features(
+                StartingPitcherFeatureBuilder(
                     player_id=(
                         context.away_starting_pitcher_id
                     ),
+                ).build(
+                    context,
+                    provider,
                 )
             ),
         )
@@ -177,32 +182,3 @@ class GameFeatureVectorBuilder(
                 "Feature data provider context must match the "
                 "builder context."
             )
-
-
-def _build_placeholder_starting_pitcher_features(
-    *,
-    player_id: int | None,
-) -> StartingPitcherFeatures:
-    """
-    Build a valid temporary starting-pitcher feature group.
-
-    A supplied player ID means the expected starter is known, although
-    historical pitcher statistics are not yet generated. A missing player
-    ID means no reliable starter was available at the feature cutoff.
-    """
-
-    return StartingPitcherFeatures(
-        player_id=player_id,
-        starter_available=player_id is not None,
-        starts_season=0,
-        starts_last_5=0,
-        innings_per_start_season=None,
-        earned_run_average_season=None,
-        earned_run_average_last_5=None,
-        whip_season=None,
-        whip_last_5=None,
-        strikeouts_per_nine_season=None,
-        walks_per_nine_season=None,
-        home_runs_per_nine_season=None,
-        days_rest=None,
-    )

@@ -2,6 +2,9 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from sportsmodel.database.pitcher_statistics_repository import (
+    PitcherStatisticsRepository,
+)
 from sportsmodel.database.team_statistics_repository import (
     TeamStatisticsRepository,
 )
@@ -9,6 +12,9 @@ from sportsmodel.features import (
     FeatureDataProvider,
     FeatureGenerationContext,
     FeatureValidationError,
+)
+from sportsmodel.models.historical_pitcher_start import (
+    HistoricalPitcherStart,
 )
 from sportsmodel.models.historical_team_game import (
     HistoricalTeamGame,
@@ -43,6 +49,36 @@ class FakeTeamStatisticsRepository(
         )
 
         return self.games
+
+
+class FakePitcherStatisticsRepository(
+    PitcherStatisticsRepository,
+):
+    def __init__(
+        self,
+        starts: tuple[HistoricalPitcherStart, ...] = (),
+    ) -> None:
+        self.starts = starts
+        self.calls: list[
+            tuple[int, datetime, int]
+        ] = []
+
+    def get_completed_starts_before(
+        self,
+        *,
+        player_id: int,
+        cutoff_time: datetime,
+        limit: int,
+    ) -> tuple[HistoricalPitcherStart, ...]:
+        self.calls.append(
+            (
+                player_id,
+                cutoff_time,
+                limit,
+            )
+        )
+
+        return self.starts[:limit]
 
 
 def build_context() -> FeatureGenerationContext:
@@ -337,3 +373,36 @@ def test_completed_team_game_cache_separates_teams() -> None:
         ),
     ]
     assert provider.cache_size == 2
+
+def test_get_completed_pitcher_starts_reuses_cached_result() -> None:
+    context = build_context()
+
+    team_repository = FakeTeamStatisticsRepository()
+    pitcher_repository = FakePitcherStatisticsRepository()
+
+    provider = FeatureDataProvider(
+        context,
+        team_statistics_repository=team_repository,
+        pitcher_statistics_repository=pitcher_repository,
+    )
+
+    first_result = provider.get_completed_pitcher_starts(
+        player_id=30,
+        limit=50,
+    )
+
+    second_result = provider.get_completed_pitcher_starts(
+        player_id=30,
+        limit=50,
+    )
+
+    assert first_result == ()
+    assert second_result is first_result
+    assert pitcher_repository.calls == [
+        (
+            30,
+            context.cutoff_time,
+            50,
+        ),
+    ]
+    assert provider.cache_size == 1

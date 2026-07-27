@@ -1,6 +1,10 @@
 from collections.abc import Callable, Hashable
 from typing import TypeVar, cast
 
+from sportsmodel.database.pitcher_statistics_repository import (
+    PitcherStatisticsRepository,
+    PostgresPitcherStatisticsRepository,
+)
 from sportsmodel.database.team_statistics_repository import (
     PostgresTeamStatisticsRepository,
     TeamStatisticsRepository,
@@ -10,6 +14,9 @@ from sportsmodel.features.context import (
 )
 from sportsmodel.features.validation import (
     validate_feature_generation_context,
+)
+from sportsmodel.models.historical_pitcher_start import (
+    HistoricalPitcherStart,
 )
 from sportsmodel.models.historical_team_game import (
     HistoricalTeamGame,
@@ -35,6 +42,9 @@ class FeatureDataProvider:
         team_statistics_repository: (
             TeamStatisticsRepository | None
         ) = None,
+        pitcher_statistics_repository: (
+            PitcherStatisticsRepository | None
+        ) = None,
     ) -> None:
         validate_feature_generation_context(context)
 
@@ -43,6 +53,11 @@ class FeatureDataProvider:
             team_statistics_repository
             if team_statistics_repository is not None
             else PostgresTeamStatisticsRepository()
+        )
+        self._pitcher_statistics_repository = (
+            pitcher_statistics_repository
+            if pitcher_statistics_repository is not None
+            else PostgresPitcherStatisticsRepository()
         )
         self._cache: dict[
             tuple[str, Hashable],
@@ -91,6 +106,38 @@ class FeatureDataProvider:
                 self._team_statistics_repository
                 .get_completed_games_before(
                     team_id=team_id,
+                    cutoff_time=self._context.cutoff_time,
+                    limit=limit,
+                )
+            ),
+        )
+
+    def get_completed_pitcher_starts(
+        self,
+        *,
+        player_id: int,
+        limit: int,
+    ) -> tuple[HistoricalPitcherStart, ...]:
+        """
+        Return a pitcher's completed starts before the context cutoff.
+
+        Results are returned newest first and cached by player, cutoff,
+        and requested limit.
+        """
+
+        cache_key = (
+            player_id,
+            self._context.cutoff_time,
+            limit,
+        )
+
+        return self.get_or_create(
+            namespace="completed_pitcher_starts",
+            key=cache_key,
+            loader=lambda: (
+                self._pitcher_statistics_repository
+                .get_completed_starts_before(
+                    player_id=player_id,
                     cutoff_time=self._context.cutoff_time,
                     limit=limit,
                 )
