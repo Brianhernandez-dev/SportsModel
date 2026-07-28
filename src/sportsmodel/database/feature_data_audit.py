@@ -513,7 +513,7 @@ def _audit_team_pitching_statistics(
     required_columns = {
         "game_id",
         "team_id",
-        "pitching_innings",
+        "pitching_outs",
         "runs_allowed",
         "earned_runs_allowed",
         "hits_allowed",
@@ -600,7 +600,7 @@ def _audit_player_pitching_statistics(
         "game_id",
         "team_id",
         "baseball_player_id",
-        "innings_pitched",
+        "pitching_outs",
         "hits_allowed",
         "runs_allowed",
         "earned_runs_allowed",
