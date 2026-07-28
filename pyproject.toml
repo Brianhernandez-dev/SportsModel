@@ -12,6 +12,11 @@ dependencies = [
     "scikit-learn>=1.9,<2",
 ]
 
+[project.optional-dependencies]
+dashboard = [
+    "streamlit>=1.60,<2",
+]
+
 [tool.setuptools]
 package-dir = {"" = "src"}
 
