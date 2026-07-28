@@ -2,8 +2,14 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from sportsmodel.database.bullpen_statistics_repository import (
+    BullpenStatisticsRepository,
+)
 from sportsmodel.database.team_statistics_repository import (
     TeamStatisticsRepository,
+)
+from sportsmodel.features.builders.bullpen import (
+    BullpenFeatureBuilder,
 )
 from sportsmodel.features.builders.team_feature_vector import (
     TeamFeatureVectorBuilder,
@@ -13,6 +19,12 @@ from sportsmodel.features.context import (
 )
 from sportsmodel.features.provider import (
     FeatureDataProvider,
+)
+from sportsmodel.models.bullpen_features import (
+    BullpenFeatures,
+)
+from sportsmodel.models.historical_bullpen_appearance import (
+    HistoricalBullpenAppearance,
 )
 from sportsmodel.models.historical_team_game import (
     HistoricalTeamGame,
@@ -56,6 +68,30 @@ class FakeTeamStatisticsRepository(
             team_id,
             (),
         )[:limit]
+
+
+class FakeBullpenStatisticsRepository(
+    BullpenStatisticsRepository,
+):
+    def __init__(self) -> None:
+        self.calls: list[
+            tuple[int, datetime]
+        ] = []
+
+    def get_completed_relief_appearances_before(
+        self,
+        *,
+        team_id: int,
+        cutoff_time: datetime,
+    ) -> tuple[HistoricalBullpenAppearance, ...]:
+        self.calls.append(
+            (
+                team_id,
+                cutoff_time,
+            )
+        )
+
+        return ()
 
 
 def build_context(
@@ -173,6 +209,9 @@ def build_provider(
     provider = FeatureDataProvider(
         context,
         team_statistics_repository=repository,
+        bullpen_statistics_repository=(
+            FakeBullpenStatisticsRepository()
+        ),
     )
 
     return provider, repository
@@ -357,7 +396,7 @@ def test_builder_combines_batting_and_pitching_features() -> None:
     )
 
     assert len(repository.calls) == 1
-    assert provider.cache_size == 1
+    assert provider.cache_size == 2
 
 
 def test_builder_builds_vector_for_away_team() -> None:
@@ -445,7 +484,7 @@ def test_home_and_away_vectors_use_separate_cache_entries() -> None:
     assert away_vector.team_id == context.away_team_id
 
     assert len(repository.calls) == 2
-    assert provider.cache_size == 2
+    assert provider.cache_size == 4
 
 
 def test_repeated_vector_build_reuses_provider_cache() -> None:
@@ -483,4 +522,51 @@ def test_repeated_vector_build_reuses_provider_cache() -> None:
 
     assert first_vector == second_vector
     assert len(repository.calls) == 1
-    assert provider.cache_size == 1
+    assert provider.cache_size == 2
+
+
+def test_builder_uses_bullpen_feature_builder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = build_context()
+
+    expected_bullpen = BullpenFeatures(
+        relief_appearances_season=12,
+        bullpen_earned_run_average_season=3.25,
+        bullpen_earned_run_average_last_10=2.75,
+        bullpen_whip_season=1.20,
+        bullpen_whip_last_10=1.10,
+        relief_innings_last_1_day=3.0,
+        relief_innings_last_3_days=8.0,
+        relief_innings_last_7_days=17.0,
+        relievers_used_previous_game=4,
+        back_to_back_usage_count=2,
+        games_in_last_10_window=10,
+    )
+
+    def build_bullpen(
+        self,
+        context,
+        provider,
+    ) -> BullpenFeatures:
+        return expected_bullpen
+
+    monkeypatch.setattr(
+        BullpenFeatureBuilder,
+        "build",
+        build_bullpen,
+    )
+
+    provider, _ = build_provider(
+        context=context,
+        games_by_team={},
+    )
+
+    vector = TeamFeatureVectorBuilder(
+        team_id=context.home_team_id,
+    ).build(
+        context,
+        provider,
+    )
+
+    assert vector.bullpen is expected_bullpen
