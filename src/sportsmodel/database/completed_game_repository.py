@@ -47,6 +47,17 @@ GET_COMPLETED_GAMES_QUERY = """
       AND g.away_team_id IS NOT NULL
       AND hg.home_score IS NOT NULL
       AND hg.away_score IS NOT NULL
+      AND (
+          SELECT COUNT(*)
+          FROM team_game_statistics AS team_stats
+          WHERE team_stats.game_id = g.game_id
+      ) = 2
+      AND (
+          SELECT COUNT(*)
+          FROM player_game_pitching_statistics AS starter_stats
+          WHERE starter_stats.game_id = g.game_id
+            AND starter_stats.is_starter IS TRUE
+      ) = 2
     ORDER BY
         g.game_date ASC,
         g.game_id ASC;
