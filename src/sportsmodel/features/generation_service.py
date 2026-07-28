@@ -1,5 +1,8 @@
 from datetime import datetime
 
+from sportsmodel.database.bullpen_statistics_repository import (
+    BullpenStatisticsRepository,
+)
 from sportsmodel.database.game_repository import (
     GameRepository,
     PostgresGameRepository,
@@ -47,6 +50,9 @@ class FeatureGenerationService:
         pitcher_statistics_repository: (
             PitcherStatisticsRepository | None
         ) = None,
+        bullpen_statistics_repository: (
+            BullpenStatisticsRepository | None
+        ) = None,
         game_feature_vector_builder: (
             GameFeatureVectorBuilder | None
         ) = None,
@@ -61,6 +67,9 @@ class FeatureGenerationService:
         )
         self._pitcher_statistics_repository = (
             pitcher_statistics_repository
+        )
+        self._bullpen_statistics_repository = (
+            bullpen_statistics_repository
         )
         self._game_feature_vector_builder = (
             game_feature_vector_builder
@@ -83,6 +92,9 @@ class FeatureGenerationService:
             ),
             pitcher_statistics_repository=(
                 self._pitcher_statistics_repository
+            ),
+            bullpen_statistics_repository=(
+                self._bullpen_statistics_repository
             ),
         )
 
