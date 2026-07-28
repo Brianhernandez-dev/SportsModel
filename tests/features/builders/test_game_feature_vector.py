@@ -2,6 +2,9 @@
 
 import pytest
 
+from sportsmodel.database.bullpen_statistics_repository import (
+    BullpenStatisticsRepository,
+)
 from sportsmodel.database.pitcher_statistics_repository import (
     PitcherStatisticsRepository,
 )
@@ -17,6 +20,9 @@ from sportsmodel.features.context import (
 )
 from sportsmodel.features.provider import (
     FeatureDataProvider,
+)
+from sportsmodel.models.historical_bullpen_appearance import (
+    HistoricalBullpenAppearance,
 )
 from sportsmodel.models.historical_pitcher_start import (
     HistoricalPitcherStart,
@@ -99,6 +105,30 @@ class FakePitcherStatisticsRepository(
             player_id,
             (),
         )[:limit]
+
+
+class FakeBullpenStatisticsRepository(
+    BullpenStatisticsRepository,
+):
+    def __init__(self) -> None:
+        self.calls: list[
+            tuple[int, datetime]
+        ] = []
+
+    def get_completed_relief_appearances_before(
+        self,
+        *,
+        team_id: int,
+        cutoff_time: datetime,
+    ) -> tuple[HistoricalBullpenAppearance, ...]:
+        self.calls.append(
+            (
+                team_id,
+                cutoff_time,
+            )
+        )
+
+        return ()
 
 
 def build_context(
@@ -229,6 +259,9 @@ def build_provider(
         context,
         team_statistics_repository=repository,
         pitcher_statistics_repository=pitcher_repository,
+        bullpen_statistics_repository=(
+            FakeBullpenStatisticsRepository()
+        ),
     )
 
     return provider, repository
@@ -337,7 +370,7 @@ def test_builder_assembles_complete_game_vector() -> None:
     )
 
     assert len(repository.calls) == 2
-    assert provider.cache_size == 4
+    assert provider.cache_size == 6
 
 
 def test_builder_preserves_known_starting_pitchers() -> None:
@@ -462,4 +495,8 @@ def test_repeated_build_reuses_team_history_cache() -> None:
 
     assert first_vector == second_vector
     assert len(repository.calls) == 2
-    assert provider.cache_size == 4
+    assert provider.cache_size == 6
+
+
+def test_default_feature_schema_version_is_1_2_0() -> None:
+    assert DEFAULT_FEATURE_SCHEMA_VERSION == "1.2.0"

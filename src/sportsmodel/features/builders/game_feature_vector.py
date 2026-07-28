@@ -18,7 +18,7 @@ from sportsmodel.models.game_feature_vector import (
 )
 
 
-DEFAULT_FEATURE_SCHEMA_VERSION = "1.1.0"
+DEFAULT_FEATURE_SCHEMA_VERSION = "1.2.0"
 
 
 class GameFeatureVectorBuilder(
@@ -27,9 +27,9 @@ class GameFeatureVectorBuilder(
     """
     Assemble the complete pregame feature vector for one MLB game.
 
-    Team batting and pitching features are generated through the team
-    feature-vector builders. Starting-pitcher statistics are generated
-    from completed historical starts available before the cutoff.
+    Team batting, pitching, and bullpen features are generated through
+    the team feature-vector builders. Starting-pitcher statistics are
+    generated from completed historical starts available before the cutoff.
     """
 
     def __init__(
