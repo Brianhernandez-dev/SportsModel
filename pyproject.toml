@@ -19,6 +19,9 @@ dependencies = [
 dashboard = [
     "streamlit>=1.60,<2",
 ]
+dev = [
+    "pytest>=9,<10",
+]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
