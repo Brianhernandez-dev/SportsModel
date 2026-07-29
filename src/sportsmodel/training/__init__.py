@@ -28,6 +28,10 @@ from sportsmodel.training.moneyline_baseline import (
     train_tuned_moneyline_baseline,
     tune_moneyline_regularization,
 )
+from sportsmodel.training.moneyline_candidate import (
+    MoneylineCandidateBuildResult,
+    build_moneyline_candidate,
+)
 from sportsmodel.training.moneyline_experiment import (
     MoneylineExperimentVariant,
     MoneylineModelComparison,
@@ -43,6 +47,8 @@ __all__ = [
     "MatchupFeatureDefinition",
     "MatchupFeatureTransformer",
     "MoneylineBaselineEvaluation",
+    "MoneylineCandidateBuildResult",
+    "build_moneyline_candidate",
     "MoneylineExperimentVariant",
     "MoneylineModelComparison",
     "MoneylineTrainingDataset",
