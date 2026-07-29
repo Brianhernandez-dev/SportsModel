@@ -60,9 +60,13 @@ def test_generate_builds_provider_and_returns_vector() -> None:
     builder = Mock()
     builder.build.return_value = expected_vector
 
+    bullpen_repository = Mock()
+    bullpen_repository.get_completed_relief_appearances_before.return_value = ()
+
     service = FeatureGenerationService(
         game_repository=Mock(),
         team_statistics_repository=Mock(),
+        bullpen_statistics_repository=bullpen_repository,
         game_feature_vector_builder=builder,
     )
 
@@ -76,6 +80,17 @@ def test_generate_builds_provider_and_returns_vector() -> None:
 
     assert actual_context == context
     assert provider.context == context
+
+    appearances = provider.get_completed_relief_appearances(
+        team_id=context.home_team_id,
+    )
+
+    assert appearances == ()
+
+    bullpen_repository.get_completed_relief_appearances_before.assert_called_once_with(
+        team_id=context.home_team_id,
+        cutoff_time=context.cutoff_time,
+    )
 
 
 def test_generate_for_game_loads_game_and_builds_context() -> None:

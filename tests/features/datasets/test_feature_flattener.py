@@ -62,6 +62,39 @@ def test_flatten_game_feature_vector_creates_stable_names() -> None:
     )
 
 
+def test_flatten_game_feature_vector_exports_all_bullpen_fields() -> None:
+    vector = _build_game_feature_vector()
+
+    flattened = flatten_game_feature_vector(vector)
+
+    bullpen_fields = {
+        "relief_appearances_season",
+        "bullpen_earned_run_average_season",
+        "bullpen_earned_run_average_last_10",
+        "bullpen_whip_season",
+        "bullpen_whip_last_10",
+        "relief_innings_last_1_day",
+        "relief_innings_last_3_days",
+        "relief_innings_last_7_days",
+        "relievers_used_previous_game",
+        "back_to_back_usage_count",
+        "games_in_last_10_window",
+    }
+
+    for side in (
+        "home",
+        "away",
+    ):
+        expected_names = {
+            f"{side}_bullpen_{field_name}"
+            for field_name in bullpen_fields
+        }
+
+        assert expected_names.issubset(
+            flattened.keys()
+        )
+
+
 def test_flatten_game_feature_vector_excludes_metadata() -> None:
     vector = _build_game_feature_vector()
 

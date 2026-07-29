@@ -1,6 +1,10 @@
 from collections.abc import Callable, Hashable
 from typing import TypeVar, cast
 
+from sportsmodel.database.bullpen_statistics_repository import (
+    BullpenStatisticsRepository,
+    PostgresBullpenStatisticsRepository,
+)
 from sportsmodel.database.pitcher_statistics_repository import (
     PitcherStatisticsRepository,
     PostgresPitcherStatisticsRepository,
@@ -14,6 +18,9 @@ from sportsmodel.features.context import (
 )
 from sportsmodel.features.validation import (
     validate_feature_generation_context,
+)
+from sportsmodel.models.historical_bullpen_appearance import (
+    HistoricalBullpenAppearance,
 )
 from sportsmodel.models.historical_pitcher_start import (
     HistoricalPitcherStart,
@@ -45,6 +52,9 @@ class FeatureDataProvider:
         pitcher_statistics_repository: (
             PitcherStatisticsRepository | None
         ) = None,
+        bullpen_statistics_repository: (
+            BullpenStatisticsRepository | None
+        ) = None,
     ) -> None:
         validate_feature_generation_context(context)
 
@@ -58,6 +68,11 @@ class FeatureDataProvider:
             pitcher_statistics_repository
             if pitcher_statistics_repository is not None
             else PostgresPitcherStatisticsRepository()
+        )
+        self._bullpen_statistics_repository = (
+            bullpen_statistics_repository
+            if bullpen_statistics_repository is not None
+            else PostgresBullpenStatisticsRepository()
         )
         self._cache: dict[
             tuple[str, Hashable],
@@ -140,6 +155,35 @@ class FeatureDataProvider:
                     player_id=player_id,
                     cutoff_time=self._context.cutoff_time,
                     limit=limit,
+                )
+            ),
+        )
+
+    def get_completed_relief_appearances(
+        self,
+        *,
+        team_id: int,
+    ) -> tuple[HistoricalBullpenAppearance, ...]:
+        """
+        Return same-season relief appearances before the cutoff.
+
+        Results are returned newest game first and cached by team and
+        cutoff time.
+        """
+
+        cache_key = (
+            team_id,
+            self._context.cutoff_time,
+        )
+
+        return self.get_or_create(
+            namespace="completed_relief_appearances",
+            key=cache_key,
+            loader=lambda: (
+                self._bullpen_statistics_repository
+                .get_completed_relief_appearances_before(
+                    team_id=team_id,
+                    cutoff_time=self._context.cutoff_time,
                 )
             ),
         )

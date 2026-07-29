@@ -7,6 +7,10 @@ name = "sportsmodel"
 version = "0.1.0"
 description = "Sports betting analytics platform"
 requires-python = ">=3.12"
+dependencies = [
+    "joblib>=1.4,<2",
+    "scikit-learn>=1.9,<2",
+]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
