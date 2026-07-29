@@ -478,6 +478,94 @@ def chronological_train_test_split(
     )
 
 
+def fit_moneyline_baseline(
+    dataset: MoneylineTrainingDataset,
+    *,
+    regularization_c: float = DEFAULT_REGULARIZATION_C,
+) -> TrainedMoneylineBaseline:
+    """
+    Fit a selected Moneyline model on every dataset example.
+
+    Model selection and out-of-sample evaluation must be completed
+    separately before this function is used to create a forward-
+    prediction artifact.
+    """
+
+    if regularization_c <= 0:
+        raise ValueError(
+            "Regularization C must be greater than zero."
+        )
+
+    training_examples = dataset.examples
+
+    if len(training_examples) < 2:
+        raise ValueError(
+            "At least two training examples are required."
+        )
+
+    training_targets = [
+        example.home_team_won
+        for example in training_examples
+    ]
+
+    if len(set(training_targets)) < 2:
+        raise ValueError(
+            "Training examples must contain both target classes."
+        )
+
+    (
+        active_indexes,
+        active_feature_names,
+        dropped_all_missing_features,
+        dropped_constant_features,
+        dropped_duplicate_features,
+    ) = _select_training_features(
+        feature_names=dataset.feature_names,
+        training_examples=training_examples,
+    )
+
+    if not active_feature_names:
+        raise ValueError(
+            "No usable training features remain after filtering."
+        )
+
+    training_matrix = _build_feature_matrix(
+        examples=training_examples,
+        active_indexes=active_indexes,
+    )
+
+    pipeline = _build_pipeline(
+        regularization_c=regularization_c,
+    )
+
+    pipeline.fit(
+        training_matrix,
+        training_targets,
+    )
+
+    return TrainedMoneylineBaseline(
+        feature_schema_version=(
+            dataset.feature_schema_version
+        ),
+        active_feature_names=active_feature_names,
+        dropped_all_missing_features=(
+            dropped_all_missing_features
+        ),
+        dropped_constant_features=(
+            dropped_constant_features
+        ),
+        dropped_duplicate_features=(
+            dropped_duplicate_features
+        ),
+        regularization_c=regularization_c,
+        training_rows=len(training_examples),
+        training_end_time=(
+            training_examples[-1].game_start_time
+        ),
+        pipeline=pipeline,
+    )
+
+
 def train_moneyline_baseline(
     dataset: MoneylineTrainingDataset,
     *,
