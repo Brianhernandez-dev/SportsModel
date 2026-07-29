@@ -1,9 +1,9 @@
 import streamlit as st
 
-from sportsmodel.dashboard.pages.data_quality import (
+from sportsmodel.dashboard.views.data_quality import (
     render as render_data_quality,
 )
-from sportsmodel.dashboard.pages.system_health import (
+from sportsmodel.dashboard.views.system_health import (
     render as render_system_health,
 )
 
