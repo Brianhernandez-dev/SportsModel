@@ -8,6 +8,7 @@ from sportsmodel.database.connection import get_connection
 from sportsmodel.ingest.game_matching import (
     get_or_create_canonical_game,
 )
+from sportsmodel.ingest.team_identity import normalize_team_name
 
 
 SPORT = "baseball_mlb"
@@ -125,13 +126,15 @@ def mark_ingestion_run_failed(
 def get_team_id(cursor, team_name):
     """Return a team ID, creating the team when necessary."""
 
+    canonical_team_name = normalize_team_name(team_name)
+
     cursor.execute(
         """
         INSERT INTO teams (team_name)
         VALUES (%s)
         ON CONFLICT (team_name) DO NOTHING;
         """,
-        (team_name,),
+        (canonical_team_name,),
     )
 
     cursor.execute(
@@ -140,7 +143,7 @@ def get_team_id(cursor, team_name):
         FROM teams
         WHERE team_name = %s;
         """,
-        (team_name,),
+        (canonical_team_name,),
     )
 
     return cursor.fetchone()[0]

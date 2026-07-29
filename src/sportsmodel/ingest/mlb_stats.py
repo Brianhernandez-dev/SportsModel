@@ -13,6 +13,7 @@ from sportsmodel.ingest.boxscore_ingestion import ingest_boxscore
 from sportsmodel.ingest.game_matching import (
     get_or_create_canonical_game,
 )
+from sportsmodel.ingest.team_identity import normalize_team_name
 
 
 SOURCE_NAME = "mlb_stats"
@@ -183,13 +184,15 @@ def get_team_id(
 ) -> int:
     """Return a team ID, creating the team when necessary."""
 
+    canonical_team_name = normalize_team_name(team_name)
+
     cursor.execute(
         """
         INSERT INTO teams (team_name)
         VALUES (%s)
         ON CONFLICT (team_name) DO NOTHING;
         """,
-        (team_name,),
+        (canonical_team_name,),
     )
 
     cursor.execute(
@@ -198,7 +201,7 @@ def get_team_id(
         FROM teams
         WHERE team_name = %s;
         """,
-        (team_name,),
+        (canonical_team_name,),
     )
 
     row = cursor.fetchone()
