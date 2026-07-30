@@ -1,11 +1,17 @@
-﻿from datetime import datetime
-from decimal import Decimal
-
-import streamlit as st
+﻿import streamlit as st
 
 from sportsmodel.auditing.moneyline_live_pipeline import (
     MoneylineLivePipelineAudit,
     audit_moneyline_live_pipeline,
+)
+from sportsmodel.dashboard.moneyline_presenter import (
+    build_all_prediction_table,
+    build_candidate_table,
+    calculate_average_candidate_edge,
+    calculate_average_candidate_ev,
+    format_percent,
+    format_points,
+    format_units,
 )
 from sportsmodel.database.moneyline_live_dashboard_repository import (
     build_moneyline_live_performance,
@@ -77,52 +83,13 @@ def load_moneyline_live_audit(
     )
 
 
-def format_percent(
-    value: Decimal | None,
-) -> str:
-    if value is None:
-        return "Unavailable"
-
-    return f"{float(value):.2%}"
-
-
-def format_points(
-    value: Decimal | None,
-) -> str:
-    if value is None:
-        return "Unavailable"
-
-    return (
-        f"{float(value * Decimal('100')):+.2f} pp"
-    )
-
-
-def format_units(
-    value: Decimal | None,
-) -> str:
-    if value is None:
-        return "Pending"
-
-    return f"{value:+.4f} units"
-
-
-def format_price(
-    price: int,
-) -> str:
-    return f"{price:+d}"
-
-
-def format_datetime(
-    value: datetime,
-) -> str:
-    return value.strftime(
-        "%b %d, %Y %I:%M %p UTC"
-    )
-
-
 def format_slate(
     slate: MoneylineLiveSlate,
 ) -> str:
+    """
+    Format one selectable prediction and odds slate.
+    """
+
     return (
         f"{slate.target_date.isoformat()} — "
         f"Prediction Run {slate.prediction_run_id} / "
@@ -135,7 +102,7 @@ def render_pipeline_state(
     audit: MoneylineLivePipelineAudit,
 ) -> None:
     """
-    Render the current pipeline state with appropriate severity.
+    Render the pipeline state with appropriate severity.
     """
 
     if audit.pipeline_state == "complete":
@@ -157,7 +124,7 @@ def render_pipeline_state(
         st.info(
             "Pipeline state: **Awaiting evaluations** — "
             "some predictions have not been evaluated "
-            "against a stored odds run."
+            "against the selected odds run."
         )
         return
 
@@ -172,103 +139,6 @@ def render_pipeline_state(
                 audit.integrity_issues
             )
         )
-
-
-def build_game_table(
-    games: tuple[MoneylineLiveGame, ...],
-) -> list[dict[str, object]]:
-    """
-    Build display rows for Streamlit.
-    """
-
-    rows: list[dict[str, object]] = []
-
-    for game in games:
-        if (
-            game.home_score is not None
-            and game.away_score is not None
-        ):
-            final_score = (
-                f"{game.away_team_name} "
-                f"{game.away_score}, "
-                f"{game.home_team_name} "
-                f"{game.home_score}"
-            )
-        else:
-            final_score = "Pending"
-
-        if game.outcome is not None:
-            status = game.outcome.upper()
-        elif game.qualifies_as_paper_candidate:
-            status = "PAPER CANDIDATE"
-        else:
-            status = "NOT QUALIFIED"
-
-        rows.append(
-            {
-                "Game": (
-                    f"{game.away_team_name} at "
-                    f"{game.home_team_name}"
-                ),
-                "Start": format_datetime(
-                    game.game_start_time
-                ),
-                "Model lean": (
-                    game.predicted_team_name
-                ),
-                "Model probability": (
-                    format_percent(
-                        game.model_probability
-                    )
-                ),
-                "Market no-vig": (
-                    format_percent(
-                        game.market_no_vig_probability
-                    )
-                ),
-                "Market edge": (
-                    format_points(
-                        game.model_market_edge
-                    )
-                ),
-                "Best price": (
-                    format_price(game.price)
-                ),
-                "Sportsbook": (
-                    game.sportsbook_name
-                ),
-                "Model EV": (
-                    format_percent(
-                        game.model_expected_value
-                    )
-                ),
-                "Starter coverage": (
-                    game.starter_coverage.title()
-                ),
-                "Missing values": (
-                    game.missing_raw_value_count
-                ),
-                "Paper candidate": (
-                    "Yes"
-                    if game.qualifies_as_paper_candidate
-                    else "No"
-                ),
-                "Status": status,
-                "Final score": final_score,
-                "Profit": format_units(
-                    game.profit_units
-                ),
-                "Exclusion reasons": (
-                    ", ".join(
-                        game.disqualification_reasons
-                    )
-                    if game.disqualification_reasons
-                    else ""
-                ),
-            }
-        )
-
-    return rows
 
 
 def render() -> None:
@@ -341,8 +211,18 @@ def render() -> None:
         st.code(str(error))
         return
 
-    performance = (
-        build_moneyline_live_performance(
+    performance = build_moneyline_live_performance(
+        games
+    )
+
+    average_candidate_ev = (
+        calculate_average_candidate_ev(
+            games
+        )
+    )
+
+    average_candidate_edge = (
+        calculate_average_candidate_edge(
             games
         )
     )
@@ -390,12 +270,10 @@ def render() -> None:
         st.write(
             {
                 "Prediction run ID": (
-                    selected_slate
-                    .prediction_run_id
+                    selected_slate.prediction_run_id
                 ),
                 "Odds ingestion run ID": (
-                    selected_slate
-                    .odds_ingestion_run_id
+                    selected_slate.odds_ingestion_run_id
                 ),
                 "Policy version": (
                     selected_slate.policy_version
@@ -427,13 +305,40 @@ def render() -> None:
             }
         )
 
+    st.subheader("Candidate value summary")
+
+    (
+        candidate_count_column,
+        candidate_ev_column,
+        candidate_edge_column,
+    ) = st.columns(3)
+
+    candidate_count_column.metric(
+        label="Qualified candidates",
+        value=f"{audit.paper_candidates:,}",
+    )
+
+    candidate_ev_column.metric(
+        label="Average candidate EV",
+        value=format_percent(
+            average_candidate_ev
+        ),
+    )
+
+    candidate_edge_column.metric(
+        label="Average candidate market edge",
+        value=format_points(
+            average_candidate_edge
+        ),
+    )
+
     st.subheader("Forward paper performance")
 
     (
         record_column,
         profit_column,
         roi_column,
-        average_ev_column,
+        average_settled_ev_column,
         drawdown_column,
     ) = st.columns(5)
 
@@ -460,11 +365,10 @@ def render() -> None:
         ),
     )
 
-    average_ev_column.metric(
-        label="Average model EV",
+    average_settled_ev_column.metric(
+        label="Average settled EV",
         value=format_percent(
-            performance
-            .average_model_expected_value
+            performance.average_model_expected_value
         ),
     )
 
@@ -486,11 +390,41 @@ def render() -> None:
 
     st.subheader("Game predictions and evaluations")
 
-    st.dataframe(
-        build_game_table(games),
-        use_container_width=True,
-        hide_index=True,
+    (
+        candidates_tab,
+        all_predictions_tab,
+    ) = st.tabs(
+        (
+            "Paper candidates",
+            "All predictions",
+        )
     )
+
+    with candidates_tab:
+        candidate_rows = build_candidate_table(
+            games
+        )
+
+        if candidate_rows:
+            st.dataframe(
+                candidate_rows,
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            st.info(
+                "The selected slate has no qualified "
+                "paper candidates."
+            )
+
+    with all_predictions_tab:
+        st.dataframe(
+            build_all_prediction_table(
+                games
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
 
     if st.button(
         "Refresh Moneyline live data"
