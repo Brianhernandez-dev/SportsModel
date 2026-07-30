@@ -13,7 +13,7 @@ from sportsmodel.ingest.team_identity import normalize_team_name
 
 SPORT = "baseball_mlb"
 REGIONS = "us"
-MARKETS = "h2h,spreads,totals"
+MARKETS = "h2h"
 ODDS_FORMAT = "american"
 SOURCE_NAME = "odds_api"
 
@@ -293,7 +293,7 @@ def save_market_selection(
 
 
 def fetch_live_odds():
-    """Fetch current MLB moneyline, spread, and total odds."""
+    """Fetch current MLB Moneyline odds."""
 
     api_key = os.getenv("ODDS_API_KEY")
 
@@ -395,11 +395,7 @@ def fetch_live_odds():
                     for market in bookmaker.get("markets", []):
                         market_type = market.get("key")
 
-                        if market_type not in {
-                            "h2h",
-                            "spreads",
-                            "totals",
-                        }:
+                        if market_type != "h2h":
                             continue
 
                         for outcome in market.get("outcomes", []):
