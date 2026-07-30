@@ -20,12 +20,17 @@ from sportsmodel.training.moneyline_baseline import (
     RegularizationTuningResult,
     TrainedMoneylineBaseline,
     chronological_train_test_split,
+    fit_moneyline_baseline,
     load_moneyline_training_csv,
     load_trained_moneyline_baseline,
     save_trained_moneyline_baseline,
     train_moneyline_baseline,
     train_tuned_moneyline_baseline,
     tune_moneyline_regularization,
+)
+from sportsmodel.training.moneyline_candidate import (
+    MoneylineCandidateBuildResult,
+    build_moneyline_candidate,
 )
 from sportsmodel.training.moneyline_experiment import (
     MoneylineExperimentVariant,
@@ -42,6 +47,8 @@ __all__ = [
     "MatchupFeatureDefinition",
     "MatchupFeatureTransformer",
     "MoneylineBaselineEvaluation",
+    "MoneylineCandidateBuildResult",
+    "build_moneyline_candidate",
     "MoneylineExperimentVariant",
     "MoneylineModelComparison",
     "MoneylineTrainingDataset",
@@ -53,6 +60,7 @@ __all__ = [
     "TrainedMatchupMoneylineModel",
     "TrainedMoneylineBaseline",
     "chronological_train_test_split",
+    "fit_moneyline_baseline",
     "compare_raw_and_matchup_moneyline_models",
     "load_moneyline_training_csv",
     "load_trained_matchup_moneyline_model",
