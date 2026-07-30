@@ -1,5 +1,5 @@
-from sportsmodel.ingest.odds_api import fetch_live_odds
+﻿from sportsmodel.ingest.odds_cli import main
 
 
 if __name__ == "__main__":
-    fetch_live_odds()
+    raise SystemExit(main())
