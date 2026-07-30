@@ -1,7 +1,10 @@
-import streamlit as st
+﻿import streamlit as st
 
 from sportsmodel.dashboard.views.data_quality import (
     render as render_data_quality,
+)
+from sportsmodel.dashboard.views.moneyline_live import (
+    render as render_moneyline_live,
 )
 from sportsmodel.dashboard.views.system_health import (
     render as render_system_health,
@@ -25,12 +28,17 @@ def main() -> None:
         label="Navigation",
         options=(
             "System Health",
+            "Moneyline Live",
             "Data Quality",
         ),
     )
 
     if page_name == "System Health":
         render_system_health()
+        return
+
+    if page_name == "Moneyline Live":
+        render_moneyline_live()
         return
 
     render_data_quality()
