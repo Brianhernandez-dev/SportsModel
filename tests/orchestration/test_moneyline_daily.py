@@ -1050,3 +1050,52 @@ def test_pregame_runner_reuses_completed_workflow(
     )
 
     assert result is reused_result
+
+
+def test_gets_postgame_run_ids() -> None:
+    workflow = SimpleNamespace(
+        moneyline_prediction_run_id=25,
+        odds_ingestion_run_id=182,
+    )
+
+    assert moneyline_daily._get_postgame_run_ids(
+        workflow
+    ) == (25, 182)
+
+
+@pytest.mark.parametrize(
+    (
+        "prediction_run_id",
+        "odds_run_id",
+        "expected_message",
+    ),
+    [
+        (
+            None,
+            182,
+            "no prediction run ID",
+        ),
+        (
+            25,
+            None,
+            "no odds ingestion run ID",
+        ),
+    ],
+)
+def test_rejects_missing_postgame_run_ids(
+    prediction_run_id,
+    odds_run_id,
+    expected_message,
+) -> None:
+    workflow = SimpleNamespace(
+        moneyline_prediction_run_id=prediction_run_id,
+        odds_ingestion_run_id=odds_run_id,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match=expected_message,
+    ):
+        moneyline_daily._get_postgame_run_ids(
+            workflow
+        )

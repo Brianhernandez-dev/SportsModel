@@ -1,4 +1,4 @@
-﻿from collections.abc import Callable
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
 from typing import Any
@@ -16,14 +16,19 @@ from sportsmodel.database.moneyline_daily_workflow_repository import (
     mark_moneyline_daily_workflow_awaiting_results,
     mark_moneyline_daily_workflow_completed,
     mark_moneyline_daily_workflow_failed,
+    mark_moneyline_daily_settlement_completed,
     record_moneyline_daily_odds_run,
     record_moneyline_daily_prediction_run,
     start_moneyline_daily_workflow_attempt,
 )
 from sportsmodel.ingest.mlb_schedule import sync_mlb_schedule
+from sportsmodel.ingest.mlb_stats import fetch_historical_results
 from sportsmodel.ingest.odds_api import fetch_live_odds
 from sportsmodel.predictions.moneyline_service import (
     run_moneyline_predictions,
+)
+from sportsmodel.settlement.moneyline_paper_service import (
+    settle_moneyline_paper_candidate_run,
 )
 
 
@@ -38,6 +43,21 @@ PredictionRunner = Callable[..., Any]
 OddsFetcher = Callable[[], Any]
 EvaluationRunner = Callable[..., Any]
 PipelineAuditor = Callable[..., Any]
+ResultsFetcher = Callable[..., Any]
+SettlementRunner = Callable[..., Any]
+
+
+@dataclass(frozen=True)
+class MoneylineDailyPostgameResult:
+    workflow_run_id: int
+    target_date: date
+    prediction_run_id: int
+    odds_ingestion_run_id: int
+    games_processed: int
+    boxscores_processed: int
+    settlements_saved: int
+    pending_candidates: int
+    pipeline_state: str
 
 
 @dataclass(frozen=True)
@@ -554,3 +574,30 @@ def run_moneyline_daily_pregame(
             connection_factory=connection_factory,
         )
         raise
+
+
+
+def _get_postgame_run_ids(
+    workflow: Any,
+) -> tuple[int, int]:
+    prediction_run_id = (
+        workflow.moneyline_prediction_run_id
+    )
+    odds_ingestion_run_id = (
+        workflow.odds_ingestion_run_id
+    )
+
+    if prediction_run_id is None:
+        raise RuntimeError(
+            "Daily workflow has no prediction run ID."
+        )
+
+    if odds_ingestion_run_id is None:
+        raise RuntimeError(
+            "Daily workflow has no odds ingestion run ID."
+        )
+
+    return (
+        prediction_run_id,
+        odds_ingestion_run_id,
+    )
