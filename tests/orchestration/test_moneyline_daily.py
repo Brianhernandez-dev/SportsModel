@@ -831,3 +831,105 @@ def test_resumes_pregame_after_prediction(
     assert result.odds_ingestion_run_id == 182
     assert calls[0]["prediction_run_id"] == 25
     assert calls[0]["odds_ingestion_run_id"] == 182
+
+
+def test_resumes_pregame_at_evaluation(
+    monkeypatch,
+) -> None:
+    evaluation_calls = []
+
+    workflow = SimpleNamespace(
+        moneyline_daily_workflow_run_id=12,
+        target_date=date(2026, 8, 2),
+        moneyline_prediction_run_id=25,
+        odds_ingestion_run_id=182,
+    )
+    refreshed_workflow = SimpleNamespace(
+        moneyline_daily_workflow_run_id=12,
+        target_date=date(2026, 8, 2),
+        moneyline_prediction_run_id=25,
+        odds_ingestion_run_id=182,
+        odds_remaining_requests=487,
+    )
+
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_prepare_pregame_workflow",
+        lambda **arguments: (
+            workflow,
+            None,
+            "evaluation",
+        ),
+    )
+
+    def unexpected_prediction(**arguments):
+        raise AssertionError(
+            "Existing prediction run should be reused."
+        )
+
+    def unexpected_odds(**arguments):
+        raise AssertionError(
+            "Existing odds run should be reused."
+        )
+
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_run_schedule_and_prediction",
+        unexpected_prediction,
+    )
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_run_odds_ingestion",
+        unexpected_odds,
+    )
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_run_market_evaluation",
+        lambda **arguments: evaluation_calls.append(
+            arguments
+        ),
+    )
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_update_workflow",
+        lambda **arguments: None,
+    )
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_mark_pregame_terminal_state",
+        lambda **arguments: None,
+    )
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_get_or_create_workflow",
+        lambda **arguments: refreshed_workflow,
+    )
+
+    audit = SimpleNamespace(
+        integrity_issues=(),
+        predictions=10,
+        evaluated_predictions=10,
+        evaluations=10,
+        paper_candidates=5,
+        settlements=0,
+        pipeline_state="awaiting_results",
+    )
+
+    result = moneyline_daily.run_moneyline_daily_pregame(
+        target_date=date(2026, 8, 2),
+        connection_factory=lambda: None,
+        pipeline_auditor=lambda **arguments: audit,
+    )
+
+    assert result.prediction_run_id == 25
+    assert result.odds_ingestion_run_id == 182
+    assert evaluation_calls == [
+        {
+            "prediction_run_id": 25,
+            "odds_ingestion_run_id": 182,
+            "evaluator": (
+                moneyline_daily
+                .evaluate_moneyline_prediction_run
+            ),
+        }
+    ]
