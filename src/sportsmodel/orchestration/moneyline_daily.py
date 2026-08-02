@@ -361,3 +361,24 @@ def _record_pregame_failure(
         )
     except Exception:
         pass
+
+
+def _start_pregame_attempt(
+    *,
+    workflow: Any,
+    connection_factory: ConnectionFactory,
+) -> str:
+    current_stage = _determine_pregame_resume_stage(
+        workflow
+    )
+
+    _update_workflow(
+        connection_factory=connection_factory,
+        updater=start_moneyline_daily_workflow_attempt,
+        workflow_run_id=(
+            workflow.moneyline_daily_workflow_run_id
+        ),
+        current_stage=current_stage,
+    )
+
+    return current_stage

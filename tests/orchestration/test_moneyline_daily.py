@@ -518,3 +518,34 @@ def test_failure_recording_does_not_mask_original_error(
         error=RuntimeError("Prediction failed."),
         connection_factory=lambda: None,
     )
+
+
+def test_starts_pregame_attempt_at_resume_stage(
+    monkeypatch,
+) -> None:
+    updates = []
+
+    workflow = SimpleNamespace(
+        moneyline_daily_workflow_run_id=12,
+        moneyline_prediction_run_id=25,
+        odds_ingestion_run_id=None,
+    )
+
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_update_workflow",
+        lambda **arguments: updates.append(arguments),
+    )
+
+    stage = moneyline_daily._start_pregame_attempt(
+        workflow=workflow,
+        connection_factory=lambda: None,
+    )
+
+    assert stage == "odds_ingestion"
+    assert updates[0]["workflow_run_id"] == 12
+    assert updates[0]["current_stage"] == "odds_ingestion"
+    assert (
+        updates[0]["updater"]
+        is moneyline_daily.start_moneyline_daily_workflow_attempt
+    )
