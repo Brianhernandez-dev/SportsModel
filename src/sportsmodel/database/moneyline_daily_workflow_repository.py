@@ -169,3 +169,68 @@ def record_moneyline_daily_prediction_run(
             "Daily Moneyline prediction update "
             "did not affect exactly one row."
         )
+
+
+def record_moneyline_daily_odds_run(
+    cursor: Any,
+    *,
+    workflow_run_id: int,
+    odds_ingestion_run_id: int,
+    status_code: int,
+    remaining_requests: int | None,
+    used_requests: int | None,
+) -> None:
+    """
+    Persist the completed odds run and advance to evaluation.
+    """
+
+    if workflow_run_id <= 0:
+        raise ValueError(
+            "Daily workflow run ID must be greater than zero."
+        )
+
+    if odds_ingestion_run_id <= 0:
+        raise ValueError(
+            "Odds ingestion run ID must be greater than zero."
+        )
+
+    if not 100 <= status_code <= 599:
+        raise ValueError(
+            "Odds HTTP status code must be between 100 and 599."
+        )
+
+    if remaining_requests is not None and remaining_requests < 0:
+        raise ValueError(
+            "Remaining requests cannot be negative."
+        )
+
+    if used_requests is not None and used_requests < 0:
+        raise ValueError(
+            "Used requests cannot be negative."
+        )
+
+    cursor.execute(
+        """
+        UPDATE moneyline_daily_workflow_runs
+        SET odds_ingestion_run_id = %s,
+            odds_status_code = %s,
+            odds_remaining_requests = %s,
+            odds_used_requests = %s,
+            current_stage = 'evaluation',
+            updated_at = CURRENT_TIMESTAMP
+        WHERE moneyline_daily_workflow_run_id = %s;
+        """,
+        (
+            odds_ingestion_run_id,
+            status_code,
+            remaining_requests,
+            used_requests,
+            workflow_run_id,
+        ),
+    )
+
+    if cursor.rowcount != 1:
+        raise RuntimeError(
+            "Daily Moneyline odds update "
+            "did not affect exactly one row."
+        )

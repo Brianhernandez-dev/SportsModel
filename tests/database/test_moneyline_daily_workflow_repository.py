@@ -4,6 +4,7 @@ import pytest
 
 from sportsmodel.database.moneyline_daily_workflow_repository import (
     get_or_create_moneyline_daily_workflow_run,
+    record_moneyline_daily_odds_run,
     record_moneyline_daily_prediction_run,
     start_moneyline_daily_workflow_attempt,
 )
@@ -160,4 +161,44 @@ def test_prediction_update_requires_existing_workflow() -> None:
             cursor,
             workflow_run_id=12,
             prediction_run_id=25,
+        )
+
+
+
+def test_records_odds_run_and_quota() -> None:
+    cursor = FakeUpdateCursor()
+
+    record_moneyline_daily_odds_run(
+        cursor,
+        workflow_run_id=12,
+        odds_ingestion_run_id=182,
+        status_code=200,
+        remaining_requests=487,
+        used_requests=13,
+    )
+
+    assert "current_stage = 'evaluation'" in cursor.executed_query
+    assert cursor.executed_parameters == (
+        182,
+        200,
+        487,
+        13,
+        12,
+    )
+
+
+def test_odds_update_requires_existing_workflow() -> None:
+    cursor = FakeUpdateCursor(rowcount=0)
+
+    with pytest.raises(
+        RuntimeError,
+        match="exactly one row",
+    ):
+        record_moneyline_daily_odds_run(
+            cursor,
+            workflow_run_id=12,
+            odds_ingestion_run_id=182,
+            status_code=200,
+            remaining_requests=487,
+            used_requests=13,
         )
