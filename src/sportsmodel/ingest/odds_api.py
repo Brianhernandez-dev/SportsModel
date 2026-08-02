@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import os
 
@@ -16,6 +17,31 @@ REGIONS = "us"
 MARKETS = "h2h"
 ODDS_FORMAT = "american"
 SOURCE_NAME = "odds_api"
+
+
+@dataclass(frozen=True)
+class OddsIngestionResult:
+    odds_ingestion_run_id: int
+    status_code: int
+    remaining_requests: int | None
+    used_requests: int | None
+    games_returned: int
+    games_processed: int
+    selections_inserted: int
+    selections_skipped: int
+
+
+def _parse_quota_header(
+    value: str | None,
+) -> int | None:
+    if value is None:
+        return None
+
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
 
 def parse_commence_time(value: str) -> datetime:
     """
@@ -292,7 +318,7 @@ def save_market_selection(
     )
 
 
-def fetch_live_odds():
+def fetch_live_odds() -> OddsIngestionResult:
     """Fetch current MLB Moneyline odds."""
 
     api_key = os.getenv("ODDS_API_KEY")
@@ -307,6 +333,10 @@ def fetch_live_odds():
     games_processed = 0
     selections_inserted = 0
     selections_skipped = 0
+
+    status_code = 0
+    remaining_requests = None
+    used_requests = None
 
     try:
         ingestion_run_id = create_ingestion_run(connection)
@@ -328,20 +358,32 @@ def fetch_live_odds():
             timeout=30,
         )
 
-        print("Status Code:", response.status_code)
+        status_code = response.status_code
+        remaining_requests = _parse_quota_header(
+            response.headers.get(
+                "x-requests-remaining"
+            )
+        )
+        used_requests = _parse_quota_header(
+            response.headers.get(
+                "x-requests-used"
+            )
+        )
+
+        print("Status Code:", status_code)
         print(
             "Remaining Requests:",
-            response.headers.get("x-requests-remaining"),
+            remaining_requests,
         )
         print(
             "Used Requests:",
-            response.headers.get("x-requests-used"),
+            used_requests,
         )
 
-        if response.status_code != 200:
+        if status_code != 200:
             raise RuntimeError(
                 f"Odds API request failed with status "
-                f"{response.status_code}: {response.text}"
+                f"{status_code}: {response.text}"
             )
 
         games = response.json()
@@ -454,3 +496,14 @@ def fetch_live_odds():
     print(f"Games processed: {games_processed}")
     print(f"Market selections inserted: {selections_inserted}")
     print(f"Selections skipped: {selections_skipped}")
+
+    return OddsIngestionResult(
+        odds_ingestion_run_id=ingestion_run_id,
+        status_code=status_code,
+        remaining_requests=remaining_requests,
+        used_requests=used_requests,
+        games_returned=games_returned,
+        games_processed=games_processed,
+        selections_inserted=selections_inserted,
+        selections_skipped=selections_skipped,
+    )
