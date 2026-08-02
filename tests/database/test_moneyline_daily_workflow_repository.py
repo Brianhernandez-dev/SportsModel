@@ -1,4 +1,4 @@
-﻿from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone
 
 import pytest
 
@@ -6,6 +6,7 @@ from sportsmodel.database.moneyline_daily_workflow_repository import (
     advance_moneyline_daily_workflow_stage,
     get_or_create_moneyline_daily_workflow_run,
     mark_moneyline_daily_workflow_awaiting_results,
+    mark_moneyline_daily_postgame_pending,
     mark_moneyline_daily_settlement_completed,
     mark_moneyline_daily_workflow_completed,
     mark_moneyline_daily_workflow_failed,
@@ -311,3 +312,32 @@ def test_marks_workflow_completed() -> None:
     assert "status = 'completed'" in cursor.executed_query
     assert "current_stage = 'complete'" in cursor.executed_query
     assert cursor.executed_parameters == (12,)
+
+
+
+def test_marks_postgame_pending() -> None:
+    cursor = FakeUpdateCursor()
+
+    mark_moneyline_daily_postgame_pending(
+        cursor,
+        workflow_run_id=12,
+    )
+
+    assert "status = 'awaiting_results'" in cursor.executed_query
+    assert "current_stage = 'results_ingestion'" in cursor.executed_query
+    assert "pregame_completed_at" not in cursor.executed_query
+    assert cursor.executed_parameters == (12,)
+
+
+def test_postgame_pending_requires_existing_workflow() -> None:
+    cursor = FakeUpdateCursor(rowcount=0)
+
+    with pytest.raises(
+        RuntimeError,
+        match="exactly one row",
+    ):
+        mark_moneyline_daily_postgame_pending(
+            cursor,
+            workflow_run_id=12,
+        )
+

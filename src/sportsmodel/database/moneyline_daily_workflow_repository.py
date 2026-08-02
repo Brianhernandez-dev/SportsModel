@@ -417,3 +417,37 @@ def mark_moneyline_daily_workflow_completed(
             "Daily Moneyline completion update "
             "did not affect exactly one row."
         )
+
+
+def mark_moneyline_daily_postgame_pending(
+    cursor: Any,
+    *,
+    workflow_run_id: int,
+) -> None:
+    """
+    Return an incomplete postgame attempt to results ingestion.
+    """
+
+    if workflow_run_id <= 0:
+        raise ValueError(
+            "Daily workflow run ID must be greater than zero."
+        )
+
+    cursor.execute(
+        """
+        UPDATE moneyline_daily_workflow_runs
+        SET status = 'awaiting_results',
+            current_stage = 'results_ingestion',
+            last_attempt_completed_at = CURRENT_TIMESTAMP,
+            error_message = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE moneyline_daily_workflow_run_id = %s;
+        """,
+        (workflow_run_id,),
+    )
+
+    if cursor.rowcount != 1:
+        raise RuntimeError(
+            "Daily Moneyline postgame pending update "
+            "did not affect exactly one row."
+        )
