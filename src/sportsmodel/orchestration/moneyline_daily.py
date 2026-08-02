@@ -197,3 +197,19 @@ def _mark_pregame_terminal_state(
         updater=updater,
         workflow_run_id=workflow_run_id,
     )
+
+
+def _can_reuse_completed_pregame(
+    workflow: Any,
+) -> bool:
+    return (
+        workflow.status
+        in {
+            "awaiting_results",
+            "completed",
+        }
+        and workflow.moneyline_prediction_run_id
+        is not None
+        and workflow.odds_ingestion_run_id
+        is not None
+    )

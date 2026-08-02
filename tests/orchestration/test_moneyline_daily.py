@@ -260,3 +260,31 @@ def test_marks_zero_candidate_slate_completed(
         moneyline_daily
         .mark_moneyline_daily_workflow_completed
     )
+
+
+def test_can_reuse_completed_pregame() -> None:
+    workflow = SimpleNamespace(
+        status="awaiting_results",
+        moneyline_prediction_run_id=25,
+        odds_ingestion_run_id=182,
+    )
+
+    assert (
+        moneyline_daily
+        ._can_reuse_completed_pregame(workflow)
+        is True
+    )
+
+
+def test_cannot_reuse_incomplete_pregame() -> None:
+    workflow = SimpleNamespace(
+        status="failed",
+        moneyline_prediction_run_id=25,
+        odds_ingestion_run_id=None,
+    )
+
+    assert (
+        moneyline_daily
+        ._can_reuse_completed_pregame(workflow)
+        is False
+    )
