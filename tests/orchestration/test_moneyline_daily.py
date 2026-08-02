@@ -1099,3 +1099,66 @@ def test_rejects_missing_postgame_run_ids(
         moneyline_daily._get_postgame_run_ids(
             workflow
         )
+
+
+def test_runs_postgame_results_ingestion(
+    monkeypatch,
+) -> None:
+    calls = []
+    summary = SimpleNamespace(
+        dates_failed=0,
+        boxscores_failed=0,
+        games_processed=8,
+        boxscores_processed=8,
+    )
+
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_update_workflow",
+        lambda **arguments: calls.append(arguments),
+    )
+
+    result = (
+        moneyline_daily
+        ._run_postgame_results_ingestion(
+            workflow_run_id=12,
+            target_date=date(2026, 8, 3),
+            connection_factory=lambda: None,
+            results_fetcher=lambda **arguments: summary,
+        )
+    )
+
+    assert result is summary
+    assert calls[0]["workflow_run_id"] == 12
+    assert calls[0]["current_stage"] == "settlement"
+
+
+@pytest.mark.parametrize(
+    (
+        "dates_failed",
+        "boxscores_failed",
+    ),
+    [
+        (1, 0),
+        (0, 1),
+    ],
+)
+def test_rejects_postgame_results_failures(
+    dates_failed,
+    boxscores_failed,
+) -> None:
+    summary = SimpleNamespace(
+        dates_failed=dates_failed,
+        boxscores_failed=boxscores_failed,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="results ingestion reported failures",
+    ):
+        moneyline_daily._run_postgame_results_ingestion(
+            workflow_run_id=12,
+            target_date=date(2026, 8, 3),
+            connection_factory=lambda: None,
+            results_fetcher=lambda **arguments: summary,
+        )

@@ -601,3 +601,35 @@ def _get_postgame_run_ids(
         prediction_run_id,
         odds_ingestion_run_id,
     )
+
+
+def _run_postgame_results_ingestion(
+    *,
+    workflow_run_id: int,
+    target_date: date,
+    connection_factory: ConnectionFactory,
+    results_fetcher: ResultsFetcher,
+):
+    results_summary = results_fetcher(
+        start_date=target_date,
+        end_date=target_date,
+    )
+
+    if (
+        results_summary.dates_failed > 0
+        or results_summary.boxscores_failed > 0
+    ):
+        raise RuntimeError(
+            "MLB results ingestion reported failures: "
+            f"dates={results_summary.dates_failed}, "
+            f"boxscores={results_summary.boxscores_failed}."
+        )
+
+    _update_workflow(
+        connection_factory=connection_factory,
+        updater=advance_moneyline_daily_workflow_stage,
+        workflow_run_id=workflow_run_id,
+        current_stage="settlement",
+    )
+
+    return results_summary
