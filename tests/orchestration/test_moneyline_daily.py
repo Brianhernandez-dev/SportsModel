@@ -317,3 +317,50 @@ def test_determines_pregame_resume_stage(
         ._determine_pregame_resume_stage(workflow)
         == expected_stage
     )
+
+
+def test_runs_schedule_and_prediction(
+    monkeypatch,
+) -> None:
+    updates = []
+    prediction_result = SimpleNamespace(
+        moneyline_prediction_run_id=25,
+    )
+
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_update_workflow",
+        lambda **arguments: updates.append(arguments),
+    )
+
+    result = moneyline_daily._run_schedule_and_prediction(
+        workflow_run_id=12,
+        target_date=date(2026, 8, 2),
+        schedule_days_ahead=7,
+        connection_factory=lambda: None,
+        schedule_syncer=lambda **arguments: SimpleNamespace(
+            dates_failed=0,
+        ),
+        prediction_runner=lambda **arguments: prediction_result,
+    )
+
+    assert result is prediction_result
+    assert updates[0]["current_stage"] == "prediction"
+    assert updates[1]["prediction_run_id"] == 25
+
+
+def test_stops_when_schedule_sync_fails() -> None:
+    with pytest.raises(
+        RuntimeError,
+        match="1 failed date",
+    ):
+        moneyline_daily._run_schedule_and_prediction(
+            workflow_run_id=12,
+            target_date=date(2026, 8, 2),
+            schedule_days_ahead=7,
+            connection_factory=lambda: None,
+            schedule_syncer=lambda **arguments: SimpleNamespace(
+                dates_failed=1,
+            ),
+            prediction_runner=lambda **arguments: None,
+        )

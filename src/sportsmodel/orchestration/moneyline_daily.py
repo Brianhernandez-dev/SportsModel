@@ -225,3 +225,46 @@ def _determine_pregame_resume_stage(
         return "odds_ingestion"
 
     return "evaluation"
+
+
+def _run_schedule_and_prediction(
+    *,
+    workflow_run_id: int,
+    target_date: date,
+    schedule_days_ahead: int,
+    connection_factory: ConnectionFactory,
+    schedule_syncer: ScheduleSyncer,
+    prediction_runner: PredictionRunner,
+):
+    schedule_summary = schedule_syncer(
+        start_date=target_date,
+        days_ahead=schedule_days_ahead,
+    )
+
+    if schedule_summary.dates_failed > 0:
+        raise RuntimeError(
+            "MLB schedule synchronization reported "
+            f"{schedule_summary.dates_failed} failed date(s)."
+        )
+
+    _update_workflow(
+        connection_factory=connection_factory,
+        updater=advance_moneyline_daily_workflow_stage,
+        workflow_run_id=workflow_run_id,
+        current_stage="prediction",
+    )
+
+    prediction_result = prediction_runner(
+        target_date=target_date,
+    )
+
+    _update_workflow(
+        connection_factory=connection_factory,
+        updater=record_moneyline_daily_prediction_run,
+        workflow_run_id=workflow_run_id,
+        prediction_run_id=(
+            prediction_result.moneyline_prediction_run_id
+        ),
+    )
+
+    return prediction_result
