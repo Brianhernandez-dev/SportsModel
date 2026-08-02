@@ -88,3 +88,84 @@ def _build_workflow_run(
         created_at=row[15],
         updated_at=row[16],
     )
+
+
+def start_moneyline_daily_workflow_attempt(
+    cursor: Any,
+    *,
+    workflow_run_id: int,
+    current_stage: str,
+) -> None:
+    """
+    Start or restart one durable workflow attempt.
+    """
+
+    if workflow_run_id <= 0:
+        raise ValueError(
+            "Daily workflow run ID must be greater than zero."
+        )
+
+    cursor.execute(
+        """
+        UPDATE moneyline_daily_workflow_runs
+        SET status = 'running',
+            current_stage = %s,
+            attempt_count = attempt_count + 1,
+            last_attempt_started_at = CURRENT_TIMESTAMP,
+            last_attempt_completed_at = NULL,
+            error_message = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE moneyline_daily_workflow_run_id = %s;
+        """,
+        (
+            current_stage,
+            workflow_run_id,
+        ),
+    )
+
+    if cursor.rowcount != 1:
+        raise RuntimeError(
+            "Daily Moneyline workflow attempt update "
+            "did not affect exactly one row."
+        )
+
+
+def record_moneyline_daily_prediction_run(
+    cursor: Any,
+    *,
+    workflow_run_id: int,
+    prediction_run_id: int,
+) -> None:
+    """
+    Persist the completed prediction run selected for this workflow.
+    """
+
+    if workflow_run_id <= 0:
+        raise ValueError(
+            "Daily workflow run ID must be greater than zero."
+        )
+
+    if prediction_run_id <= 0:
+        raise ValueError(
+            "Moneyline prediction run ID must be greater than zero."
+        )
+
+    cursor.execute(
+        """
+        UPDATE moneyline_daily_workflow_runs
+        SET moneyline_prediction_run_id = %s,
+            current_stage = 'odds_ingestion',
+            updated_at = CURRENT_TIMESTAMP
+        WHERE moneyline_daily_workflow_run_id = %s;
+        """,
+        (
+            prediction_run_id,
+            workflow_run_id,
+        ),
+    )
+
+    if cursor.rowcount != 1:
+        raise RuntimeError(
+            "Daily Moneyline prediction update "
+            "did not affect exactly one row."
+        )

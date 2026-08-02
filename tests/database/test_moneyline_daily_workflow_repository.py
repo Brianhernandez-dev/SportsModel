@@ -4,6 +4,8 @@ import pytest
 
 from sportsmodel.database.moneyline_daily_workflow_repository import (
     get_or_create_moneyline_daily_workflow_run,
+    record_moneyline_daily_prediction_run,
+    start_moneyline_daily_workflow_attempt,
 )
 
 
@@ -91,4 +93,71 @@ def test_raises_when_upsert_returns_no_row() -> None:
         get_or_create_moneyline_daily_workflow_run(
             cursor,
             target_date=TARGET_DATE,
+        )
+
+
+
+class FakeUpdateCursor:
+    def __init__(self, rowcount: int = 1) -> None:
+        self.rowcount = rowcount
+        self.executed_query = None
+        self.executed_parameters = None
+
+    def execute(self, query, parameters) -> None:
+        self.executed_query = query
+        self.executed_parameters = parameters
+
+
+def test_starts_workflow_attempt() -> None:
+    cursor = FakeUpdateCursor()
+
+    start_moneyline_daily_workflow_attempt(
+        cursor,
+        workflow_run_id=12,
+        current_stage="schedule_sync",
+    )
+
+    assert "attempt_count = attempt_count + 1" in cursor.executed_query
+    assert cursor.executed_parameters == ("schedule_sync", 12)
+
+
+def test_start_attempt_requires_existing_workflow() -> None:
+    cursor = FakeUpdateCursor(rowcount=0)
+
+    with pytest.raises(
+        RuntimeError,
+        match="exactly one row",
+    ):
+        start_moneyline_daily_workflow_attempt(
+            cursor,
+            workflow_run_id=12,
+            current_stage="schedule_sync",
+        )
+
+
+
+def test_records_prediction_run() -> None:
+    cursor = FakeUpdateCursor()
+
+    record_moneyline_daily_prediction_run(
+        cursor,
+        workflow_run_id=12,
+        prediction_run_id=25,
+    )
+
+    assert "current_stage = 'odds_ingestion'" in cursor.executed_query
+    assert cursor.executed_parameters == (25, 12)
+
+
+def test_prediction_update_requires_existing_workflow() -> None:
+    cursor = FakeUpdateCursor(rowcount=0)
+
+    with pytest.raises(
+        RuntimeError,
+        match="exactly one row",
+    ):
+        record_moneyline_daily_prediction_run(
+            cursor,
+            workflow_run_id=12,
+            prediction_run_id=25,
         )
