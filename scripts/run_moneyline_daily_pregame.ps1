@@ -1,3 +1,7 @@
+param(
+    [switch]$ValidateOnly
+)
+
 $ErrorActionPreference = "Stop"
 
 $ProjectRoot = "D:\SportsModel"
@@ -58,6 +62,40 @@ try {
     $env:PYTHONPATH = $SourcePath
     $env:PYTHONUNBUFFERED = "1"
 
+    if ($ValidateOnly) {
+        Write-Log "Validation-only mode enabled."
+
+        $ResolvedModulePath = & $PythonPath -c `
+            "import sportsmodel.orchestration.moneyline_daily as module; print(module.__file__)"
+
+        if ($LASTEXITCODE -ne 0) {
+            throw "Python module validation exited with code $LASTEXITCODE."
+        }
+
+        $ResolvedModulePath = (
+            $ResolvedModulePath |
+            Select-Object -Last 1
+        ).ToString().Trim()
+
+        Write-Log "Resolved orchestration module: $ResolvedModulePath"
+
+        if (-not $ResolvedModulePath.StartsWith(
+            $SourcePath,
+            [System.StringComparison]::OrdinalIgnoreCase
+        )) {
+            throw (
+                "SportsModel resolved outside the core source tree: " +
+                $ResolvedModulePath
+            )
+        }
+
+        Write-Log "Validation completed successfully."
+        Write-Log "No live pregame pipeline work was executed."
+        Write-Log "Log file: $LogPath"
+
+        exit 0
+    }
+
     & $PythonPath $ScriptPath 2>&1 |
         ForEach-Object {
             $Line = $_.ToString()
@@ -83,3 +121,5 @@ catch {
 
     exit 1
 }
+
+
