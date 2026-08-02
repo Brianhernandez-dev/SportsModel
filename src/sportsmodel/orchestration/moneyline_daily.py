@@ -293,3 +293,15 @@ def _run_odds_ingestion(
     )
 
     return odds_result
+
+
+def _run_market_evaluation(
+    *,
+    prediction_run_id: int,
+    odds_ingestion_run_id: int,
+    evaluator: EvaluationRunner,
+):
+    return evaluator(
+        prediction_run_id=prediction_run_id,
+        odds_ingestion_run_id=odds_ingestion_run_id,
+    )

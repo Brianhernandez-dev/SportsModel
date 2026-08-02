@@ -396,3 +396,29 @@ def test_runs_odds_ingestion_and_persists_quota(
     assert updates[0]["status_code"] == 200
     assert updates[0]["remaining_requests"] == 487
     assert updates[0]["used_requests"] == 13
+
+
+def test_runs_market_evaluation_with_both_run_ids() -> None:
+    calls = []
+    evaluation_result = SimpleNamespace(
+        evaluations_saved=10,
+        paper_candidates=5,
+    )
+
+    def evaluator(**arguments):
+        calls.append(arguments)
+        return evaluation_result
+
+    result = moneyline_daily._run_market_evaluation(
+        prediction_run_id=25,
+        odds_ingestion_run_id=182,
+        evaluator=evaluator,
+    )
+
+    assert result is evaluation_result
+    assert calls == [
+        {
+            "prediction_run_id": 25,
+            "odds_ingestion_run_id": 182,
+        }
+    ]
