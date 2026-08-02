@@ -16,6 +16,7 @@ from sportsmodel.database.moneyline_daily_workflow_repository import (
     mark_moneyline_daily_workflow_awaiting_results,
     mark_moneyline_daily_workflow_completed,
     mark_moneyline_daily_workflow_failed,
+    mark_moneyline_daily_postgame_pending,
     mark_moneyline_daily_settlement_completed,
     record_moneyline_daily_odds_run,
     record_moneyline_daily_prediction_run,
@@ -644,4 +645,23 @@ def _run_postgame_settlement(
     return settlement_runner(
         prediction_run_id=prediction_run_id,
         odds_ingestion_run_id=odds_ingestion_run_id,
+    )
+
+
+
+def _mark_postgame_settlement_state(
+    *,
+    workflow_run_id: int,
+    settlement_result: Any,
+    connection_factory: ConnectionFactory,
+) -> None:
+    if settlement_result.report.pending_candidates > 0:
+        updater = mark_moneyline_daily_postgame_pending
+    else:
+        updater = mark_moneyline_daily_settlement_completed
+
+    _update_workflow(
+        connection_factory=connection_factory,
+        updater=updater,
+        workflow_run_id=workflow_run_id,
     )

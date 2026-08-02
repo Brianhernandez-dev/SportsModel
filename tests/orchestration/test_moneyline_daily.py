@@ -1190,3 +1190,50 @@ def test_runs_postgame_settlement_with_run_ids() -> None:
             "odds_ingestion_run_id": 182,
         }
     ]
+
+
+@pytest.mark.parametrize(
+    (
+        "pending_candidates",
+        "expected_updater",
+    ),
+    [
+        (
+            1,
+            moneyline_daily
+            .mark_moneyline_daily_postgame_pending,
+        ),
+        (
+            0,
+            moneyline_daily
+            .mark_moneyline_daily_settlement_completed,
+        ),
+    ],
+)
+def test_marks_postgame_settlement_state(
+    monkeypatch,
+    pending_candidates,
+    expected_updater,
+) -> None:
+    updates = []
+
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_update_workflow",
+        lambda **arguments: updates.append(arguments),
+    )
+
+    settlement_result = SimpleNamespace(
+        report=SimpleNamespace(
+            pending_candidates=pending_candidates,
+        ),
+    )
+
+    moneyline_daily._mark_postgame_settlement_state(
+        workflow_run_id=12,
+        settlement_result=settlement_result,
+        connection_factory=lambda: None,
+    )
+
+    assert updates[0]["workflow_run_id"] == 12
+    assert updates[0]["updater"] is expected_updater
