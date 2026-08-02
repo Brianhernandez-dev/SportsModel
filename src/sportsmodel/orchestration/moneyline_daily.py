@@ -102,3 +102,37 @@ def _update_workflow(
 
     finally:
         connection.close()
+
+
+def _validate_pregame_audit(
+    audit: Any,
+) -> None:
+    if audit.integrity_issues:
+        issues = ", ".join(
+            audit.integrity_issues
+        )
+        raise RuntimeError(
+            "Pregame pipeline audit found integrity issues: "
+            f"{issues}"
+        )
+
+    if (
+        audit.evaluated_predictions
+        != audit.predictions
+    ):
+        raise RuntimeError(
+            "Pregame audit found unevaluated predictions."
+        )
+
+    expected_state = (
+        "awaiting_results"
+        if audit.settlements < audit.paper_candidates
+        else "complete"
+    )
+
+    if audit.pipeline_state != expected_state:
+        raise RuntimeError(
+            "Unexpected pregame pipeline state: "
+            f"{audit.pipeline_state}. "
+            f"Expected: {expected_state}."
+        )

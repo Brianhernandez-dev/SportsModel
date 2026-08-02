@@ -94,3 +94,63 @@ def test_update_rolls_back_on_failure() -> None:
     assert connection.commits == 0
     assert connection.rollbacks == 1
     assert connection.closed is True
+
+
+def test_accepts_pregame_audit_awaiting_results() -> None:
+    audit = SimpleNamespace(
+        integrity_issues=(),
+        predictions=10,
+        evaluated_predictions=10,
+        paper_candidates=5,
+        settlements=0,
+        pipeline_state="awaiting_results",
+    )
+
+    moneyline_daily._validate_pregame_audit(audit)
+
+
+def test_accepts_complete_zero_candidate_slate() -> None:
+    audit = SimpleNamespace(
+        integrity_issues=(),
+        predictions=10,
+        evaluated_predictions=10,
+        paper_candidates=0,
+        settlements=0,
+        pipeline_state="complete",
+    )
+
+    moneyline_daily._validate_pregame_audit(audit)
+
+
+def test_rejects_pregame_integrity_issues() -> None:
+    audit = SimpleNamespace(
+        integrity_issues=("duplicate_evaluations",),
+        predictions=10,
+        evaluated_predictions=10,
+        paper_candidates=5,
+        settlements=0,
+        pipeline_state="invalid",
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="duplicate_evaluations",
+    ):
+        moneyline_daily._validate_pregame_audit(audit)
+
+
+def test_rejects_unexpected_pregame_state() -> None:
+    audit = SimpleNamespace(
+        integrity_issues=(),
+        predictions=10,
+        evaluated_predictions=10,
+        paper_candidates=5,
+        settlements=0,
+        pipeline_state="complete",
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="Unexpected pregame pipeline state",
+    ):
+        moneyline_daily._validate_pregame_audit(audit)
