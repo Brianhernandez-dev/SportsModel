@@ -382,3 +382,33 @@ def _start_pregame_attempt(
     )
 
     return current_stage
+
+
+def _prepare_pregame_workflow(
+    *,
+    target_date: date,
+    connection_factory: ConnectionFactory,
+    pipeline_auditor: PipelineAuditor,
+) -> tuple[
+    Any,
+    MoneylineDailyPregameResult | None,
+    str | None,
+]:
+    workflow = _get_or_create_workflow(
+        target_date=target_date,
+        connection_factory=connection_factory,
+    )
+
+    if _can_reuse_completed_pregame(workflow):
+        reused_result = _audit_existing_pregame(
+            workflow=workflow,
+            pipeline_auditor=pipeline_auditor,
+        )
+        return workflow, reused_result, None
+
+    current_stage = _start_pregame_attempt(
+        workflow=workflow,
+        connection_factory=connection_factory,
+    )
+
+    return workflow, None, current_stage

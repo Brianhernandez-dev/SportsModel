@@ -549,3 +549,94 @@ def test_starts_pregame_attempt_at_resume_stage(
         updates[0]["updater"]
         is moneyline_daily.start_moneyline_daily_workflow_attempt
     )
+
+
+def test_prepares_reusable_pregame_workflow(
+    monkeypatch,
+) -> None:
+    workflow = SimpleNamespace(
+        status="awaiting_results",
+        moneyline_prediction_run_id=25,
+        odds_ingestion_run_id=182,
+    )
+    reused_result = SimpleNamespace(
+        workflow_run_id=12,
+    )
+
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_get_or_create_workflow",
+        lambda **arguments: workflow,
+    )
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_audit_existing_pregame",
+        lambda **arguments: reused_result,
+    )
+
+    def unexpected_start(**arguments):
+        raise AssertionError(
+            "Reusable workflow should not start another attempt."
+        )
+
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_start_pregame_attempt",
+        unexpected_start,
+    )
+
+    result = moneyline_daily._prepare_pregame_workflow(
+        target_date=date(2026, 8, 2),
+        connection_factory=lambda: None,
+        pipeline_auditor=lambda **arguments: None,
+    )
+
+    assert result == (
+        workflow,
+        reused_result,
+        None,
+    )
+
+
+def test_prepares_resumable_pregame_attempt(
+    monkeypatch,
+) -> None:
+    workflow = SimpleNamespace(
+        status="failed",
+        moneyline_prediction_run_id=25,
+        odds_ingestion_run_id=None,
+    )
+
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_get_or_create_workflow",
+        lambda **arguments: workflow,
+    )
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_start_pregame_attempt",
+        lambda **arguments: "odds_ingestion",
+    )
+
+    def unexpected_audit(**arguments):
+        raise AssertionError(
+            "Incomplete workflow should not be reused."
+        )
+
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_audit_existing_pregame",
+        unexpected_audit,
+    )
+
+    result = moneyline_daily._prepare_pregame_workflow(
+        target_date=date(2026, 8, 2),
+        connection_factory=lambda: None,
+        pipeline_auditor=lambda **arguments: None,
+    )
+
+    assert result == (
+        workflow,
+        None,
+        "odds_ingestion",
+    )
