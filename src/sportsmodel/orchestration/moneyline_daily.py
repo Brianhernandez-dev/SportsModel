@@ -268,3 +268,28 @@ def _run_schedule_and_prediction(
     )
 
     return prediction_result
+
+
+def _run_odds_ingestion(
+    *,
+    workflow_run_id: int,
+    connection_factory: ConnectionFactory,
+    odds_fetcher: OddsFetcher,
+):
+    odds_result = odds_fetcher()
+
+    _update_workflow(
+        connection_factory=connection_factory,
+        updater=record_moneyline_daily_odds_run,
+        workflow_run_id=workflow_run_id,
+        odds_ingestion_run_id=(
+            odds_result.odds_ingestion_run_id
+        ),
+        status_code=odds_result.status_code,
+        remaining_requests=(
+            odds_result.remaining_requests
+        ),
+        used_requests=odds_result.used_requests,
+    )
+
+    return odds_result

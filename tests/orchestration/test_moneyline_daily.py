@@ -364,3 +364,35 @@ def test_stops_when_schedule_sync_fails() -> None:
             ),
             prediction_runner=lambda **arguments: None,
         )
+
+
+def test_runs_odds_ingestion_and_persists_quota(
+    monkeypatch,
+) -> None:
+    updates = []
+
+    odds_result = SimpleNamespace(
+        odds_ingestion_run_id=182,
+        status_code=200,
+        remaining_requests=487,
+        used_requests=13,
+    )
+
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_update_workflow",
+        lambda **arguments: updates.append(arguments),
+    )
+
+    result = moneyline_daily._run_odds_ingestion(
+        workflow_run_id=12,
+        connection_factory=lambda: None,
+        odds_fetcher=lambda: odds_result,
+    )
+
+    assert result is odds_result
+
+    assert updates[0]["odds_ingestion_run_id"] == 182
+    assert updates[0]["status_code"] == 200
+    assert updates[0]["remaining_requests"] == 487
+    assert updates[0]["used_requests"] == 13
