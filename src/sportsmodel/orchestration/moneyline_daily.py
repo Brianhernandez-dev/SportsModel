@@ -342,3 +342,22 @@ def _audit_existing_pregame(
         workflow=workflow,
         audit=audit,
     )
+
+
+def _record_pregame_failure(
+    *,
+    workflow_run_id: int,
+    current_stage: str,
+    error: Exception,
+    connection_factory: ConnectionFactory,
+) -> None:
+    try:
+        _update_workflow(
+            connection_factory=connection_factory,
+            updater=mark_moneyline_daily_workflow_failed,
+            workflow_run_id=workflow_run_id,
+            current_stage=current_stage,
+            error_message=str(error),
+        )
+    except Exception:
+        pass

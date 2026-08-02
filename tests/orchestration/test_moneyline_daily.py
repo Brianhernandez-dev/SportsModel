@@ -468,3 +468,53 @@ def test_audits_and_reuses_existing_pregame() -> None:
     assert result.paper_candidates == 5
     assert result.odds_remaining_requests == 487
     assert result.pipeline_state == "awaiting_results"
+
+
+def test_records_pregame_failure(
+    monkeypatch,
+) -> None:
+    updates = []
+
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_update_workflow",
+        lambda **arguments: updates.append(arguments),
+    )
+
+    moneyline_daily._record_pregame_failure(
+        workflow_run_id=12,
+        current_stage="odds_ingestion",
+        error=RuntimeError("Odds provider unavailable."),
+        connection_factory=lambda: None,
+    )
+
+    assert updates[0]["workflow_run_id"] == 12
+    assert updates[0]["current_stage"] == "odds_ingestion"
+    assert (
+        updates[0]["error_message"]
+        == "Odds provider unavailable."
+    )
+    assert (
+        updates[0]["updater"]
+        is moneyline_daily.mark_moneyline_daily_workflow_failed
+    )
+
+
+def test_failure_recording_does_not_mask_original_error(
+    monkeypatch,
+) -> None:
+    def failing_update(**arguments):
+        raise RuntimeError("Database unavailable.")
+
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_update_workflow",
+        failing_update,
+    )
+
+    moneyline_daily._record_pregame_failure(
+        workflow_run_id=12,
+        current_stage="prediction",
+        error=RuntimeError("Prediction failed."),
+        connection_factory=lambda: None,
+    )
