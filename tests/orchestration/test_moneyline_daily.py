@@ -933,3 +933,66 @@ def test_resumes_pregame_at_evaluation(
             ),
         }
     ]
+
+
+def test_pregame_runner_records_failure_and_reraises(
+    monkeypatch,
+) -> None:
+    recorded_failures = []
+
+    workflow = SimpleNamespace(
+        moneyline_daily_workflow_run_id=12,
+        target_date=date(2026, 8, 2),
+        moneyline_prediction_run_id=25,
+        odds_ingestion_run_id=182,
+    )
+    failed_workflow = SimpleNamespace(
+        current_stage="evaluation",
+    )
+
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_prepare_pregame_workflow",
+        lambda **arguments: (
+            workflow,
+            None,
+            "evaluation",
+        ),
+    )
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_run_market_evaluation",
+        lambda **arguments: (
+            (_ for _ in ()).throw(
+                RuntimeError("Evaluation failed.")
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_get_or_create_workflow",
+        lambda **arguments: failed_workflow,
+    )
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_record_pregame_failure",
+        lambda **arguments: recorded_failures.append(
+            arguments
+        ),
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="Evaluation failed",
+    ):
+        moneyline_daily.run_moneyline_daily_pregame(
+            target_date=date(2026, 8, 2),
+            connection_factory=lambda: None,
+        )
+
+    assert len(recorded_failures) == 1
+    assert recorded_failures[0]["workflow_run_id"] == 12
+    assert recorded_failures[0]["current_stage"] == "evaluation"
+    assert str(recorded_failures[0]["error"]) == (
+        "Evaluation failed."
+    )
