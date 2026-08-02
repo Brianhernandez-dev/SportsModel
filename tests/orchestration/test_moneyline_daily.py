@@ -154,3 +154,63 @@ def test_rejects_unexpected_pregame_state() -> None:
         match="Unexpected pregame pipeline state",
     ):
         moneyline_daily._validate_pregame_audit(audit)
+
+
+def test_builds_pregame_result_from_existing_workflow() -> None:
+    workflow = SimpleNamespace(
+        moneyline_daily_workflow_run_id=12,
+        target_date=date(2026, 8, 2),
+        moneyline_prediction_run_id=25,
+        odds_ingestion_run_id=182,
+        odds_remaining_requests=487,
+    )
+
+    audit = SimpleNamespace(
+        predictions=10,
+        evaluations=10,
+        paper_candidates=5,
+        pipeline_state="awaiting_results",
+    )
+
+    result = moneyline_daily._build_pregame_result(
+        workflow=workflow,
+        audit=audit,
+    )
+
+    assert result == moneyline_daily.MoneylineDailyPregameResult(
+        workflow_run_id=12,
+        target_date=date(2026, 8, 2),
+        prediction_run_id=25,
+        odds_ingestion_run_id=182,
+        predictions_created=10,
+        evaluations_saved=10,
+        paper_candidates=5,
+        odds_remaining_requests=487,
+        pipeline_state="awaiting_results",
+    )
+
+
+def test_build_pregame_result_requires_run_ids() -> None:
+    workflow = SimpleNamespace(
+        moneyline_daily_workflow_run_id=12,
+        target_date=date(2026, 8, 2),
+        moneyline_prediction_run_id=None,
+        odds_ingestion_run_id=None,
+        odds_remaining_requests=None,
+    )
+
+    audit = SimpleNamespace(
+        predictions=0,
+        evaluations=0,
+        paper_candidates=0,
+        pipeline_state="complete",
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="no prediction run ID",
+    ):
+        moneyline_daily._build_pregame_result(
+            workflow=workflow,
+            audit=audit,
+        )

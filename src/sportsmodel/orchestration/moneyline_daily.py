@@ -136,3 +136,42 @@ def _validate_pregame_audit(
             f"{audit.pipeline_state}. "
             f"Expected: {expected_state}."
         )
+
+
+def _build_pregame_result(
+    *,
+    workflow: Any,
+    audit: Any,
+) -> MoneylineDailyPregameResult:
+    prediction_run_id = (
+        workflow.moneyline_prediction_run_id
+    )
+    odds_ingestion_run_id = (
+        workflow.odds_ingestion_run_id
+    )
+
+    if prediction_run_id is None:
+        raise RuntimeError(
+            "Daily workflow has no prediction run ID."
+        )
+
+    if odds_ingestion_run_id is None:
+        raise RuntimeError(
+            "Daily workflow has no odds ingestion run ID."
+        )
+
+    return MoneylineDailyPregameResult(
+        workflow_run_id=(
+            workflow.moneyline_daily_workflow_run_id
+        ),
+        target_date=workflow.target_date,
+        prediction_run_id=prediction_run_id,
+        odds_ingestion_run_id=odds_ingestion_run_id,
+        predictions_created=audit.predictions,
+        evaluations_saved=audit.evaluations,
+        paper_candidates=audit.paper_candidates,
+        odds_remaining_requests=(
+            workflow.odds_remaining_requests
+        ),
+        pipeline_state=audit.pipeline_state,
+    )
