@@ -640,3 +640,105 @@ def test_prepares_resumable_pregame_attempt(
         None,
         "odds_ingestion",
     )
+
+
+def test_runs_complete_fresh_pregame_workflow(
+    monkeypatch,
+) -> None:
+    calls = []
+    initial_workflow = SimpleNamespace(
+        moneyline_daily_workflow_run_id=12,
+        target_date=date(2026, 8, 2),
+        moneyline_prediction_run_id=None,
+        odds_ingestion_run_id=None,
+    )
+    refreshed_workflow = SimpleNamespace(
+        moneyline_daily_workflow_run_id=12,
+        target_date=date(2026, 8, 2),
+        moneyline_prediction_run_id=25,
+        odds_ingestion_run_id=182,
+        odds_remaining_requests=487,
+    )
+
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_prepare_pregame_workflow",
+        lambda **arguments: (
+            initial_workflow,
+            None,
+            "schedule_sync",
+        ),
+    )
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_run_schedule_and_prediction",
+        lambda **arguments: SimpleNamespace(
+            moneyline_prediction_run_id=25,
+        ),
+    )
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_run_odds_ingestion",
+        lambda **arguments: SimpleNamespace(
+            odds_ingestion_run_id=182,
+        ),
+    )
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_run_market_evaluation",
+        lambda **arguments: calls.append(
+            ("evaluation", arguments)
+        ),
+    )
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_update_workflow",
+        lambda **arguments: calls.append(
+            ("update", arguments)
+        ),
+    )
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_mark_pregame_terminal_state",
+        lambda **arguments: calls.append(
+            ("terminal", arguments)
+        ),
+    )
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_get_or_create_workflow",
+        lambda **arguments: refreshed_workflow,
+    )
+
+    audit = SimpleNamespace(
+        integrity_issues=(),
+        predictions=10,
+        evaluated_predictions=10,
+        evaluations=10,
+        paper_candidates=5,
+        settlements=0,
+        pipeline_state="awaiting_results",
+    )
+
+    result = moneyline_daily.run_moneyline_daily_pregame(
+        target_date=date(2026, 8, 2),
+        connection_factory=lambda: None,
+        schedule_syncer=lambda **arguments: None,
+        prediction_runner=lambda **arguments: None,
+        odds_fetcher=lambda: None,
+        evaluator=lambda **arguments: None,
+        pipeline_auditor=lambda **arguments: audit,
+    )
+
+    assert result.workflow_run_id == 12
+    assert result.prediction_run_id == 25
+    assert result.odds_ingestion_run_id == 182
+    assert result.predictions_created == 10
+    assert result.evaluations_saved == 10
+    assert result.paper_candidates == 5
+    assert result.odds_remaining_requests == 487
+    assert result.pipeline_state == "awaiting_results"
+
+    assert calls[0][0] == "evaluation"
+    assert calls[0][1]["prediction_run_id"] == 25
+    assert calls[0][1]["odds_ingestion_run_id"] == 182

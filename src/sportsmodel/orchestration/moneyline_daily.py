@@ -412,3 +412,145 @@ def _prepare_pregame_workflow(
     )
 
     return workflow, None, current_stage
+
+
+def run_moneyline_daily_pregame(
+    *,
+    target_date: date,
+    schedule_days_ahead: int = DEFAULT_SCHEDULE_DAYS_AHEAD,
+    connection_factory: ConnectionFactory = get_connection,
+    schedule_syncer: ScheduleSyncer = sync_mlb_schedule,
+    prediction_runner: PredictionRunner = run_moneyline_predictions,
+    odds_fetcher: OddsFetcher = fetch_live_odds,
+    evaluator: EvaluationRunner = (
+        evaluate_moneyline_prediction_run
+    ),
+    pipeline_auditor: PipelineAuditor = (
+        audit_moneyline_live_pipeline
+    ),
+) -> MoneylineDailyPregameResult:
+    """
+    Run or safely resume one MLB Moneyline pregame workflow.
+    """
+
+    workflow, reused_result, current_stage = (
+        _prepare_pregame_workflow(
+            target_date=target_date,
+            connection_factory=connection_factory,
+            pipeline_auditor=pipeline_auditor,
+        )
+    )
+
+    if reused_result is not None:
+        return reused_result
+
+    workflow_run_id = (
+        workflow.moneyline_daily_workflow_run_id
+    )
+    prediction_run_id = (
+        workflow.moneyline_prediction_run_id
+    )
+    odds_ingestion_run_id = (
+        workflow.odds_ingestion_run_id
+    )
+
+    try:
+        if prediction_run_id is None:
+            current_stage = "schedule_sync"
+
+            prediction_result = (
+                _run_schedule_and_prediction(
+                    workflow_run_id=workflow_run_id,
+                    target_date=target_date,
+                    schedule_days_ahead=(
+                        schedule_days_ahead
+                    ),
+                    connection_factory=(
+                        connection_factory
+                    ),
+                    schedule_syncer=schedule_syncer,
+                    prediction_runner=prediction_runner,
+                )
+            )
+
+            prediction_run_id = (
+                prediction_result
+                .moneyline_prediction_run_id
+            )
+
+        if odds_ingestion_run_id is None:
+            current_stage = "odds_ingestion"
+
+            odds_result = _run_odds_ingestion(
+                workflow_run_id=workflow_run_id,
+                connection_factory=connection_factory,
+                odds_fetcher=odds_fetcher,
+            )
+
+            odds_ingestion_run_id = (
+                odds_result.odds_ingestion_run_id
+            )
+
+        current_stage = "evaluation"
+
+        _run_market_evaluation(
+            prediction_run_id=prediction_run_id,
+            odds_ingestion_run_id=(
+                odds_ingestion_run_id
+            ),
+            evaluator=evaluator,
+        )
+
+        current_stage = "pregame_audit"
+
+        _update_workflow(
+            connection_factory=connection_factory,
+            updater=advance_moneyline_daily_workflow_stage,
+            workflow_run_id=workflow_run_id,
+            current_stage=current_stage,
+        )
+
+        audit = pipeline_auditor(
+            prediction_run_id=prediction_run_id,
+            odds_ingestion_run_id=(
+                odds_ingestion_run_id
+            ),
+        )
+
+        _validate_pregame_audit(audit)
+
+        _mark_pregame_terminal_state(
+            workflow_run_id=workflow_run_id,
+            audit=audit,
+            connection_factory=connection_factory,
+        )
+
+        refreshed_workflow = _get_or_create_workflow(
+            target_date=target_date,
+            connection_factory=connection_factory,
+        )
+
+        return _build_pregame_result(
+            workflow=refreshed_workflow,
+            audit=audit,
+        )
+
+    except Exception as error:
+        failure_stage = current_stage or "initialized"
+
+        try:
+            failed_workflow = _get_or_create_workflow(
+                target_date=target_date,
+                connection_factory=connection_factory,
+            )
+            failure_stage = failed_workflow.current_stage
+        except Exception:
+            pass
+
+        _record_pregame_failure(
+            workflow_run_id=workflow_run_id,
+            current_stage=failure_stage,
+            error=error,
+            connection_factory=connection_factory,
+        )
+        raise
