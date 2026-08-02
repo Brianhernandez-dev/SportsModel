@@ -1,0 +1,85 @@
+$ErrorActionPreference = "Stop"
+
+$ProjectRoot = "D:\SportsModel"
+$PythonPath = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
+$ScriptPath = Join-Path $ProjectRoot "scripts\run_moneyline_daily_pregame.py"
+$SourcePath = Join-Path $ProjectRoot "src"
+$LogDirectory = Join-Path $ProjectRoot "logs\moneyline_daily_pregame"
+
+if (-not (Test-Path $LogDirectory)) {
+    New-Item `
+        -ItemType Directory `
+        -Path $LogDirectory `
+        -Force |
+        Out-Null
+}
+
+$Timestamp = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
+$LogPath = Join-Path `
+    $LogDirectory `
+    "moneyline_daily_pregame_$Timestamp.log"
+
+function Write-Log {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Message
+    )
+
+    $LogTimestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $FormattedMessage = "[$LogTimestamp] $Message"
+
+    Write-Host $FormattedMessage
+    Add-Content -Path $LogPath -Value $FormattedMessage
+}
+
+try {
+    Write-Log "============================================================"
+    Write-Log "Starting SportsModel daily Moneyline pregame workflow"
+    Write-Log "Project root: $ProjectRoot"
+    Write-Log "Python executable: $PythonPath"
+    Write-Log "Python script: $ScriptPath"
+    Write-Log "Python source path: $SourcePath"
+    Write-Log "============================================================"
+
+    if (-not (Test-Path $PythonPath)) {
+        throw "Python executable was not found: $PythonPath"
+    }
+
+    if (-not (Test-Path $ScriptPath)) {
+        throw "Daily pregame script was not found: $ScriptPath"
+    }
+
+    if (-not (Test-Path $SourcePath)) {
+        throw "SportsModel source directory was not found: $SourcePath"
+    }
+
+    Set-Location $ProjectRoot
+
+    $env:PYTHONPATH = $SourcePath
+    $env:PYTHONUNBUFFERED = "1"
+
+    & $PythonPath $ScriptPath 2>&1 |
+        ForEach-Object {
+            $Line = $_.ToString()
+            Write-Host $Line
+            Add-Content -Path $LogPath -Value $Line
+        }
+
+    $PythonExitCode = $LASTEXITCODE
+
+    if ($PythonExitCode -ne 0) {
+        throw "Daily pregame workflow exited with code $PythonExitCode."
+    }
+
+    Write-Log "Daily Moneyline pregame workflow completed successfully."
+    Write-Log "Log file: $LogPath"
+
+    exit 0
+}
+catch {
+    Write-Log "ERROR: $($_.Exception.Message)"
+    Write-Log "Daily Moneyline pregame workflow failed."
+    Write-Log "Log file: $LogPath"
+
+    exit 1
+}
