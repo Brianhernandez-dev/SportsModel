@@ -633,3 +633,15 @@ def _run_postgame_results_ingestion(
     )
 
     return results_summary
+
+
+def _run_postgame_settlement(
+    *,
+    prediction_run_id: int,
+    odds_ingestion_run_id: int,
+    settlement_runner: SettlementRunner,
+):
+    return settlement_runner(
+        prediction_run_id=prediction_run_id,
+        odds_ingestion_run_id=odds_ingestion_run_id,
+    )

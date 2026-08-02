@@ -1162,3 +1162,31 @@ def test_rejects_postgame_results_failures(
             connection_factory=lambda: None,
             results_fetcher=lambda **arguments: summary,
         )
+
+
+def test_runs_postgame_settlement_with_run_ids() -> None:
+    calls = []
+    settlement_result = SimpleNamespace(
+        report=SimpleNamespace(
+            settlements_saved=1,
+            pending_candidates=0,
+        ),
+    )
+
+    def settlement_runner(**arguments):
+        calls.append(arguments)
+        return settlement_result
+
+    result = moneyline_daily._run_postgame_settlement(
+        prediction_run_id=25,
+        odds_ingestion_run_id=182,
+        settlement_runner=settlement_runner,
+    )
+
+    assert result is settlement_result
+    assert calls == [
+        {
+            "prediction_run_id": 25,
+            "odds_ingestion_run_id": 182,
+        }
+    ]
