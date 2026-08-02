@@ -305,3 +305,40 @@ def _run_market_evaluation(
         prediction_run_id=prediction_run_id,
         odds_ingestion_run_id=odds_ingestion_run_id,
     )
+
+
+def _audit_existing_pregame(
+    *,
+    workflow: Any,
+    pipeline_auditor: PipelineAuditor,
+) -> MoneylineDailyPregameResult:
+    prediction_run_id = (
+        workflow.moneyline_prediction_run_id
+    )
+    odds_ingestion_run_id = (
+        workflow.odds_ingestion_run_id
+    )
+
+    if prediction_run_id is None:
+        raise RuntimeError(
+            "Reusable pregame workflow is missing "
+            "its prediction run ID."
+        )
+
+    if odds_ingestion_run_id is None:
+        raise RuntimeError(
+            "Reusable pregame workflow is missing "
+            "its odds ingestion run ID."
+        )
+
+    audit = pipeline_auditor(
+        prediction_run_id=prediction_run_id,
+        odds_ingestion_run_id=odds_ingestion_run_id,
+    )
+
+    _validate_pregame_audit(audit)
+
+    return _build_pregame_result(
+        workflow=workflow,
+        audit=audit,
+    )

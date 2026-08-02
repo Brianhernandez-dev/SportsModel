@@ -422,3 +422,49 @@ def test_runs_market_evaluation_with_both_run_ids() -> None:
             "odds_ingestion_run_id": 182,
         }
     ]
+
+
+def test_audits_and_reuses_existing_pregame() -> None:
+    calls = []
+
+    workflow = SimpleNamespace(
+        moneyline_daily_workflow_run_id=12,
+        target_date=date(2026, 8, 2),
+        moneyline_prediction_run_id=25,
+        odds_ingestion_run_id=182,
+        odds_remaining_requests=487,
+    )
+
+    audit = SimpleNamespace(
+        integrity_issues=(),
+        predictions=10,
+        evaluated_predictions=10,
+        evaluations=10,
+        paper_candidates=5,
+        settlements=0,
+        pipeline_state="awaiting_results",
+    )
+
+    def pipeline_auditor(**arguments):
+        calls.append(arguments)
+        return audit
+
+    result = moneyline_daily._audit_existing_pregame(
+        workflow=workflow,
+        pipeline_auditor=pipeline_auditor,
+    )
+
+    assert calls == [
+        {
+            "prediction_run_id": 25,
+            "odds_ingestion_run_id": 182,
+        }
+    ]
+    assert result.workflow_run_id == 12
+    assert result.prediction_run_id == 25
+    assert result.odds_ingestion_run_id == 182
+    assert result.predictions_created == 10
+    assert result.evaluations_saved == 10
+    assert result.paper_candidates == 5
+    assert result.odds_remaining_requests == 487
+    assert result.pipeline_state == "awaiting_results"
