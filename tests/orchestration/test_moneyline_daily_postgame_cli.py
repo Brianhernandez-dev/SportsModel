@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -89,3 +89,33 @@ def test_returns_failure_when_postgame_raises(
     output = capsys.readouterr().out
     assert "Daily Moneyline postgame run failed" in output
     assert "Results unavailable." in output
+
+
+def test_defaults_postgame_to_yesterday() -> None:
+    calls = []
+
+    def fake_runner(**arguments):
+        calls.append(arguments)
+
+        return SimpleNamespace(
+            workflow_run_id=12,
+            target_date=arguments["target_date"],
+            prediction_run_id=25,
+            odds_ingestion_run_id=182,
+            games_processed=8,
+            boxscores_processed=8,
+            settlements_saved=1,
+            pending_candidates=0,
+            pipeline_state="complete",
+        )
+
+    exit_code = main(
+        [],
+        postgame_runner=fake_runner,
+    )
+
+    assert exit_code == 0
+    assert calls[0]["target_date"] == (
+        date.today() - timedelta(days=1)
+    )
+

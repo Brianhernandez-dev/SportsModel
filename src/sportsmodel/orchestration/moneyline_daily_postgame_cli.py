@@ -1,11 +1,14 @@
 import argparse
 from collections.abc import Callable
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 from sportsmodel.orchestration.moneyline_daily import (
     run_moneyline_daily_postgame,
 )
+
+
+DEFAULT_TARGET_DATE = date.today() - timedelta(days=1)
 
 
 def main(
@@ -86,10 +89,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--target-date",
         type=_parse_iso_date,
-        default=date.today(),
+        default=DEFAULT_TARGET_DATE,
         help=(
             "MLB schedule date in YYYY-MM-DD "
-            "format. Default: today."
+            "format. Default: yesterday."
         ),
     )
 
@@ -109,3 +112,4 @@ def _parse_iso_date(
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
