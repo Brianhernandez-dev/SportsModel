@@ -3,8 +3,11 @@
 import pytest
 
 from sportsmodel.database.moneyline_daily_workflow_repository import (
+    advance_moneyline_daily_workflow_stage,
     get_or_create_moneyline_daily_workflow_run,
     mark_moneyline_daily_workflow_awaiting_results,
+    mark_moneyline_daily_settlement_completed,
+    mark_moneyline_daily_workflow_completed,
     mark_moneyline_daily_workflow_failed,
     record_moneyline_daily_odds_run,
     record_moneyline_daily_prediction_run,
@@ -265,3 +268,46 @@ def test_failure_requires_nonempty_error() -> None:
             current_stage="odds_ingestion",
             error_message="   ",
         )
+
+
+
+def test_advances_workflow_stage() -> None:
+    cursor = FakeUpdateCursor()
+
+    advance_moneyline_daily_workflow_stage(
+        cursor,
+        workflow_run_id=12,
+        current_stage="evaluation",
+    )
+
+    assert "current_stage = %s" in cursor.executed_query
+    assert cursor.executed_parameters == (
+        "evaluation",
+        12,
+    )
+
+
+def test_marks_settlement_completed() -> None:
+    cursor = FakeUpdateCursor()
+
+    mark_moneyline_daily_settlement_completed(
+        cursor,
+        workflow_run_id=12,
+    )
+
+    assert "current_stage = 'final_audit'" in cursor.executed_query
+    assert "settlement_completed_at" in cursor.executed_query
+    assert cursor.executed_parameters == (12,)
+
+
+def test_marks_workflow_completed() -> None:
+    cursor = FakeUpdateCursor()
+
+    mark_moneyline_daily_workflow_completed(
+        cursor,
+        workflow_run_id=12,
+    )
+
+    assert "status = 'completed'" in cursor.executed_query
+    assert "current_stage = 'complete'" in cursor.executed_query
+    assert cursor.executed_parameters == (12,)

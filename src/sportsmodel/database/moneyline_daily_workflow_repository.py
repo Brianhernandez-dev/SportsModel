@@ -316,3 +316,104 @@ def mark_moneyline_daily_workflow_failed(
             "Daily Moneyline failure update "
             "did not affect exactly one row."
         )
+
+
+def advance_moneyline_daily_workflow_stage(
+    cursor: Any,
+    *,
+    workflow_run_id: int,
+    current_stage: str,
+) -> None:
+    """
+    Record the workflow stage currently being executed.
+    """
+
+    if workflow_run_id <= 0:
+        raise ValueError(
+            "Daily workflow run ID must be greater than zero."
+        )
+
+    cursor.execute(
+        """
+        UPDATE moneyline_daily_workflow_runs
+        SET current_stage = %s,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE moneyline_daily_workflow_run_id = %s;
+        """,
+        (
+            current_stage,
+            workflow_run_id,
+        ),
+    )
+
+    if cursor.rowcount != 1:
+        raise RuntimeError(
+            "Daily Moneyline stage update "
+            "did not affect exactly one row."
+        )
+
+
+def mark_moneyline_daily_settlement_completed(
+    cursor: Any,
+    *,
+    workflow_run_id: int,
+) -> None:
+    """
+    Record settlement completion and advance to the final audit.
+    """
+
+    if workflow_run_id <= 0:
+        raise ValueError(
+            "Daily workflow run ID must be greater than zero."
+        )
+
+    cursor.execute(
+        """
+        UPDATE moneyline_daily_workflow_runs
+        SET current_stage = 'final_audit',
+            settlement_completed_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE moneyline_daily_workflow_run_id = %s;
+        """,
+        (workflow_run_id,),
+    )
+
+    if cursor.rowcount != 1:
+        raise RuntimeError(
+            "Daily Moneyline settlement update "
+            "did not affect exactly one row."
+        )
+
+
+def mark_moneyline_daily_workflow_completed(
+    cursor: Any,
+    *,
+    workflow_run_id: int,
+) -> None:
+    """
+    Mark the daily prediction-to-settlement workflow complete.
+    """
+
+    if workflow_run_id <= 0:
+        raise ValueError(
+            "Daily workflow run ID must be greater than zero."
+        )
+
+    cursor.execute(
+        """
+        UPDATE moneyline_daily_workflow_runs
+        SET status = 'completed',
+            current_stage = 'complete',
+            last_attempt_completed_at = CURRENT_TIMESTAMP,
+            error_message = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE moneyline_daily_workflow_run_id = %s;
+        """,
+        (workflow_run_id,),
+    )
+
+    if cursor.rowcount != 1:
+        raise RuntimeError(
+            "Daily Moneyline completion update "
+            "did not affect exactly one row."
+        )
