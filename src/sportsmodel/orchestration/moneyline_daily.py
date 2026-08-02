@@ -213,3 +213,15 @@ def _can_reuse_completed_pregame(
         and workflow.odds_ingestion_run_id
         is not None
     )
+
+
+def _determine_pregame_resume_stage(
+    workflow: Any,
+) -> str:
+    if workflow.moneyline_prediction_run_id is None:
+        return "schedule_sync"
+
+    if workflow.odds_ingestion_run_id is None:
+        return "odds_ingestion"
+
+    return "evaluation"

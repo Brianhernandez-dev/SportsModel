@@ -288,3 +288,32 @@ def test_cannot_reuse_incomplete_pregame() -> None:
         ._can_reuse_completed_pregame(workflow)
         is False
     )
+
+
+@pytest.mark.parametrize(
+    (
+        "prediction_run_id",
+        "odds_run_id",
+        "expected_stage",
+    ),
+    [
+        (None, None, "schedule_sync"),
+        (25, None, "odds_ingestion"),
+        (25, 182, "evaluation"),
+    ],
+)
+def test_determines_pregame_resume_stage(
+    prediction_run_id,
+    odds_run_id,
+    expected_stage,
+) -> None:
+    workflow = SimpleNamespace(
+        moneyline_prediction_run_id=prediction_run_id,
+        odds_ingestion_run_id=odds_run_id,
+    )
+
+    assert (
+        moneyline_daily
+        ._determine_pregame_resume_stage(workflow)
+        == expected_stage
+    )
