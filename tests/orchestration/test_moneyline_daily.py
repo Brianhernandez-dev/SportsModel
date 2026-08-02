@@ -214,3 +214,49 @@ def test_build_pregame_result_requires_run_ids() -> None:
             workflow=workflow,
             audit=audit,
         )
+
+
+def test_marks_candidate_slate_awaiting_results(
+    monkeypatch,
+) -> None:
+    calls = []
+
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_update_workflow",
+        lambda **arguments: calls.append(arguments),
+    )
+
+    moneyline_daily._mark_pregame_terminal_state(
+        workflow_run_id=12,
+        audit=SimpleNamespace(paper_candidates=5),
+        connection_factory=lambda: None,
+    )
+
+    assert calls[0]["updater"] is (
+        moneyline_daily
+        .mark_moneyline_daily_workflow_awaiting_results
+    )
+
+
+def test_marks_zero_candidate_slate_completed(
+    monkeypatch,
+) -> None:
+    calls = []
+
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_update_workflow",
+        lambda **arguments: calls.append(arguments),
+    )
+
+    moneyline_daily._mark_pregame_terminal_state(
+        workflow_run_id=12,
+        audit=SimpleNamespace(paper_candidates=0),
+        connection_factory=lambda: None,
+    )
+
+    assert calls[0]["updater"] is (
+        moneyline_daily
+        .mark_moneyline_daily_workflow_completed
+    )

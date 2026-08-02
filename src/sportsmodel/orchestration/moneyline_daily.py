@@ -14,6 +14,7 @@ from sportsmodel.database.moneyline_daily_workflow_repository import (
     advance_moneyline_daily_workflow_stage,
     get_or_create_moneyline_daily_workflow_run,
     mark_moneyline_daily_workflow_awaiting_results,
+    mark_moneyline_daily_workflow_completed,
     mark_moneyline_daily_workflow_failed,
     record_moneyline_daily_odds_run,
     record_moneyline_daily_prediction_run,
@@ -174,4 +175,25 @@ def _build_pregame_result(
             workflow.odds_remaining_requests
         ),
         pipeline_state=audit.pipeline_state,
+    )
+
+
+
+def _mark_pregame_terminal_state(
+    *,
+    workflow_run_id: int,
+    audit: Any,
+    connection_factory: ConnectionFactory,
+) -> None:
+    if audit.paper_candidates > 0:
+        updater = (
+            mark_moneyline_daily_workflow_awaiting_results
+        )
+    else:
+        updater = mark_moneyline_daily_workflow_completed
+
+    _update_workflow(
+        connection_factory=connection_factory,
+        updater=updater,
+        workflow_run_id=workflow_run_id,
     )
