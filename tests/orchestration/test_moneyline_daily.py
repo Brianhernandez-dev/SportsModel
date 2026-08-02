@@ -996,3 +996,57 @@ def test_pregame_runner_records_failure_and_reraises(
     assert str(recorded_failures[0]["error"]) == (
         "Evaluation failed."
     )
+
+
+def test_pregame_runner_reuses_completed_workflow(
+    monkeypatch,
+) -> None:
+    reused_result = moneyline_daily.MoneylineDailyPregameResult(
+        workflow_run_id=12,
+        target_date=date(2026, 8, 2),
+        prediction_run_id=25,
+        odds_ingestion_run_id=182,
+        predictions_created=10,
+        evaluations_saved=10,
+        paper_candidates=5,
+        odds_remaining_requests=487,
+        pipeline_state="awaiting_results",
+    )
+
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_prepare_pregame_workflow",
+        lambda **arguments: (
+            SimpleNamespace(),
+            reused_result,
+            None,
+        ),
+    )
+
+    def unexpected_call(*args, **kwargs):
+        raise AssertionError(
+            "Reusable workflow should perform no new pipeline work."
+        )
+
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_run_schedule_and_prediction",
+        unexpected_call,
+    )
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_run_odds_ingestion",
+        unexpected_call,
+    )
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_run_market_evaluation",
+        unexpected_call,
+    )
+
+    result = moneyline_daily.run_moneyline_daily_pregame(
+        target_date=date(2026, 8, 2),
+        connection_factory=lambda: None,
+    )
+
+    assert result is reused_result
