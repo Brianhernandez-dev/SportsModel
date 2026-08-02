@@ -1,5 +1,6 @@
 param(
-    [switch]$ValidateOnly
+    [switch]$ValidateOnly,
+    [switch]$DryRun
 )
 
 $ErrorActionPreference = "Stop"
@@ -96,6 +97,38 @@ try {
         exit 0
     }
 
+    if ($ValidateOnly -and $DryRun) {
+        throw "Choose either -ValidateOnly or -DryRun, not both."
+    }
+
+    if ($DryRun) {
+        Write-Log "Dry-run mode enabled."
+        Write-Log "Running focused orchestration and CLI tests."
+        Write-Log "No database or live odds work will be executed."
+
+        & $PythonPath -m pytest `
+            tests\orchestration\test_moneyline_daily.py `
+            tests\orchestration\test_moneyline_daily_cli.py `
+            -q 2>&1 |
+            ForEach-Object {
+                $Line = $_.ToString()
+                Write-Host $Line
+                Add-Content -Path $LogPath -Value $Line
+            }
+
+        $PythonExitCode = $LASTEXITCODE
+
+        if ($PythonExitCode -ne 0) {
+            throw "Daily pregame dry run exited with code $PythonExitCode."
+        }
+
+        Write-Log "Daily pregame dry run completed successfully."
+        Write-Log "No live pregame pipeline work was executed."
+        Write-Log "Log file: $LogPath"
+
+        exit 0
+    }
+
     & $PythonPath $ScriptPath 2>&1 |
         ForEach-Object {
             $Line = $_.ToString()
@@ -121,5 +154,7 @@ catch {
 
     exit 1
 }
+
+
 
 
