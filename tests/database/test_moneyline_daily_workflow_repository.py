@@ -5,6 +5,7 @@ import pytest
 from sportsmodel.database.moneyline_daily_workflow_repository import (
     get_or_create_moneyline_daily_workflow_run,
     mark_moneyline_daily_workflow_awaiting_results,
+    mark_moneyline_daily_workflow_failed,
     record_moneyline_daily_odds_run,
     record_moneyline_daily_prediction_run,
     start_moneyline_daily_workflow_attempt,
@@ -229,4 +230,38 @@ def test_awaiting_results_requires_existing_workflow() -> None:
         mark_moneyline_daily_workflow_awaiting_results(
             cursor,
             workflow_run_id=12,
+        )
+
+
+
+def test_marks_workflow_failed() -> None:
+    cursor = FakeUpdateCursor()
+
+    mark_moneyline_daily_workflow_failed(
+        cursor,
+        workflow_run_id=12,
+        current_stage="odds_ingestion",
+        error_message="  quota exhausted  ",
+    )
+
+    assert "status = 'failed'" in cursor.executed_query
+    assert cursor.executed_parameters == (
+        "odds_ingestion",
+        "quota exhausted",
+        12,
+    )
+
+
+def test_failure_requires_nonempty_error() -> None:
+    cursor = FakeUpdateCursor()
+
+    with pytest.raises(
+        ValueError,
+        match="cannot be empty",
+    ):
+        mark_moneyline_daily_workflow_failed(
+            cursor,
+            workflow_run_id=12,
+            current_stage="odds_ingestion",
+            error_message="   ",
         )

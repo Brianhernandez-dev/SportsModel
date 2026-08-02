@@ -269,3 +269,50 @@ def mark_moneyline_daily_workflow_awaiting_results(
             "Daily Moneyline pregame completion update "
             "did not affect exactly one row."
         )
+
+
+def mark_moneyline_daily_workflow_failed(
+    cursor: Any,
+    *,
+    workflow_run_id: int,
+    current_stage: str,
+    error_message: str,
+) -> None:
+    """
+    Record a failed workflow attempt while preserving completed run IDs.
+    """
+
+    if workflow_run_id <= 0:
+        raise ValueError(
+            "Daily workflow run ID must be greater than zero."
+        )
+
+    normalized_error = error_message.strip()
+
+    if not normalized_error:
+        raise ValueError(
+            "Workflow error message cannot be empty."
+        )
+
+    cursor.execute(
+        """
+        UPDATE moneyline_daily_workflow_runs
+        SET status = 'failed',
+            current_stage = %s,
+            last_attempt_completed_at = CURRENT_TIMESTAMP,
+            error_message = %s,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE moneyline_daily_workflow_run_id = %s;
+        """,
+        (
+            current_stage,
+            normalized_error,
+            workflow_run_id,
+        ),
+    )
+
+    if cursor.rowcount != 1:
+        raise RuntimeError(
+            "Daily Moneyline failure update "
+            "did not affect exactly one row."
+        )
