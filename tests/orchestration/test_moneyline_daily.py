@@ -1237,3 +1237,155 @@ def test_marks_postgame_settlement_state(
 
     assert updates[0]["workflow_run_id"] == 12
     assert updates[0]["updater"] is expected_updater
+
+
+def test_postgame_runner_returns_to_awaiting_results(
+    monkeypatch,
+) -> None:
+    updates = []
+
+    workflow = SimpleNamespace(
+        moneyline_daily_workflow_run_id=12,
+        target_date=date(2026, 8, 3),
+        status="awaiting_results",
+        current_stage="results_ingestion",
+        moneyline_prediction_run_id=25,
+        odds_ingestion_run_id=182,
+    )
+
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_get_or_create_workflow",
+        lambda **arguments: workflow,
+    )
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_update_workflow",
+        lambda **arguments: updates.append(arguments),
+    )
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_run_postgame_results_ingestion",
+        lambda **arguments: SimpleNamespace(
+            games_processed=7,
+            boxscores_processed=7,
+        ),
+    )
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_run_postgame_settlement",
+        lambda **arguments: SimpleNamespace(
+            report=SimpleNamespace(
+                settlements_saved=0,
+                pending_candidates=1,
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_mark_postgame_settlement_state",
+        lambda **arguments: None,
+    )
+
+    audit = SimpleNamespace(
+        integrity_issues=(),
+        predictions=8,
+        evaluated_predictions=8,
+        evaluations=8,
+        paper_candidates=1,
+        settlements=0,
+        pipeline_state="awaiting_results",
+    )
+
+    result = moneyline_daily.run_moneyline_daily_postgame(
+        target_date=date(2026, 8, 3),
+        connection_factory=lambda: None,
+        pipeline_auditor=lambda **arguments: audit,
+    )
+
+    assert result.games_processed == 7
+    assert result.boxscores_processed == 7
+    assert result.settlements_saved == 0
+    assert result.pending_candidates == 1
+    assert result.pipeline_state == "awaiting_results"
+
+    assert not any(
+        update["updater"]
+        is moneyline_daily.mark_moneyline_daily_workflow_completed
+        for update in updates
+    )
+
+
+def test_postgame_runner_completes_settled_workflow(
+    monkeypatch,
+) -> None:
+    updates = []
+
+    workflow = SimpleNamespace(
+        moneyline_daily_workflow_run_id=12,
+        target_date=date(2026, 8, 3),
+        status="awaiting_results",
+        current_stage="results_ingestion",
+        moneyline_prediction_run_id=25,
+        odds_ingestion_run_id=182,
+    )
+
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_get_or_create_workflow",
+        lambda **arguments: workflow,
+    )
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_update_workflow",
+        lambda **arguments: updates.append(arguments),
+    )
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_run_postgame_results_ingestion",
+        lambda **arguments: SimpleNamespace(
+            games_processed=8,
+            boxscores_processed=8,
+        ),
+    )
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_run_postgame_settlement",
+        lambda **arguments: SimpleNamespace(
+            report=SimpleNamespace(
+                settlements_saved=1,
+                pending_candidates=0,
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_mark_postgame_settlement_state",
+        lambda **arguments: None,
+    )
+
+    audit = SimpleNamespace(
+        integrity_issues=(),
+        predictions=8,
+        evaluated_predictions=8,
+        evaluations=8,
+        paper_candidates=1,
+        settlements=1,
+        pipeline_state="complete",
+    )
+
+    result = moneyline_daily.run_moneyline_daily_postgame(
+        target_date=date(2026, 8, 3),
+        connection_factory=lambda: None,
+        pipeline_auditor=lambda **arguments: audit,
+    )
+
+    assert result.settlements_saved == 1
+    assert result.pending_candidates == 0
+    assert result.pipeline_state == "complete"
+
+    assert any(
+        update["updater"]
+        is moneyline_daily.mark_moneyline_daily_workflow_completed
+        for update in updates
+    )

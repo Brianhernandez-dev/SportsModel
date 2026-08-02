@@ -665,3 +665,166 @@ def _mark_postgame_settlement_state(
         updater=updater,
         workflow_run_id=workflow_run_id,
     )
+
+
+def _build_postgame_result(
+    *,
+    workflow: Any,
+    results_summary: Any | None,
+    audit: Any,
+) -> MoneylineDailyPostgameResult:
+    prediction_run_id, odds_ingestion_run_id = (
+        _get_postgame_run_ids(workflow)
+    )
+
+    return MoneylineDailyPostgameResult(
+        workflow_run_id=(
+            workflow.moneyline_daily_workflow_run_id
+        ),
+        target_date=workflow.target_date,
+        prediction_run_id=prediction_run_id,
+        odds_ingestion_run_id=odds_ingestion_run_id,
+        games_processed=(
+            0
+            if results_summary is None
+            else results_summary.games_processed
+        ),
+        boxscores_processed=(
+            0
+            if results_summary is None
+            else results_summary.boxscores_processed
+        ),
+        settlements_saved=audit.settlements,
+        pending_candidates=max(
+            audit.paper_candidates - audit.settlements,
+            0,
+        ),
+        pipeline_state=audit.pipeline_state,
+    )
+
+
+def run_moneyline_daily_postgame(
+    *,
+    target_date: date,
+    connection_factory: ConnectionFactory = get_connection,
+    results_fetcher: ResultsFetcher = fetch_historical_results,
+    settlement_runner: SettlementRunner = (
+        settle_moneyline_paper_candidate_run
+    ),
+    pipeline_auditor: PipelineAuditor = (
+        audit_moneyline_live_pipeline
+    ),
+) -> MoneylineDailyPostgameResult:
+    """
+    Run or safely resume one MLB Moneyline postgame workflow.
+    """
+
+    workflow = _get_or_create_workflow(
+        target_date=target_date,
+        connection_factory=connection_factory,
+    )
+
+    prediction_run_id, odds_ingestion_run_id = (
+        _get_postgame_run_ids(workflow)
+    )
+
+    if workflow.status == "completed":
+        audit = pipeline_auditor(
+            prediction_run_id=prediction_run_id,
+            odds_ingestion_run_id=odds_ingestion_run_id,
+        )
+
+        _validate_pregame_audit(audit)
+
+        return _build_postgame_result(
+            workflow=workflow,
+            results_summary=None,
+            audit=audit,
+        )
+
+    workflow_run_id = (
+        workflow.moneyline_daily_workflow_run_id
+    )
+    current_stage = "results_ingestion"
+
+    try:
+        _update_workflow(
+            connection_factory=connection_factory,
+            updater=start_moneyline_daily_workflow_attempt,
+            workflow_run_id=workflow_run_id,
+            current_stage=current_stage,
+        )
+
+        results_summary = (
+            _run_postgame_results_ingestion(
+                workflow_run_id=workflow_run_id,
+                target_date=target_date,
+                connection_factory=connection_factory,
+                results_fetcher=results_fetcher,
+            )
+        )
+
+        current_stage = "settlement"
+
+        settlement_result = _run_postgame_settlement(
+            prediction_run_id=prediction_run_id,
+            odds_ingestion_run_id=odds_ingestion_run_id,
+            settlement_runner=settlement_runner,
+        )
+
+        _mark_postgame_settlement_state(
+            workflow_run_id=workflow_run_id,
+            settlement_result=settlement_result,
+            connection_factory=connection_factory,
+        )
+
+        current_stage = (
+            "results_ingestion"
+            if settlement_result.report.pending_candidates > 0
+            else "final_audit"
+        )
+
+        audit = pipeline_auditor(
+            prediction_run_id=prediction_run_id,
+            odds_ingestion_run_id=odds_ingestion_run_id,
+        )
+
+        _validate_pregame_audit(audit)
+
+        if settlement_result.report.pending_candidates == 0:
+            _update_workflow(
+                connection_factory=connection_factory,
+                updater=mark_moneyline_daily_workflow_completed,
+                workflow_run_id=workflow_run_id,
+            )
+
+        refreshed_workflow = _get_or_create_workflow(
+            target_date=target_date,
+            connection_factory=connection_factory,
+        )
+
+        return _build_postgame_result(
+            workflow=refreshed_workflow,
+            results_summary=results_summary,
+            audit=audit,
+        )
+
+    except Exception as error:
+        failure_stage = current_stage
+
+        try:
+            failed_workflow = _get_or_create_workflow(
+                target_date=target_date,
+                connection_factory=connection_factory,
+            )
+            failure_stage = failed_workflow.current_stage
+        except Exception:
+            pass
+
+        _record_pregame_failure(
+            workflow_run_id=workflow_run_id,
+            current_stage=failure_stage,
+            error=error,
+            connection_factory=connection_factory,
+        )
+        raise
