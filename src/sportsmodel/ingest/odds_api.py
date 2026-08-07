@@ -1,6 +1,7 @@
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timedelta, timezone
 import os
+from zoneinfo import ZoneInfo
 
 import requests
 
@@ -17,6 +18,7 @@ REGIONS = "us"
 MARKETS = "h2h"
 ODDS_FORMAT = "american"
 SOURCE_NAME = "odds_api"
+SLATE_TIME_ZONE = ZoneInfo("America/Los_Angeles")
 
 LIVE_SNAPSHOT_ROLES = frozenset(
     {
@@ -40,6 +42,10 @@ SCHEDULED_SNAPSHOT_ROLES = frozenset(
 )
 
 
+class DuplicateOddsSnapshotError(RuntimeError):
+    """Raised when an active scheduled snapshot already exists."""
+
+
 @dataclass(frozen=True)
 class OddsIngestionResult:
     odds_ingestion_run_id: int
@@ -52,6 +58,60 @@ class OddsIngestionResult:
     games_processed: int
     selections_inserted: int
     selections_skipped: int
+
+
+def build_target_date_window(
+    target_date: date,
+) -> tuple[datetime, datetime]:
+    """
+    Return the target Pacific calendar day as a UTC half-open window.
+    """
+
+    local_start = datetime.combine(
+        target_date,
+        time.min,
+        tzinfo=SLATE_TIME_ZONE,
+    )
+    local_end = datetime.combine(
+        target_date + timedelta(days=1),
+        time.min,
+        tzinfo=SLATE_TIME_ZONE,
+    )
+
+    return (
+        local_start.astimezone(timezone.utc),
+        local_end.astimezone(timezone.utc),
+    )
+
+
+def _format_api_timestamp(
+    value: datetime,
+) -> str:
+    """
+    Format a timezone-aware timestamp for The Odds API.
+    """
+
+    return (
+        value.astimezone(timezone.utc)
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z")
+    )
+
+
+def _is_in_target_date_window(
+    commence_time: datetime,
+    target_window: tuple[datetime, datetime] | None,
+) -> bool:
+    """
+    Return whether an event belongs to the requested Pacific slate.
+    """
+
+    if target_window is None:
+        return True
+
+    window_start, window_end = target_window
+
+    return window_start <= commence_time < window_end
 
 
 def _validate_snapshot_context(
@@ -122,6 +182,7 @@ def create_ingestion_run(
                 status
             )
             VALUES (%s, %s, %s, %s, 'running')
+            ON CONFLICT DO NOTHING
             RETURNING odds_ingestion_run_id;
             """,
             (
@@ -132,7 +193,15 @@ def create_ingestion_run(
             ),
         )
 
-        ingestion_run_id = cursor.fetchone()[0]
+        returned_row = cursor.fetchone()
+
+        if returned_row is None:
+            raise DuplicateOddsSnapshotError(
+                "An active odds snapshot already exists for "
+                f"{target_date} with role {snapshot_role!r}."
+            )
+
+        ingestion_run_id = returned_row[0]
 
     # Commit this separately so the run remains available if ingestion fails.
     connection.commit()
@@ -408,6 +477,12 @@ def fetch_live_odds(
         snapshot_role=snapshot_role,
     )
 
+    target_window = (
+        build_target_date_window(target_date)
+        if target_date is not None
+        else None
+    )
+
     api_key = os.getenv("ODDS_API_KEY")
 
     if not api_key:
@@ -442,6 +517,18 @@ def fetch_live_odds(
             "markets": MARKETS,
             "oddsFormat": ODDS_FORMAT,
         }
+
+        if target_window is not None:
+            window_start, window_end = target_window
+
+            params["commenceTimeFrom"] = (
+                _format_api_timestamp(window_start)
+            )
+            params["commenceTimeTo"] = (
+                _format_api_timestamp(
+                    window_end - timedelta(seconds=1)
+                )
+            )
 
         response = requests.get(
             url,
@@ -500,6 +587,16 @@ def fetch_live_odds(
                 ):
                     continue
 
+                commence_datetime = parse_commence_time(
+                    commence_time
+                )
+
+                if not _is_in_target_date_window(
+                    commence_datetime,
+                    target_window,
+                ):
+                    continue
+
                 home_team_id = get_team_id(cursor, home_team)
                 away_team_id = get_team_id(cursor, away_team)
 
@@ -507,7 +604,7 @@ def fetch_live_odds(
                     cursor,
                     source_name=SOURCE_NAME,
                     external_game_id=external_game_id,
-                    game_datetime=parse_commence_time(commence_time),
+                    game_datetime=commence_datetime,
                     home_team_id=home_team_id,
                     away_team_id=away_team_id,
                 )

@@ -3,7 +3,26 @@ import os
 import psycopg2
 from dotenv import load_dotenv
 
-load_dotenv()
+def load_database_environment() -> None:
+    """
+    Load database settings from an explicit environment file when set.
+    """
+
+    environment_file = os.getenv(
+        "SPORTSMODEL_ENV_FILE"
+    )
+
+    if environment_file:
+        load_dotenv(
+            environment_file,
+            override=True,
+        )
+        return
+
+    load_dotenv()
+
+
+load_database_environment()
 
 
 def get_connection():
