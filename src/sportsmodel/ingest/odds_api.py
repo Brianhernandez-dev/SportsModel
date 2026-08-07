@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 import os
 
 import requests
@@ -18,10 +18,33 @@ MARKETS = "h2h"
 ODDS_FORMAT = "american"
 SOURCE_NAME = "odds_api"
 
+LIVE_SNAPSHOT_ROLES = frozenset(
+    {
+        "manual",
+        "opening",
+        "morning",
+        "entry",
+        "afternoon",
+        "near_close",
+    }
+)
+
+SCHEDULED_SNAPSHOT_ROLES = frozenset(
+    {
+        "opening",
+        "morning",
+        "entry",
+        "afternoon",
+        "near_close",
+    }
+)
+
 
 @dataclass(frozen=True)
 class OddsIngestionResult:
     odds_ingestion_run_id: int
+    target_date: date | None
+    snapshot_role: str
     status_code: int
     remaining_requests: int | None
     used_requests: int | None
@@ -29,6 +52,34 @@ class OddsIngestionResult:
     games_processed: int
     selections_inserted: int
     selections_skipped: int
+
+
+def _validate_snapshot_context(
+    *,
+    target_date: date | None,
+    snapshot_role: str,
+) -> str:
+    normalized_role = snapshot_role.strip().lower()
+
+    if normalized_role not in LIVE_SNAPSHOT_ROLES:
+        supported_roles = ", ".join(
+            sorted(LIVE_SNAPSHOT_ROLES)
+        )
+        raise ValueError(
+            "Unsupported odds snapshot role: "
+            f"{snapshot_role!r}. "
+            f"Supported roles: {supported_roles}."
+        )
+
+    if (
+        normalized_role in SCHEDULED_SNAPSHOT_ROLES
+        and target_date is None
+    ):
+        raise ValueError(
+            "Scheduled odds snapshots require a target date."
+        )
+
+    return normalized_role
 
 
 def _parse_quota_header(
@@ -52,7 +103,12 @@ def parse_commence_time(value: str) -> datetime:
         value.replace("Z", "+00:00")
     ).astimezone(timezone.utc)
 
-def create_ingestion_run(connection):
+def create_ingestion_run(
+    connection,
+    *,
+    target_date: date | None,
+    snapshot_role: str,
+):
     """Create and commit a new odds-ingestion audit record."""
 
     with connection.cursor() as cursor:
@@ -61,14 +117,18 @@ def create_ingestion_run(connection):
             INSERT INTO odds_ingestion_runs (
                 sport,
                 source_name,
+                target_date,
+                snapshot_role,
                 status
             )
-            VALUES (%s, %s, 'running')
+            VALUES (%s, %s, %s, %s, 'running')
             RETURNING odds_ingestion_run_id;
             """,
             (
                 SPORT,
                 SOURCE_NAME,
+                target_date,
+                snapshot_role,
             ),
         )
 
@@ -83,6 +143,9 @@ def create_ingestion_run(connection):
 def mark_ingestion_run_completed(
     cursor,
     ingestion_run_id,
+    status_code,
+    remaining_requests,
+    used_requests,
     games_returned,
     games_processed,
     selections_inserted,
@@ -95,6 +158,9 @@ def mark_ingestion_run_completed(
         UPDATE odds_ingestion_runs
         SET completed_at = CURRENT_TIMESTAMP,
             status = 'completed',
+            status_code = %s,
+            remaining_requests = %s,
+            used_requests = %s,
             games_returned = %s,
             games_processed = %s,
             selections_inserted = %s,
@@ -103,6 +169,9 @@ def mark_ingestion_run_completed(
         WHERE odds_ingestion_run_id = %s;
         """,
         (
+            status_code,
+            remaining_requests,
+            used_requests,
             games_returned,
             games_processed,
             selections_inserted,
@@ -115,6 +184,9 @@ def mark_ingestion_run_completed(
 def mark_ingestion_run_failed(
     connection,
     ingestion_run_id,
+    status_code,
+    remaining_requests,
+    used_requests,
     games_returned,
     games_processed,
     selections_inserted,
@@ -129,6 +201,9 @@ def mark_ingestion_run_failed(
             UPDATE odds_ingestion_runs
             SET completed_at = CURRENT_TIMESTAMP,
                 status = 'failed',
+                status_code = %s,
+                remaining_requests = %s,
+                used_requests = %s,
                 games_returned = %s,
                 games_processed = %s,
                 selections_inserted = %s,
@@ -137,6 +212,9 @@ def mark_ingestion_run_failed(
             WHERE odds_ingestion_run_id = %s;
             """,
             (
+                status_code,
+                remaining_requests,
+                used_requests,
                 games_returned,
                 games_processed,
                 selections_inserted,
@@ -318,8 +396,17 @@ def save_market_selection(
     )
 
 
-def fetch_live_odds() -> OddsIngestionResult:
+def fetch_live_odds(
+    *,
+    target_date: date | None = None,
+    snapshot_role: str = "manual",
+) -> OddsIngestionResult:
     """Fetch current MLB Moneyline odds."""
+
+    normalized_snapshot_role = _validate_snapshot_context(
+        target_date=target_date,
+        snapshot_role=snapshot_role,
+    )
 
     api_key = os.getenv("ODDS_API_KEY")
 
@@ -334,12 +421,16 @@ def fetch_live_odds() -> OddsIngestionResult:
     selections_inserted = 0
     selections_skipped = 0
 
-    status_code = 0
+    status_code: int | None = None
     remaining_requests = None
     used_requests = None
 
     try:
-        ingestion_run_id = create_ingestion_run(connection)
+        ingestion_run_id = create_ingestion_run(
+            connection,
+            target_date=target_date,
+            snapshot_role=normalized_snapshot_role,
+        )
 
         print(f"Ingestion run ID: {ingestion_run_id}")
 
@@ -466,6 +557,9 @@ def fetch_live_odds() -> OddsIngestionResult:
             mark_ingestion_run_completed(
                 cursor=cursor,
                 ingestion_run_id=ingestion_run_id,
+                status_code=status_code,
+                remaining_requests=remaining_requests,
+                used_requests=used_requests,
                 games_returned=games_returned,
                 games_processed=games_processed,
                 selections_inserted=selections_inserted,
@@ -481,6 +575,9 @@ def fetch_live_odds() -> OddsIngestionResult:
             mark_ingestion_run_failed(
                 connection=connection,
                 ingestion_run_id=ingestion_run_id,
+                status_code=status_code,
+                remaining_requests=remaining_requests,
+                used_requests=used_requests,
                 games_returned=games_returned,
                 games_processed=games_processed,
                 selections_inserted=selections_inserted,
@@ -497,8 +594,15 @@ def fetch_live_odds() -> OddsIngestionResult:
     print(f"Market selections inserted: {selections_inserted}")
     print(f"Selections skipped: {selections_skipped}")
 
+    if status_code is None:
+        raise RuntimeError(
+            "Completed odds ingestion has no HTTP status code."
+        )
+
     return OddsIngestionResult(
         odds_ingestion_run_id=ingestion_run_id,
+        target_date=target_date,
+        snapshot_role=normalized_snapshot_role,
         status_code=status_code,
         remaining_requests=remaining_requests,
         used_requests=used_requests,

@@ -41,7 +41,7 @@ EXPECTED_FINAL_PIPELINE_STATE = "complete"
 ConnectionFactory = Callable[[], Any]
 ScheduleSyncer = Callable[..., Any]
 PredictionRunner = Callable[..., Any]
-OddsFetcher = Callable[[], Any]
+OddsFetcher = Callable[..., Any]
 EvaluationRunner = Callable[..., Any]
 PipelineAuditor = Callable[..., Any]
 ResultsFetcher = Callable[..., Any]
@@ -294,10 +294,14 @@ def _run_schedule_and_prediction(
 def _run_odds_ingestion(
     *,
     workflow_run_id: int,
+    target_date: date,
     connection_factory: ConnectionFactory,
     odds_fetcher: OddsFetcher,
 ):
-    odds_result = odds_fetcher()
+    odds_result = odds_fetcher(
+        target_date=target_date,
+        snapshot_role="entry",
+    )
 
     _update_workflow(
         connection_factory=connection_factory,
@@ -504,6 +508,7 @@ def run_moneyline_daily_pregame(
 
             odds_result = _run_odds_ingestion(
                 workflow_run_id=workflow_run_id,
+                target_date=target_date,
                 connection_factory=connection_factory,
                 odds_fetcher=odds_fetcher,
             )

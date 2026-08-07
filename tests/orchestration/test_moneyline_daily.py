@@ -370,6 +370,7 @@ def test_runs_odds_ingestion_and_persists_quota(
     monkeypatch,
 ) -> None:
     updates = []
+    fetch_calls = []
 
     odds_result = SimpleNamespace(
         odds_ingestion_run_id=182,
@@ -377,6 +378,10 @@ def test_runs_odds_ingestion_and_persists_quota(
         remaining_requests=487,
         used_requests=13,
     )
+
+    def fake_odds_fetcher(**arguments):
+        fetch_calls.append(arguments)
+        return odds_result
 
     monkeypatch.setattr(
         moneyline_daily,
@@ -386,11 +391,19 @@ def test_runs_odds_ingestion_and_persists_quota(
 
     result = moneyline_daily._run_odds_ingestion(
         workflow_run_id=12,
+        target_date=date(2026, 8, 2),
         connection_factory=lambda: None,
-        odds_fetcher=lambda: odds_result,
+        odds_fetcher=fake_odds_fetcher,
     )
 
     assert result is odds_result
+
+    assert fetch_calls == [
+        {
+            "target_date": date(2026, 8, 2),
+            "snapshot_role": "entry",
+        }
+    ]
 
     assert updates[0]["odds_ingestion_run_id"] == 182
     assert updates[0]["status_code"] == 200

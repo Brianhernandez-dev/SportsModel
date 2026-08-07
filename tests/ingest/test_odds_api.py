@@ -1,3 +1,7 @@
+from datetime import date
+
+import pytest
+
 from sportsmodel.ingest import odds_api
 
 
@@ -51,6 +55,7 @@ def test_fetch_live_odds_returns_structured_result(
     monkeypatch,
 ) -> None:
     connection = FakeConnection()
+    create_arguments = {}
     completed_arguments = {}
 
     monkeypatch.setenv(
@@ -64,10 +69,17 @@ def test_fetch_live_odds_returns_structured_result(
         lambda: connection,
     )
 
+    def fake_create_ingestion_run(
+        unused_connection,
+        **arguments,
+    ) -> int:
+        create_arguments.update(arguments)
+        return 182
+
     monkeypatch.setattr(
         odds_api,
         "create_ingestion_run",
-        lambda unused_connection: 182,
+        fake_create_ingestion_run,
     )
 
     monkeypatch.setattr(
@@ -89,10 +101,15 @@ def test_fetch_live_odds_returns_structured_result(
         fake_mark_completed,
     )
 
-    result = odds_api.fetch_live_odds()
+    result = odds_api.fetch_live_odds(
+        target_date=date(2026, 8, 2),
+        snapshot_role="entry",
+    )
 
     assert result == odds_api.OddsIngestionResult(
         odds_ingestion_run_id=182,
+        target_date=date(2026, 8, 2),
+        snapshot_role="entry",
         status_code=200,
         remaining_requests=487,
         used_requests=13,
@@ -102,14 +119,46 @@ def test_fetch_live_odds_returns_structured_result(
         selections_skipped=0,
     )
 
+    assert create_arguments == {
+        "target_date": date(2026, 8, 2),
+        "snapshot_role": "entry",
+    }
+
     assert (
         completed_arguments["ingestion_run_id"]
         == 182
     )
+    assert completed_arguments["status_code"] == 200
+    assert completed_arguments["remaining_requests"] == 487
+    assert completed_arguments["used_requests"] == 13
 
     assert connection.commits == 1
     assert connection.rollbacks == 0
     assert connection.closed is True
+
+
+def test_scheduled_snapshot_requires_target_date() -> None:
+    with pytest.raises(
+        ValueError,
+        match=(
+            "Scheduled odds snapshots "
+            "require a target date"
+        ),
+    ):
+        odds_api.fetch_live_odds(
+            snapshot_role="entry",
+        )
+
+
+def test_rejects_unsupported_snapshot_role() -> None:
+    with pytest.raises(
+        ValueError,
+        match="Unsupported odds snapshot role",
+    ):
+        odds_api.fetch_live_odds(
+            target_date=date(2026, 8, 2),
+            snapshot_role="closing",
+        )
 
 
 def test_parse_quota_header_returns_none_for_missing_value(
