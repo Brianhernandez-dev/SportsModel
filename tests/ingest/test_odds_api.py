@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timezone
 
 import pytest
 
@@ -172,6 +172,7 @@ def test_fetch_live_odds_returns_structured_result(
     connection = FakeConnection()
     create_arguments = {}
     completed_arguments = {}
+    request_arguments = {}
 
     monkeypatch.setenv(
         "ODDS_API_KEY",
@@ -197,12 +198,18 @@ def test_fetch_live_odds_returns_structured_result(
         fake_create_ingestion_run,
     )
 
+    def fake_request(
+        *arguments,
+        **keyword_arguments,
+    ):
+        request_arguments["args"] = arguments
+        request_arguments["kwargs"] = keyword_arguments
+        return FakeResponse()
+
     monkeypatch.setattr(
         odds_api.requests,
         "get",
-        lambda *unused_args, **unused_kwargs: (
-            FakeResponse()
-        ),
+        fake_request,
     )
 
     def fake_mark_completed(
@@ -219,6 +226,17 @@ def test_fetch_live_odds_returns_structured_result(
     result = odds_api.fetch_live_odds(
         target_date=date(2026, 8, 2),
         snapshot_role="entry",
+    )
+
+    request_params = (
+        request_arguments["kwargs"]["params"]
+    )
+
+    assert request_params["commenceTimeFrom"] == (
+        "2026-08-02T07:00:00Z"
+    )
+    assert request_params["commenceTimeTo"] == (
+        "2026-08-03T06:59:59Z"
     )
 
     assert result == odds_api.OddsIngestionResult(
@@ -250,6 +268,93 @@ def test_fetch_live_odds_returns_structured_result(
     assert connection.commits == 1
     assert connection.rollbacks == 0
     assert connection.closed is True
+
+
+def test_builds_pacific_target_date_window() -> None:
+    window_start, window_end = (
+        odds_api.build_target_date_window(
+            date(2026, 8, 7)
+        )
+    )
+
+    assert window_start == datetime(
+        2026,
+        8,
+        7,
+        7,
+        0,
+        tzinfo=timezone.utc,
+    )
+    assert window_end == datetime(
+        2026,
+        8,
+        8,
+        7,
+        0,
+        tzinfo=timezone.utc,
+    )
+
+
+def test_target_date_window_handles_dst_transition(
+) -> None:
+    window_start, window_end = (
+        odds_api.build_target_date_window(
+            date(2026, 11, 1)
+        )
+    )
+
+    assert window_start == datetime(
+        2026,
+        11,
+        1,
+        7,
+        0,
+        tzinfo=timezone.utc,
+    )
+    assert window_end == datetime(
+        2026,
+        11,
+        2,
+        8,
+        0,
+        tzinfo=timezone.utc,
+    )
+
+
+def test_checks_event_against_half_open_target_window(
+) -> None:
+    target_window = odds_api.build_target_date_window(
+        date(2026, 8, 7)
+    )
+
+    assert odds_api._is_in_target_date_window(
+        datetime(
+            2026,
+            8,
+            7,
+            22,
+            40,
+            tzinfo=timezone.utc,
+        ),
+        target_window,
+    )
+
+    assert not odds_api._is_in_target_date_window(
+        datetime(
+            2026,
+            8,
+            6,
+            23,
+            10,
+            tzinfo=timezone.utc,
+        ),
+        target_window,
+    )
+
+    assert not odds_api._is_in_target_date_window(
+        target_window[1],
+        target_window,
+    )
 
 
 def test_scheduled_snapshot_requires_target_date() -> None:
