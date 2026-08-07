@@ -398,3 +398,134 @@ def test_parse_quota_header_returns_none_for_invalid_value(
 
 def test_parse_quota_header_returns_integer() -> None:
     assert odds_api._parse_quota_header("487") == 487
+
+@pytest.fixture(autouse=True)
+def freeze_odds_snapshot_time(
+    monkeypatch,
+) -> None:
+    """
+    Keep existing ingestion fixtures deterministically pregame.
+    """
+
+    monkeypatch.setattr(
+        odds_api,
+        "_current_snapshot_time",
+        lambda: datetime(
+            2000,
+            1,
+            1,
+            tzinfo=timezone.utc,
+        ),
+    )
+
+
+def test_pregame_event_requires_future_start() -> None:
+    snapshot_time = datetime(
+        2026,
+        8,
+        7,
+        18,
+        0,
+        tzinfo=timezone.utc,
+    )
+
+    assert odds_api._is_pregame_event(
+        datetime(
+            2026,
+            8,
+            7,
+            18,
+            1,
+            tzinfo=timezone.utc,
+        ),
+        snapshot_time,
+    )
+
+    assert not odds_api._is_pregame_event(
+        snapshot_time,
+        snapshot_time,
+    )
+
+    assert not odds_api._is_pregame_event(
+        datetime(
+            2026,
+            8,
+            7,
+            17,
+            59,
+            tzinfo=timezone.utc,
+        ),
+        snapshot_time,
+    )
+
+
+def test_process_event_rejects_in_play_game() -> None:
+    target_window = odds_api.build_target_date_window(
+        date(2026, 8, 7)
+    )
+
+    assert not odds_api._should_process_event(
+        datetime(
+            2026,
+            8,
+            7,
+            23,
+            10,
+            tzinfo=timezone.utc,
+        ),
+        target_window,
+        datetime(
+            2026,
+            8,
+            7,
+            23,
+            11,
+            tzinfo=timezone.utc,
+        ),
+    )
+
+
+def test_process_event_rejects_wrong_slate_date() -> None:
+    target_window = odds_api.build_target_date_window(
+        date(2026, 8, 7)
+    )
+
+    assert not odds_api._should_process_event(
+        datetime(
+            2026,
+            8,
+            6,
+            23,
+            10,
+            tzinfo=timezone.utc,
+        ),
+        target_window,
+        datetime(
+            2026,
+            8,
+            6,
+            20,
+            0,
+            tzinfo=timezone.utc,
+        ),
+    )
+
+    assert odds_api._should_process_event(
+        datetime(
+            2026,
+            8,
+            7,
+            23,
+            10,
+            tzinfo=timezone.utc,
+        ),
+        target_window,
+        datetime(
+            2026,
+            8,
+            7,
+            20,
+            0,
+            tzinfo=timezone.utc,
+        ),
+    )

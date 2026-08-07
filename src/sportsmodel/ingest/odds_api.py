@@ -114,6 +114,46 @@ def _is_in_target_date_window(
     return window_start <= commence_time < window_end
 
 
+def _current_snapshot_time() -> datetime:
+    """
+    Return the UTC capture time for an odds snapshot.
+    """
+
+    return datetime.now(timezone.utc)
+
+
+def _is_pregame_event(
+    commence_time: datetime,
+    snapshot_time: datetime,
+) -> bool:
+    """
+    Return whether the event has not started at capture time.
+    """
+
+    return commence_time > snapshot_time
+
+
+def _should_process_event(
+    commence_time: datetime,
+    target_window: tuple[datetime, datetime] | None,
+    snapshot_time: datetime,
+) -> bool:
+    """
+    Require both the requested slate date and pregame status.
+    """
+
+    return (
+        _is_in_target_date_window(
+            commence_time,
+            target_window,
+        )
+        and _is_pregame_event(
+            commence_time,
+            snapshot_time,
+        )
+    )
+
+
 def _validate_snapshot_context(
     *,
     target_date: date | None,
@@ -566,7 +606,7 @@ def fetch_live_odds(
 
         games = response.json()
         games_returned = len(games)
-        snapshot_time = datetime.now(timezone.utc)
+        snapshot_time = _current_snapshot_time()
 
         print(f"Games returned: {games_returned}")
 
@@ -591,9 +631,10 @@ def fetch_live_odds(
                     commence_time
                 )
 
-                if not _is_in_target_date_window(
+                if not _should_process_event(
                     commence_datetime,
                     target_window,
+                    snapshot_time,
                 ):
                     continue
 
