@@ -22,6 +22,7 @@ $ScriptPath = Join-Path `
     $ProjectRoot `
     "scripts\fetch_mlb_odds.py"
 $SourcePath = Join-Path $ProjectRoot "src"
+$EnvironmentPath = "D:\SportsModel\.env"
 $LogDirectory = Join-Path `
     $ProjectRoot `
     "logs\moneyline_odds_snapshots"
@@ -103,6 +104,7 @@ try {
     Write-Log "Python executable: $PythonPath"
     Write-Log "Python script: $ScriptPath"
     Write-Log "Python source path: $SourcePath"
+    Write-Log "Environment file: $EnvironmentPath"
     Write-Log "============================================================"
 
     if (-not (Test-Path $PythonPath)) {
@@ -117,8 +119,13 @@ try {
         throw "SportsModel source directory was not found: $SourcePath"
     }
 
+    if (-not (Test-Path $EnvironmentPath)) {
+        throw "SportsModel environment file was not found: $EnvironmentPath"
+    }
+
     Set-Location $ProjectRoot
 
+    $env:SPORTSMODEL_ENV_FILE = $EnvironmentPath
     $env:PYTHONPATH = $SourcePath
     $env:PYTHONUNBUFFERED = "1"
 
@@ -183,6 +190,7 @@ try {
         Write-Log "No database or live odds work will be executed."
 
         & $PythonPath -m pytest `
+            tests\database\test_connection.py `
             tests\ingest\test_odds_api.py `
             tests\ingest\test_odds_cli.py `
             tests\orchestration\test_moneyline_daily.py `
