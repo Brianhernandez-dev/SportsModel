@@ -40,6 +40,10 @@ SCHEDULED_SNAPSHOT_ROLES = frozenset(
 )
 
 
+class DuplicateOddsSnapshotError(RuntimeError):
+    """Raised when an active scheduled snapshot already exists."""
+
+
 @dataclass(frozen=True)
 class OddsIngestionResult:
     odds_ingestion_run_id: int
@@ -122,6 +126,7 @@ def create_ingestion_run(
                 status
             )
             VALUES (%s, %s, %s, %s, 'running')
+            ON CONFLICT DO NOTHING
             RETURNING odds_ingestion_run_id;
             """,
             (
@@ -132,7 +137,15 @@ def create_ingestion_run(
             ),
         )
 
-        ingestion_run_id = cursor.fetchone()[0]
+        returned_row = cursor.fetchone()
+
+        if returned_row is None:
+            raise DuplicateOddsSnapshotError(
+                "An active odds snapshot already exists for "
+                f"{target_date} with role {snapshot_role!r}."
+            )
+
+        ingestion_run_id = returned_row[0]
 
     # Commit this separately so the run remains available if ingestion fails.
     connection.commit()

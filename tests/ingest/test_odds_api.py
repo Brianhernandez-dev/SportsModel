@@ -51,6 +51,121 @@ class FakeResponse:
         return []
 
 
+def test_create_ingestion_run_rejects_duplicate_snapshot(
+) -> None:
+    class DuplicateCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(
+            self,
+            exception_type,
+            exception,
+            traceback,
+        ) -> bool:
+            return False
+
+        def execute(
+            self,
+            query,
+            parameters,
+        ) -> None:
+            assert "ON CONFLICT DO NOTHING" in query
+            assert parameters == (
+                odds_api.SPORT,
+                odds_api.SOURCE_NAME,
+                date(2026, 8, 7),
+                "morning",
+            )
+
+        def fetchone(self):
+            return None
+
+    class DuplicateConnection:
+        def __init__(self) -> None:
+            self.commits = 0
+
+        def cursor(self):
+            return DuplicateCursor()
+
+        def commit(self) -> None:
+            self.commits += 1
+
+    connection = DuplicateConnection()
+
+    with pytest.raises(
+        odds_api.DuplicateOddsSnapshotError,
+        match="active odds snapshot already exists",
+    ):
+        odds_api.create_ingestion_run(
+            connection,
+            target_date=date(2026, 8, 7),
+            snapshot_role="morning",
+        )
+
+    assert connection.commits == 0
+
+
+def test_duplicate_snapshot_does_not_request_odds(
+    monkeypatch,
+) -> None:
+    connection = FakeConnection()
+    request_calls = 0
+
+    monkeypatch.setenv(
+        "ODDS_API_KEY",
+        "test-key",
+    )
+
+    monkeypatch.setattr(
+        odds_api,
+        "get_connection",
+        lambda: connection,
+    )
+
+    def duplicate_run(
+        unused_connection,
+        **unused_arguments,
+    ):
+        raise odds_api.DuplicateOddsSnapshotError(
+            "snapshot already exists"
+        )
+
+    monkeypatch.setattr(
+        odds_api,
+        "create_ingestion_run",
+        duplicate_run,
+    )
+
+    def fake_request(
+        *unused_args,
+        **unused_kwargs,
+    ):
+        nonlocal request_calls
+        request_calls += 1
+        return FakeResponse()
+
+    monkeypatch.setattr(
+        odds_api.requests,
+        "get",
+        fake_request,
+    )
+
+    with pytest.raises(
+        odds_api.DuplicateOddsSnapshotError,
+        match="snapshot already exists",
+    ):
+        odds_api.fetch_live_odds(
+            target_date=date(2026, 8, 7),
+            snapshot_role="morning",
+        )
+
+    assert request_calls == 0
+    assert connection.commits == 0
+    assert connection.rollbacks == 1
+    assert connection.closed is True
+
+
 def test_fetch_live_odds_returns_structured_result(
     monkeypatch,
 ) -> None:
