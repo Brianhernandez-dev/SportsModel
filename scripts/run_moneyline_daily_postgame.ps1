@@ -9,6 +9,7 @@ $ProjectRoot = "D:\SportsModel"
 $PythonPath = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
 $ScriptPath = Join-Path $ProjectRoot "scripts\run_moneyline_daily_postgame.py"
 $SourcePath = Join-Path $ProjectRoot "src"
+$DatabaseReadinessPath = Join-Path $ProjectRoot "scripts\wait_for_sportsmodel_database.ps1"
 $LogDirectory = Join-Path $ProjectRoot "logs\moneyline_daily_postgame"
 
 if (-not (Test-Path $LogDirectory)) {
@@ -56,6 +57,10 @@ try {
 
     if (-not (Test-Path $SourcePath)) {
         throw "SportsModel source directory was not found: $SourcePath"
+    }
+
+    if (-not (Test-Path $DatabaseReadinessPath)) {
+        throw "Database readiness helper was not found: $DatabaseReadinessPath"
     }
 
     if ($ValidateOnly -and $DryRun) {
@@ -128,6 +133,24 @@ try {
 
         exit 0
     }
+
+    . $DatabaseReadinessPath
+
+    Write-Log "Checking SportsModel database readiness."
+
+    $DatabaseLogger = {
+        param([string]$Message)
+        Write-Log $Message
+    }
+
+    Wait-SportsModelDatabaseReady `
+        -PythonPath $PythonPath `
+        -SourcePath $SourcePath `
+        -TimeoutSeconds 600 `
+        -PollSeconds 15 `
+        -Logger $DatabaseLogger
+
+    Write-Log "Database readiness check completed."
 
     & $PythonPath $ScriptPath 2>&1 |
         ForEach-Object {
