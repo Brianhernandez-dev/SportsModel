@@ -17,6 +17,10 @@ class MoneylineLiveSlate:
 
     target_date: date
 
+    snapshot_role: str
+
+    snapshot_started_at: datetime
+
 
 @dataclass(frozen=True)
 class MoneylineLiveGame:

@@ -3,6 +3,7 @@ from decimal import Decimal
 
 from sportsmodel.models.moneyline_live_dashboard import (
     MoneylineLiveGame,
+    MoneylineLiveSlate,
 )
 
 
@@ -23,6 +24,22 @@ EXCLUSION_REASON_LABELS = {
         "Incomplete starter feature history"
     ),
 }
+
+
+def format_slate(
+    slate: MoneylineLiveSlate,
+) -> str:
+    """Format a slate with its market snapshot context."""
+
+    return (
+        f"{slate.target_date.isoformat()} — "
+        f"{slate.snapshot_role.replace('_', ' ').title()} "
+        "snapshot "
+        f"({format_datetime(slate.snapshot_started_at)}) — "
+        f"Prediction Run {slate.prediction_run_id} / "
+        f"Odds Run {slate.odds_ingestion_run_id} / "
+        f"Policy {slate.policy_version}"
+    )
 
 
 def format_percent(

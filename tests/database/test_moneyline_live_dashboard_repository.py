@@ -67,6 +67,8 @@ def test_lists_moneyline_live_slates() -> None:
                 181,
                 "1.0.0",
                 date(2026, 7, 30),
+                "entry",
+                GAME_TIME,
             )
         ]
     )
@@ -83,6 +85,11 @@ def test_lists_moneyline_live_slates() -> None:
         2026,
         7,
         30,
+    )
+    assert slates[0].snapshot_role == "entry"
+    assert slates[0].snapshot_started_at == GAME_TIME
+    assert "ingestion.snapshot_role" in (
+        connection.cursor_instance.query
     )
     assert connection.closed is True
 

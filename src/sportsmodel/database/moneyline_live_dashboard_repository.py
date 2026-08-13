@@ -20,7 +20,9 @@ LIST_MONEYLINE_LIVE_SLATES_QUERY = """
         prediction_run.moneyline_prediction_run_id,
         evaluation.odds_ingestion_run_id,
         evaluation.policy_version,
-        prediction_run.target_date
+        prediction_run.target_date,
+        ingestion.snapshot_role,
+        ingestion.started_at
     FROM moneyline_prediction_market_evaluations
         AS evaluation
     JOIN moneyline_game_predictions AS prediction
@@ -29,6 +31,9 @@ LIST_MONEYLINE_LIVE_SLATES_QUERY = """
     JOIN moneyline_prediction_runs AS prediction_run
       ON prediction_run.moneyline_prediction_run_id =
          prediction.moneyline_prediction_run_id
+    JOIN odds_ingestion_runs AS ingestion
+      ON ingestion.odds_ingestion_run_id =
+         evaluation.odds_ingestion_run_id
     ORDER BY
         prediction_run.target_date DESC,
         prediction_run.moneyline_prediction_run_id DESC,
@@ -114,6 +119,8 @@ def list_moneyline_live_slates(
                 odds_ingestion_run_id=row[1],
                 policy_version=row[2],
                 target_date=row[3],
+                snapshot_role=row[4],
+                snapshot_started_at=row[5],
             )
             for row in rows
         )

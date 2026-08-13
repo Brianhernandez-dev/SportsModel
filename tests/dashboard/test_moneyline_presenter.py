@@ -1,4 +1,4 @@
-﻿from datetime import datetime, timezone
+﻿from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from sportsmodel.dashboard.moneyline_presenter import (
@@ -7,9 +7,11 @@ from sportsmodel.dashboard.moneyline_presenter import (
     calculate_average_candidate_edge,
     calculate_average_candidate_ev,
     format_exclusion_reasons,
+    format_slate,
 )
 from sportsmodel.models.moneyline_live_dashboard import (
     MoneylineLiveGame,
+    MoneylineLiveSlate,
 )
 
 
@@ -21,6 +23,24 @@ GAME_TIME = datetime(
     10,
     tzinfo=timezone.utc,
 )
+
+
+def test_formats_slate_with_entry_snapshot_context() -> None:
+    slate = MoneylineLiveSlate(
+        prediction_run_id=1,
+        odds_ingestion_run_id=181,
+        policy_version="1.0.0",
+        target_date=date(2026, 7, 30),
+        snapshot_role="entry",
+        snapshot_started_at=GAME_TIME,
+    )
+
+    assert format_slate(slate) == (
+        "2026-07-30 — Entry snapshot "
+        "(Jul 30, 2026 10:10 PM UTC) — "
+        "Prediction Run 1 / Odds Run 181 / "
+        "Policy 1.0.0"
+    )
 
 
 def test_formats_known_exclusion_reasons() -> None:

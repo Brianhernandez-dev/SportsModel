@@ -9,8 +9,10 @@ from sportsmodel.dashboard.moneyline_presenter import (
     build_candidate_table,
     calculate_average_candidate_edge,
     calculate_average_candidate_ev,
+    format_datetime,
     format_percent,
     format_points,
+    format_slate,
     format_units,
 )
 from sportsmodel.database.moneyline_live_dashboard_repository import (
@@ -80,21 +82,6 @@ def load_moneyline_live_audit(
             odds_ingestion_run_id
         ),
         policy_version=policy_version,
-    )
-
-
-def format_slate(
-    slate: MoneylineLiveSlate,
-) -> str:
-    """
-    Format one selectable prediction and odds slate.
-    """
-
-    return (
-        f"{slate.target_date.isoformat()} — "
-        f"Prediction Run {slate.prediction_run_id} / "
-        f"Odds Run {slate.odds_ingestion_run_id} / "
-        f"Policy {slate.policy_version}"
     )
 
 
@@ -274,6 +261,16 @@ def render() -> None:
                 ),
                 "Odds ingestion run ID": (
                     selected_slate.odds_ingestion_run_id
+                ),
+                "Snapshot role": (
+                    selected_slate.snapshot_role
+                    .replace("_", " ")
+                    .title()
+                ),
+                "Snapshot started": (
+                    format_datetime(
+                        selected_slate.snapshot_started_at
+                    )
                 ),
                 "Policy version": (
                     selected_slate.policy_version
