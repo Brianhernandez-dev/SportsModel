@@ -52,6 +52,7 @@ def capture_moneyline_early_entry(
     evaluation_result = evaluator(
         prediction_run_id=prediction_run_id,
         odds_ingestion_run_id=odds_ingestion_run_id,
+        require_complete_market_coverage=False,
     )
 
     return MoneylineEarlyEntryCaptureResult(

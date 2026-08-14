@@ -76,3 +76,29 @@ def test_database_readiness_precedes_live_odds_ingestion() -> None:
     )
 
     assert readiness_call < ingestion_call
+
+
+def test_late_night_task_captures_early_entry_after_snapshot() -> None:
+    wrapper = TASK_WRAPPER_PATH.read_text(encoding="utf-8-sig")
+
+    snapshot_call = wrapper.index("& $SnapshotWrapperPath `")
+    capture_guard = wrapper.index('if ($SnapshotRole -eq "late_night")')
+    capture_call = wrapper.index("$EarlyEntryCapturePath `", capture_guard)
+
+    assert snapshot_call < capture_guard < capture_call
+    assert "--target-date $TargetDate" in wrapper[capture_call:]
+    assert wrapper.count("$EarlyEntryCapturePath `") == 1
+    assert "Early Entry capture failed with exit code" in wrapper
+
+
+def test_non_live_task_modes_precede_early_entry_capture() -> None:
+    wrapper = TASK_WRAPPER_PATH.read_text(encoding="utf-8-sig")
+    capture_guard = wrapper.index('if ($SnapshotRole -eq "late_night")')
+
+    validate_guard = wrapper.index("if ($ValidateOnly)")
+    dry_run_guard = wrapper.index("if ($DryRun)")
+
+    assert validate_guard < capture_guard
+    assert dry_run_guard < capture_guard
+    assert wrapper.index("return", validate_guard) < capture_guard
+    assert wrapper.index("return", dry_run_guard) < capture_guard

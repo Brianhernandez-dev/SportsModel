@@ -233,6 +233,148 @@ def test_rejects_missing_matching_snapshots(
     assert connection.rollbacks == 1
 
 
+def test_partial_coverage_skips_only_missing_consensus_markets(
+    monkeypatch,
+) -> None:
+    connection = FakeConnection()
+    persisted = []
+    predictions = tuple(
+        _prediction(game_id=game_id)
+        for game_id in range(8066, 8080)
+    )
+    available_game_ids = set(range(8066, 8077))
+    snapshots = tuple(
+        snapshot
+        for game_id in available_game_ids
+        for snapshot in _snapshots(
+            snapshot_time=SNAPSHOT_TIME,
+            game_id=game_id,
+        )
+    )
+
+    monkeypatch.setattr(
+        service,
+        "_validate_completed_runs",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        service,
+        "_load_prediction_records",
+        lambda *args, **kwargs: predictions,
+    )
+    monkeypatch.setattr(
+        service,
+        "_load_snapshot_records",
+        lambda *args, **kwargs: (
+            snapshots,
+            {1: "Book One", 2: "Book Two"},
+        ),
+    )
+    monkeypatch.setattr(
+        service,
+        "upsert_moneyline_market_evaluation",
+        lambda cursor, **kwargs: persisted.append(kwargs) or len(persisted),
+    )
+
+    result = service.evaluate_moneyline_prediction_run(
+        prediction_run_id=1,
+        odds_ingestion_run_id=181,
+        connection_factory=lambda: connection,
+        require_complete_market_coverage=False,
+    )
+
+    assert result.predictions_loaded == 14
+    assert result.evaluations_saved == 11
+    assert result.skipped_missing_market_game_ids == (8077, 8078, 8079)
+    assert len(persisted) == 11
+
+
+def test_default_coverage_remains_strict(monkeypatch) -> None:
+    connection = FakeConnection()
+    monkeypatch.setattr(
+        service,
+        "_validate_completed_runs",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        service,
+        "_load_prediction_records",
+        lambda *args, **kwargs: (
+            _prediction(),
+            _prediction(game_id=8067),
+        ),
+    )
+    monkeypatch.setattr(
+        service,
+        "_load_snapshot_records",
+        lambda *args, **kwargs: (
+            _snapshots(snapshot_time=SNAPSHOT_TIME),
+            {1: "Book One", 2: "Book Two"},
+        ),
+    )
+
+    with pytest.raises(LookupError, match="8067"):
+        service.evaluate_moneyline_prediction_run(
+            prediction_run_id=1,
+            odds_ingestion_run_id=181,
+            connection_factory=lambda: connection,
+        )
+
+
+def test_partial_coverage_with_all_markets_has_no_skips(monkeypatch) -> None:
+    connection = FakeConnection()
+    _patch_loaded_records(monkeypatch, snapshot_time=SNAPSHOT_TIME)
+    monkeypatch.setattr(
+        service,
+        "upsert_moneyline_market_evaluation",
+        lambda cursor, **kwargs: 88,
+    )
+
+    result = service.evaluate_moneyline_prediction_run(
+        prediction_run_id=1,
+        odds_ingestion_run_id=181,
+        connection_factory=lambda: connection,
+        require_complete_market_coverage=False,
+    )
+
+    assert result.evaluations_saved == 1
+    assert result.skipped_missing_market_game_ids == ()
+
+
+def test_repeated_partial_evaluation_uses_same_upsert_key(
+    monkeypatch,
+) -> None:
+    _patch_loaded_records(monkeypatch, snapshot_time=SNAPSHOT_TIME)
+    persisted_keys = set()
+
+    def fake_upsert(cursor, **arguments):
+        persisted_keys.add(
+            (
+                arguments["moneyline_game_prediction_id"],
+                arguments["odds_ingestion_run_id"],
+                arguments["evaluation"].policy_version,
+            )
+        )
+        return 88
+
+    monkeypatch.setattr(
+        service,
+        "upsert_moneyline_market_evaluation",
+        fake_upsert,
+    )
+
+    for _ in range(2):
+        result = service.evaluate_moneyline_prediction_run(
+            prediction_run_id=1,
+            odds_ingestion_run_id=181,
+            connection_factory=FakeConnection,
+            require_complete_market_coverage=False,
+        )
+        assert result.evaluations_saved == 1
+
+    assert persisted_keys == {(501, 181, "1.0.0")}
+
+
 def test_rejects_nonpositive_run_identifier() -> None:
     with pytest.raises(
         ValueError,
@@ -281,10 +423,12 @@ def _patch_loaded_records(
 
 
 def _prediction(
+    *,
+    game_id: int = 8066,
 ) -> service.StoredMoneylinePrediction:
     return service.StoredMoneylinePrediction(
         moneyline_game_prediction_id=501,
-        game_id=8066,
+        game_id=game_id,
         prediction_time=PREDICTION_TIME,
         game_start_time=GAME_START_TIME,
         away_team_name="Kansas City Royals",
@@ -300,11 +444,12 @@ def _prediction(
 def _snapshots(
     *,
     snapshot_time: datetime,
+    game_id: int = 8066,
 ) -> tuple[MarketSnapshot, ...]:
     return (
         MarketSnapshot(
             odds_market_snapshot_id=1,
-            game_id=8066,
+            game_id=game_id,
             sportsbook_id=1,
             market_type="h2h",
             selection_name="Kansas City Royals",
@@ -314,7 +459,7 @@ def _snapshots(
         ),
         MarketSnapshot(
             odds_market_snapshot_id=2,
-            game_id=8066,
+            game_id=game_id,
             sportsbook_id=1,
             market_type="h2h",
             selection_name="Minnesota Twins",
@@ -324,7 +469,7 @@ def _snapshots(
         ),
         MarketSnapshot(
             odds_market_snapshot_id=3,
-            game_id=8066,
+            game_id=game_id,
             sportsbook_id=2,
             market_type="h2h",
             selection_name="Kansas City Royals",
@@ -334,7 +479,7 @@ def _snapshots(
         ),
         MarketSnapshot(
             odds_market_snapshot_id=4,
-            game_id=8066,
+            game_id=game_id,
             sportsbook_id=2,
             market_type="h2h",
             selection_name="Minnesota Twins",
