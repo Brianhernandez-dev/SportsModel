@@ -23,6 +23,9 @@ $ScriptPath = Join-Path `
     "scripts\fetch_mlb_odds.py"
 $SourcePath = Join-Path $ProjectRoot "src"
 $EnvironmentPath = "D:\SportsModel\.env"
+$DatabaseReadinessPath = Join-Path `
+    $ProjectRoot `
+    "scripts\wait_for_sportsmodel_database.ps1"
 $LogDirectory = Join-Path `
     $ProjectRoot `
     "logs\moneyline_odds_snapshots"
@@ -121,6 +124,10 @@ try {
 
     if (-not (Test-Path $EnvironmentPath)) {
         throw "SportsModel environment file was not found: $EnvironmentPath"
+    }
+
+    if (-not (Test-Path $DatabaseReadinessPath)) {
+        throw "Database readiness helper was not found: $DatabaseReadinessPath"
     }
 
     Set-Location $ProjectRoot
@@ -223,6 +230,24 @@ try {
     Write-Log "Live snapshot execution enabled."
     Write-Log "Snapshot role: $SnapshotRole"
     Write-Log "Target date: $NormalizedTargetDate"
+
+    . $DatabaseReadinessPath
+
+    Write-Log "Checking SportsModel database readiness."
+
+    $DatabaseLogger = {
+        param([string]$Message)
+        Write-Log $Message
+    }
+
+    Wait-SportsModelDatabaseReady `
+        -PythonPath $PythonPath `
+        -SourcePath $SourcePath `
+        -TimeoutSeconds 600 `
+        -PollSeconds 15 `
+        -Logger $DatabaseLogger
+
+    Write-Log "Database readiness check completed."
 
     & $PythonPath `
         $ScriptPath `
