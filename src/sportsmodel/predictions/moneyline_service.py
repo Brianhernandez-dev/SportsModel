@@ -336,6 +336,7 @@ def run_moneyline_predictions(
         DEFAULT_MODEL_DIRECTORY
     ),
     prediction_time: datetime | None = None,
+    run_type: str = "official",
     connection_factory: ConnectionFactory = (
         get_connection
     ),
@@ -358,6 +359,16 @@ def run_moneyline_predictions(
         field_name="Prediction time",
     )
 
+    normalized_run_type = run_type.strip().lower()
+
+    if normalized_run_type not in {
+        "official",
+        "preview",
+    }:
+        raise ValueError(
+            "Prediction run type must be official or preview."
+        )
+
     model_package = (
         load_moneyline_model_package(
             model_directory
@@ -376,25 +387,27 @@ def run_moneyline_predictions(
     ] = []
 
     try:
+        create_run_arguments = {
+            "target_date": target_date,
+            "model_version": model_package.model_version,
+            "feature_schema_version": (
+                model_package.feature_schema_version
+            ),
+            "model_artifact_sha256": (
+                model_package.model_artifact_sha256
+            ),
+            "model_training_cutoff": (
+                model_package.model_training_cutoff
+            ),
+        }
+
+        if normalized_run_type == "preview":
+            create_run_arguments["run_type"] = "preview"
+
         run_id = (
             create_moneyline_prediction_run(
                 connection,
-                target_date=target_date,
-                model_version=(
-                    model_package.model_version
-                ),
-                feature_schema_version=(
-                    model_package
-                    .feature_schema_version
-                ),
-                model_artifact_sha256=(
-                    model_package
-                    .model_artifact_sha256
-                ),
-                model_training_cutoff=(
-                    model_package
-                    .model_training_cutoff
-                ),
+                **create_run_arguments,
             )
         )
 

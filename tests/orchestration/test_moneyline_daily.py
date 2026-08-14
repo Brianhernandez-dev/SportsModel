@@ -1208,15 +1208,24 @@ def test_runs_postgame_settlement_with_run_ids() -> None:
 @pytest.mark.parametrize(
     (
         "pending_candidates",
+        "early_entry_pending",
         "expected_updater",
     ),
     [
         (
             1,
+            0,
             moneyline_daily
             .mark_moneyline_daily_postgame_pending,
         ),
         (
+            0,
+            1,
+            moneyline_daily
+            .mark_moneyline_daily_postgame_pending,
+        ),
+        (
+            0,
             0,
             moneyline_daily
             .mark_moneyline_daily_settlement_completed,
@@ -1226,6 +1235,7 @@ def test_runs_postgame_settlement_with_run_ids() -> None:
 def test_marks_postgame_settlement_state(
     monkeypatch,
     pending_candidates,
+    early_entry_pending,
     expected_updater,
 ) -> None:
     updates = []
@@ -1241,10 +1251,16 @@ def test_marks_postgame_settlement_state(
             pending_candidates=pending_candidates,
         ),
     )
+    early_entry_result = SimpleNamespace(
+        performance=SimpleNamespace(
+            pending=early_entry_pending,
+        ),
+    )
 
     moneyline_daily._mark_postgame_settlement_state(
         workflow_run_id=12,
         settlement_result=settlement_result,
+        early_entry_result=early_entry_result,
         connection_factory=lambda: None,
     )
 
@@ -1313,6 +1329,11 @@ def test_postgame_runner_returns_to_awaiting_results(
     result = moneyline_daily.run_moneyline_daily_postgame(
         target_date=date(2026, 8, 3),
         connection_factory=lambda: None,
+        early_entry_settlement_runner=lambda **arguments: (
+            SimpleNamespace(
+                performance=SimpleNamespace(pending=0),
+            )
+        ),
         pipeline_auditor=lambda **arguments: audit,
     )
 
@@ -1390,6 +1411,11 @@ def test_postgame_runner_completes_settled_workflow(
     result = moneyline_daily.run_moneyline_daily_postgame(
         target_date=date(2026, 8, 3),
         connection_factory=lambda: None,
+        early_entry_settlement_runner=lambda **arguments: (
+            SimpleNamespace(
+                performance=SimpleNamespace(pending=0),
+            )
+        ),
         pipeline_auditor=lambda **arguments: audit,
     )
 
@@ -1402,3 +1428,134 @@ def test_postgame_runner_completes_settled_workflow(
         is moneyline_daily.mark_moneyline_daily_workflow_completed
         for update in updates
     )
+
+
+def test_postgame_settles_early_entry_after_official(
+    monkeypatch,
+) -> None:
+    calls = []
+    workflow = SimpleNamespace(
+        moneyline_daily_workflow_run_id=12,
+        target_date=date(2026, 8, 3),
+        status="awaiting_results",
+        current_stage="results_ingestion",
+        moneyline_prediction_run_id=25,
+        odds_ingestion_run_id=182,
+    )
+
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_get_or_create_workflow",
+        lambda **arguments: workflow,
+    )
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_update_workflow",
+        lambda **arguments: None,
+    )
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_run_postgame_results_ingestion",
+        lambda **arguments: (
+            calls.append("results")
+            or SimpleNamespace(
+                games_processed=1,
+                boxscores_processed=1,
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_run_postgame_settlement",
+        lambda **arguments: (
+            calls.append("official")
+            or SimpleNamespace(
+                report=SimpleNamespace(
+                    settlements_saved=1,
+                    pending_candidates=0,
+                ),
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_mark_postgame_settlement_state",
+        lambda **arguments: None,
+    )
+
+    audit = SimpleNamespace(
+        integrity_issues=(),
+        predictions=1,
+        evaluated_predictions=1,
+        evaluations=1,
+        paper_candidates=1,
+        settlements=1,
+        pipeline_state="complete",
+    )
+
+    result = moneyline_daily.run_moneyline_daily_postgame(
+        target_date=date(2026, 8, 3),
+        connection_factory=lambda: None,
+        early_entry_settlement_runner=lambda **arguments: (
+            calls.append("early_entry")
+            or SimpleNamespace(
+                performance=SimpleNamespace(pending=0),
+            )
+        ),
+        pipeline_auditor=lambda **arguments: (
+            calls.append("audit") or audit
+        ),
+    )
+
+    assert calls == [
+        "results",
+        "official",
+        "early_entry",
+        "audit",
+    ]
+    assert result.settlements_saved == 1
+    assert result.pending_candidates == 0
+
+
+def test_completed_official_workflow_still_settles_early_entry(
+    monkeypatch,
+) -> None:
+    calls = []
+    workflow = SimpleNamespace(
+        moneyline_daily_workflow_run_id=12,
+        target_date=date(2026, 8, 3),
+        status="completed",
+        current_stage="complete",
+        moneyline_prediction_run_id=25,
+        odds_ingestion_run_id=182,
+    )
+    audit = SimpleNamespace(
+        integrity_issues=(),
+        predictions=1,
+        evaluated_predictions=1,
+        evaluations=1,
+        paper_candidates=1,
+        settlements=1,
+        pipeline_state="complete",
+    )
+
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_get_or_create_workflow",
+        lambda **arguments: workflow,
+    )
+
+    moneyline_daily.run_moneyline_daily_postgame(
+        target_date=date(2026, 8, 3),
+        connection_factory=lambda: None,
+        early_entry_settlement_runner=lambda **arguments: (
+            calls.append(arguments)
+            or SimpleNamespace(
+                performance=SimpleNamespace(pending=0),
+            )
+        ),
+        pipeline_auditor=lambda **arguments: audit,
+    )
+
+    assert len(calls) == 1
+    assert calls[0]["target_date"] == date(2026, 8, 3)

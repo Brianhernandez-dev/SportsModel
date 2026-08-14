@@ -31,6 +31,9 @@ from sportsmodel.predictions.moneyline_service import (
 from sportsmodel.settlement.moneyline_paper_service import (
     settle_moneyline_paper_candidate_run,
 )
+from sportsmodel.settlement.moneyline_early_entry_service import (
+    settle_moneyline_early_entry,
+)
 
 
 DEFAULT_SCHEDULE_DAYS_AHEAD = 7
@@ -46,6 +49,7 @@ EvaluationRunner = Callable[..., Any]
 PipelineAuditor = Callable[..., Any]
 ResultsFetcher = Callable[..., Any]
 SettlementRunner = Callable[..., Any]
+EarlyEntrySettlementRunner = Callable[..., Any]
 
 
 @dataclass(frozen=True)
@@ -658,9 +662,15 @@ def _mark_postgame_settlement_state(
     *,
     workflow_run_id: int,
     settlement_result: Any,
+    early_entry_result: Any,
     connection_factory: ConnectionFactory,
 ) -> None:
-    if settlement_result.report.pending_candidates > 0:
+    pending_candidates = (
+        settlement_result.report.pending_candidates
+        + early_entry_result.performance.pending
+    )
+
+    if pending_candidates > 0:
         updater = mark_moneyline_daily_postgame_pending
     else:
         updater = mark_moneyline_daily_settlement_completed
@@ -716,6 +726,9 @@ def run_moneyline_daily_postgame(
     settlement_runner: SettlementRunner = (
         settle_moneyline_paper_candidate_run
     ),
+    early_entry_settlement_runner: (
+        EarlyEntrySettlementRunner
+    ) = settle_moneyline_early_entry,
     pipeline_auditor: PipelineAuditor = (
         audit_moneyline_live_pipeline
     ),
@@ -734,6 +747,11 @@ def run_moneyline_daily_postgame(
     )
 
     if workflow.status == "completed":
+        early_entry_settlement_runner(
+            target_date=target_date,
+            connection_factory=connection_factory,
+        )
+
         audit = pipeline_auditor(
             prediction_run_id=prediction_run_id,
             odds_ingestion_run_id=odds_ingestion_run_id,
@@ -777,15 +795,26 @@ def run_moneyline_daily_postgame(
             settlement_runner=settlement_runner,
         )
 
+        current_stage = "early_entry_settlement"
+
+        early_entry_result = early_entry_settlement_runner(
+            target_date=target_date,
+            connection_factory=connection_factory,
+        )
+
         _mark_postgame_settlement_state(
             workflow_run_id=workflow_run_id,
             settlement_result=settlement_result,
+            early_entry_result=early_entry_result,
             connection_factory=connection_factory,
         )
 
         current_stage = (
             "results_ingestion"
-            if settlement_result.report.pending_candidates > 0
+            if (
+                settlement_result.report.pending_candidates > 0
+                or early_entry_result.performance.pending > 0
+            )
             else "final_audit"
         )
 
@@ -796,7 +825,10 @@ def run_moneyline_daily_postgame(
 
         _validate_pregame_audit(audit)
 
-        if settlement_result.report.pending_candidates == 0:
+        if (
+            settlement_result.report.pending_candidates == 0
+            and early_entry_result.performance.pending == 0
+        ):
             _update_workflow(
                 connection_factory=connection_factory,
                 updater=mark_moneyline_daily_workflow_completed,

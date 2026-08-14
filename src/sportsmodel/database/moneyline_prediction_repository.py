@@ -20,6 +20,7 @@ def create_moneyline_prediction_run(
     feature_schema_version: str,
     model_artifact_sha256: str,
     model_training_cutoff: datetime | None,
+    run_type: str = "official",
 ) -> int:
     """
     Create and commit a running Moneyline prediction audit record.
@@ -56,11 +57,22 @@ def create_moneyline_prediction_run(
             "Model training cutoff must be timezone-aware."
         )
 
+    normalized_run_type = run_type.strip().lower()
+
+    if normalized_run_type not in {
+        "official",
+        "preview",
+    }:
+        raise ValueError(
+            "Prediction run type must be official or preview."
+        )
+
     with connection.cursor() as cursor:
         cursor.execute(
             """
             INSERT INTO moneyline_prediction_runs (
                 target_date,
+                run_type,
                 model_version,
                 feature_schema_version,
                 model_artifact_sha256,
@@ -73,12 +85,14 @@ def create_moneyline_prediction_run(
                 %s,
                 %s,
                 %s,
+                %s,
                 'running'
             )
             RETURNING moneyline_prediction_run_id;
             """,
             (
                 target_date,
+                normalized_run_type,
                 model_version.strip(),
                 feature_schema_version.strip(),
                 model_artifact_sha256,
