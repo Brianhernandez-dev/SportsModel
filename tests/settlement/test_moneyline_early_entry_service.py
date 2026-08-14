@@ -44,6 +44,9 @@ class FakeCursor:
     def fetchone(self):
         return self.row
 
+    def fetchall(self):
+        return self.row
+
 
 class FakeConnection:
     def __init__(self, row) -> None:
@@ -70,7 +73,7 @@ class ConnectionQueue:
 
 def test_settles_identified_early_entry_cohort() -> None:
     connection_factory = ConnectionQueue(
-        (44, 211),
+        ((44, 211),),
         (2, 2, 1, 1, 0, Decimal("0.19")),
     )
     calls = []
@@ -92,7 +95,11 @@ def test_settles_identified_early_entry_cohort() -> None:
             "connection_factory": connection_factory,
         }
     ]
-    assert result.settlement_result is settlement_result
+    assert len(result.cohort_settlements) == 1
+    assert (
+        result.cohort_settlements[0].settlement_result
+        is settlement_result
+    )
     assert result.performance.wins == 1
     assert result.performance.losses == 1
     assert result.performance.pending == 0
@@ -102,7 +109,7 @@ def test_settles_identified_early_entry_cohort() -> None:
 
 def test_missing_early_entry_cohort_is_safe_noop() -> None:
     connection_factory = ConnectionQueue(
-        None,
+        (),
         (0, 0, 0, 0, 0, Decimal("0")),
     )
     calls = []
@@ -114,14 +121,13 @@ def test_missing_early_entry_cohort_is_safe_noop() -> None:
     )
 
     assert calls == []
-    assert result.prediction_run_id is None
-    assert result.odds_ingestion_run_id is None
+    assert result.cohort_settlements == ()
     assert result.performance.total_qualified_bets == 0
 
 
 def test_qualified_early_entry_without_result_remains_pending() -> None:
     connection_factory = ConnectionQueue(
-        (44, 211),
+        ((44, 211),),
         (1, 0, 0, 0, 0, Decimal("0")),
     )
 
@@ -157,6 +163,7 @@ def test_performance_isolated_to_preview_late_night() -> None:
 
     assert "prediction_run.run_type = 'preview'" in query
     assert "odds_run.snapshot_role = 'late_night'" in query
+    assert "candidate_run" not in query
     assert report.total_qualified_bets == 3
     assert report.settled_bets == 2
     assert report.pending == 1
@@ -271,8 +278,11 @@ def test_early_entry_rerun_uses_stable_cohort_identity() -> None:
         early_entry_service.settle_moneyline_early_entry(
             target_date=TARGET_DATE,
             connection_factory=ConnectionQueue(
-                (44, 211),
-                (1, 1, 1, 0, 0, Decimal("1.5")),
+                (
+                    (43, 210),
+                    (44, 211),
+                ),
+                (2, 2, 2, 0, 0, Decimal("2.5")),
             ),
             settlement_runner=lambda **arguments: (
                 calls.append(arguments)
@@ -280,14 +290,51 @@ def test_early_entry_rerun_uses_stable_cohort_identity() -> None:
             ),
         )
 
-    assert len(calls) == 2
-    assert {
+    assert len(calls) == 4
+    assert [
         (
             call["prediction_run_id"],
             call["odds_ingestion_run_id"],
         )
         for call in calls
-    } == {(44, 211)}
+    ] == [
+        (43, 210),
+        (44, 211),
+        (43, 210),
+        (44, 211),
+    ]
+
+
+def test_newer_preview_does_not_replace_persisted_cohort() -> None:
+    completed_preview_run_ids = (44, 45)
+    connection_factory = ConnectionQueue(
+        ((44, 211),),
+        (1, 1, 1, 0, 0, Decimal("1.5")),
+    )
+    discovery_connection = connection_factory.connections[0]
+    calls = []
+
+    early_entry_service.settle_moneyline_early_entry(
+        target_date=TARGET_DATE,
+        connection_factory=connection_factory,
+        settlement_runner=lambda **arguments: (
+            calls.append(arguments)
+            or SimpleNamespace()
+        ),
+    )
+
+    assert max(completed_preview_run_ids) == 45
+    assert (
+        calls[0]["prediction_run_id"],
+        calls[0]["odds_ingestion_run_id"],
+    ) == (44, 211)
+
+    query = discovery_connection.cursor_instance.query
+
+    assert "moneyline_prediction_market_evaluations" in query
+    assert "evaluation.qualifies_as_paper_candidate" in query
+    assert "completed_at" not in query
+    assert "LIMIT 1" not in query
 
 
 class _SettlementConnection:

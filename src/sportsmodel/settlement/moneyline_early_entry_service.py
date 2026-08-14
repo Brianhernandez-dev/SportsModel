@@ -35,10 +35,20 @@ class MoneylineEarlyEntrySettlementResult:
     """Settlement and performance result for one target date."""
 
     target_date: date
-    prediction_run_id: int | None
-    odds_ingestion_run_id: int | None
-    settlement_result: MoneylinePaperSettlementRunResult | None
+    cohort_settlements: tuple[
+        "MoneylineEarlyEntryCohortSettlement",
+        ...,
+    ]
     performance: MoneylineEarlyEntryPerformance
+
+
+@dataclass(frozen=True)
+class MoneylineEarlyEntryCohortSettlement:
+    """One persisted Early Entry prediction/odds cohort."""
+
+    prediction_run_id: int
+    odds_ingestion_run_id: int
+    settlement_result: MoneylinePaperSettlementRunResult
 
 
 def settle_moneyline_early_entry(
@@ -56,18 +66,21 @@ def settle_moneyline_early_entry(
         connection_factory=connection_factory,
     )
 
-    settlement_result = None
+    cohort_settlements = []
 
-    if cohort_ids is not None:
-        prediction_run_id, odds_ingestion_run_id = cohort_ids
+    for prediction_run_id, odds_ingestion_run_id in cohort_ids:
         settlement_result = settlement_runner(
             prediction_run_id=prediction_run_id,
             odds_ingestion_run_id=odds_ingestion_run_id,
             connection_factory=connection_factory,
         )
-    else:
-        prediction_run_id = None
-        odds_ingestion_run_id = None
+        cohort_settlements.append(
+            MoneylineEarlyEntryCohortSettlement(
+                prediction_run_id=prediction_run_id,
+                odds_ingestion_run_id=odds_ingestion_run_id,
+                settlement_result=settlement_result,
+            )
+        )
 
     performance = load_moneyline_early_entry_performance(
         target_date=target_date,
@@ -76,9 +89,7 @@ def settle_moneyline_early_entry(
 
     return MoneylineEarlyEntrySettlementResult(
         target_date=target_date,
-        prediction_run_id=prediction_run_id,
-        odds_ingestion_run_id=odds_ingestion_run_id,
-        settlement_result=settlement_result,
+        cohort_settlements=tuple(cohort_settlements),
         performance=performance,
     )
 
@@ -133,36 +144,6 @@ def load_moneyline_early_entry_performance(
                 WHERE
                     prediction_run.run_type = 'preview'
                     AND odds_run.snapshot_role = 'late_night'
-                    AND prediction_run
-                        .moneyline_prediction_run_id = (
-                            SELECT candidate_run
-                                .moneyline_prediction_run_id
-                            FROM moneyline_prediction_runs
-                                AS candidate_run
-                            WHERE
-                                candidate_run.target_date =
-                                    prediction_run.target_date
-                                AND candidate_run.run_type = 'preview'
-                                AND candidate_run.status = 'completed'
-                            ORDER BY
-                                candidate_run.completed_at DESC,
-                                candidate_run
-                                .moneyline_prediction_run_id DESC
-                            LIMIT 1
-                        )
-                    AND odds_run.odds_ingestion_run_id = (
-                        SELECT candidate_odds.odds_ingestion_run_id
-                        FROM odds_ingestion_runs AS candidate_odds
-                        WHERE
-                            candidate_odds.target_date =
-                                prediction_run.target_date
-                            AND candidate_odds.snapshot_role =
-                                'late_night'
-                            AND candidate_odds.status = 'completed'
-                        ORDER BY
-                            candidate_odds.odds_ingestion_run_id DESC
-                        LIMIT 1
-                    )
                     AND evaluation.qualifies_as_paper_candidate
                         IS TRUE
                     AND (
@@ -208,38 +189,45 @@ def _load_early_entry_cohort_ids(
     *,
     target_date: date,
     connection_factory: ConnectionFactory,
-) -> tuple[int, int] | None:
+) -> tuple[tuple[int, int], ...]:
     connection = connection_factory()
 
     try:
         with connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT
+                SELECT DISTINCT
                     prediction_run.moneyline_prediction_run_id,
                     odds_run.odds_ingestion_run_id
-                FROM moneyline_prediction_runs AS prediction_run
-                CROSS JOIN odds_ingestion_runs AS odds_run
+                FROM moneyline_prediction_market_evaluations
+                    AS evaluation
+                JOIN moneyline_game_predictions AS prediction
+                  ON prediction.moneyline_game_prediction_id =
+                     evaluation.moneyline_game_prediction_id
+                JOIN moneyline_prediction_runs AS prediction_run
+                  ON prediction_run.moneyline_prediction_run_id =
+                     prediction.moneyline_prediction_run_id
+                JOIN odds_ingestion_runs AS odds_run
+                  ON odds_run.odds_ingestion_run_id =
+                     evaluation.odds_ingestion_run_id
                 WHERE
                     prediction_run.target_date = %s
                     AND prediction_run.run_type = 'preview'
-                    AND prediction_run.status = 'completed'
                     AND odds_run.target_date = %s
                     AND odds_run.snapshot_role = 'late_night'
-                    AND odds_run.status = 'completed'
+                    AND evaluation.qualifies_as_paper_candidate
+                        IS TRUE
                 ORDER BY
-                    prediction_run.completed_at DESC,
-                    prediction_run.moneyline_prediction_run_id DESC,
-                    odds_run.odds_ingestion_run_id DESC
-                LIMIT 1;
+                    prediction_run.moneyline_prediction_run_id,
+                    odds_run.odds_ingestion_run_id;
                 """,
                 (target_date, target_date),
             )
-            row = cursor.fetchone()
+            rows = cursor.fetchall()
     finally:
         connection.close()
 
-    if row is None:
-        return None
-
-    return row[0], row[1]
+    return tuple(
+        (row[0], row[1])
+        for row in rows
+    )
