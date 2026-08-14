@@ -62,7 +62,20 @@ def main() -> None:
     print(f"Target date:           {result.target_date}")
     print(f"Preview run ID:        {result.prediction_run_id}")
     print(f"Late-night odds run:   {result.odds_ingestion_run_id}")
+    print(
+        "Predictions loaded:   "
+        f"{result.evaluation_result.predictions_loaded}"
+    )
     print(f"Evaluations saved:     {result.evaluations_saved}")
+    skipped_game_ids = (
+        result.evaluation_result.skipped_missing_market_game_ids
+    )
+    print(f"Missing markets skipped: {len(skipped_game_ids)}")
+    if skipped_game_ids:
+        print(
+            "Skipped game IDs:    "
+            + ", ".join(str(game_id) for game_id in skipped_game_ids)
+        )
     print(f"Early Entry picks:     {result.early_entry_candidates}")
     print()
 

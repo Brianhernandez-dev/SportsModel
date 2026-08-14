@@ -133,6 +133,8 @@ class MoneylineMarketEvaluationRunResult:
         ...,
     ]
 
+    skipped_missing_market_game_ids: tuple[int, ...] = ()
+
 
 def evaluate_moneyline_prediction_run(
     *,
@@ -144,6 +146,7 @@ def evaluate_moneyline_prediction_run(
     connection_factory: ConnectionFactory = (
         get_connection
     ),
+    require_complete_market_coverage: bool = True,
 ) -> MoneylineMarketEvaluationRunResult:
     """
     Evaluate and persist one prediction run against one odds run.
@@ -204,7 +207,7 @@ def evaluate_moneyline_prediction_run(
                 "The prediction run contains no predictions."
             )
 
-        if not snapshots:
+        if not snapshots and require_complete_market_coverage:
             raise LookupError(
                 "The odds run contains no matching "
                 "Moneyline snapshots."
@@ -238,6 +241,7 @@ def evaluate_moneyline_prediction_run(
                 Any,
             ]
         ] = []
+        skipped_missing_market_game_ids: list[int] = []
 
         for prediction in predictions:
             consensus_market = (
@@ -247,6 +251,12 @@ def evaluate_moneyline_prediction_run(
             )
 
             if consensus_market is None:
+                if not require_complete_market_coverage:
+                    skipped_missing_market_game_ids.append(
+                        prediction.game_id
+                    )
+                    continue
+
                 raise LookupError(
                     "No complete Moneyline consensus "
                     "market exists for canonical game "
@@ -436,6 +446,9 @@ def evaluate_moneyline_prediction_run(
                 paper_candidates
             ),
             evaluations=tuple(results),
+            skipped_missing_market_game_ids=tuple(
+                skipped_missing_market_game_ids
+            ),
         )
 
     except Exception:

@@ -33,6 +33,10 @@ $SnapshotWrapperPath = Join-Path `
     $ProjectRoot `
     "scripts\run_moneyline_odds_snapshot.ps1"
 
+$EarlyEntryCapturePath = Join-Path `
+    $ProjectRoot `
+    "scripts\capture_moneyline_early_entry.py"
+
 $SourcePath = Join-Path $ProjectRoot "src"
 $EnvironmentPath = "D:\SportsModel\.env"
 
@@ -79,6 +83,7 @@ try {
         $PythonPath,
         $ResolverPath,
         $SnapshotWrapperPath,
+        $EarlyEntryCapturePath,
         $SourcePath,
         $EnvironmentPath
     )) {
@@ -193,6 +198,30 @@ try {
             "Snapshot execution failed with exit code " +
             "$LASTEXITCODE."
         )
+    }
+
+    if ($SnapshotRole -eq "late_night") {
+        Write-Log "Starting Early Entry capture for $TargetDate."
+
+        $CaptureOutput = & $PythonPath `
+            $EarlyEntryCapturePath `
+            --target-date $TargetDate `
+            2>&1
+
+        $CaptureExitCode = $LASTEXITCODE
+
+        foreach ($OutputLine in $CaptureOutput) {
+            Write-Log "$OutputLine"
+        }
+
+        if ($CaptureExitCode -ne 0) {
+            throw (
+                "Early Entry capture failed with exit code " +
+                "$CaptureExitCode."
+            )
+        }
+
+        Write-Log "Early Entry capture completed successfully."
     }
 
     Write-Log "Fixed snapshot task completed successfully."

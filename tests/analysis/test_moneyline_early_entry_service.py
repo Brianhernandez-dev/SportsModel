@@ -81,6 +81,7 @@ def test_captures_preview_against_late_night_odds() -> None:
         {
             "prediction_run_id": 44,
             "odds_ingestion_run_id": 211,
+            "require_complete_market_coverage": False,
         }
     ]
     assert connection.closed is True
