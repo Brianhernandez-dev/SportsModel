@@ -22,7 +22,8 @@ LIST_MONEYLINE_LIVE_SLATES_QUERY = """
         evaluation.policy_version,
         prediction_run.target_date,
         ingestion.snapshot_role,
-        ingestion.started_at
+        ingestion.started_at,
+        prediction_run.run_type
     FROM moneyline_prediction_market_evaluations
         AS evaluation
     JOIN moneyline_game_predictions AS prediction
@@ -121,6 +122,7 @@ def list_moneyline_live_slates(
                 target_date=row[3],
                 snapshot_role=row[4],
                 snapshot_started_at=row[5],
+                run_type=row[6],
             )
             for row in rows
         )

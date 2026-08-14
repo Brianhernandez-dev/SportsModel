@@ -61,3 +61,37 @@ def remove_vig(
         probability / total
         for probability in implied_probabilities
     ]
+
+
+def probability_to_american_odds(
+    probability: Decimal,
+) -> int:
+    """Convert a fair probability into rounded American odds."""
+
+    if not Decimal("0") < probability < Decimal("1"):
+        raise ValueError(
+            "Probability must be between zero and one."
+        )
+
+    if probability == Decimal("0.5"):
+        return 100
+
+    if probability > Decimal("0.5"):
+        raw_price = (
+            Decimal("-100")
+            * probability
+            / (Decimal("1") - probability)
+        )
+    else:
+        raw_price = (
+            Decimal("100")
+            * (Decimal("1") - probability)
+            / probability
+        )
+
+    return int(
+        raw_price.quantize(
+            Decimal("1"),
+            rounding="ROUND_HALF_UP",
+        )
+    )

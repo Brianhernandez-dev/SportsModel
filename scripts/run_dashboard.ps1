@@ -53,12 +53,13 @@ if (-not $pythonPath) {
 Write-Host "SportsModel dashboard"
 Write-Host "Repository: $repositoryRoot"
 Write-Host "Python:     $pythonPath"
-Write-Host "Address:    http://localhost:$Port"
+Write-Host "Address:    http://127.0.0.1:$Port"
 
 & $pythonPath `
     -m streamlit run `
     $appPath `
-    --server.port `
-    $Port
+    "--server.address=127.0.0.1" `
+    "--server.port=$Port" `
+    "--server.headless=true"
 
 exit $LASTEXITCODE
