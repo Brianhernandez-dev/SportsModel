@@ -14,7 +14,7 @@ EXCLUSION_REASON_LABELS = {
     "model_market_edge_below_minimum": (
         "Model-market edge below 2 pp minimum"
     ),
-    "sportsbook_count_below_minimum": (
+    "insufficient_sportsbook_count": (
         "Fewer than 5 sportsbooks"
     ),
     "incomplete_starter_coverage": (

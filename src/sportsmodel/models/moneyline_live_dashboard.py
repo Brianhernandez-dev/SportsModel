@@ -21,6 +21,8 @@ class MoneylineLiveSlate:
 
     snapshot_started_at: datetime
 
+    run_type: str = "official"
+
 
 @dataclass(frozen=True)
 class MoneylineLiveGame:
