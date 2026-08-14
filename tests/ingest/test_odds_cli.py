@@ -84,8 +84,17 @@ def test_executes_manual_snapshot_by_default(
     assert "Requests remaining: 486" in output
 
 
+@pytest.mark.parametrize(
+    "snapshot_role",
+    (
+        "evening",
+        "late_night",
+        "morning",
+    ),
+)
 def test_executes_scheduled_auxiliary_snapshot(
     capsys,
+    snapshot_role: str,
 ) -> None:
     calls = []
 
@@ -93,13 +102,13 @@ def test_executes_scheduled_auxiliary_snapshot(
         calls.append(arguments)
         return _result(
             target_date=date(2026, 8, 7),
-            snapshot_role="morning",
+            snapshot_role=snapshot_role,
         )
 
     exit_code = main(
         [
             "--snapshot-role",
-            "morning",
+            snapshot_role,
             "--target-date",
             "2026-08-07",
         ],
@@ -110,14 +119,14 @@ def test_executes_scheduled_auxiliary_snapshot(
     assert calls == [
         {
             "target_date": date(2026, 8, 7),
-            "snapshot_role": "morning",
+            "snapshot_role": snapshot_role,
         }
     ]
 
     output = capsys.readouterr().out
 
     assert "Target date:       2026-08-07" in output
-    assert "Snapshot role:     morning" in output
+    assert f"Snapshot role:     {snapshot_role}" in output
 
 
 def test_scheduled_role_requires_target_date(

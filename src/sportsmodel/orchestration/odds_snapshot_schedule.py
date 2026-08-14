@@ -7,6 +7,8 @@ PACIFIC_TIME_ZONE = ZoneInfo("America/Los_Angeles")
 FIXED_SNAPSHOT_ROLES = frozenset(
     {
         "opening",
+        "evening",
+        "late_night",
         "morning",
         "afternoon",
     }
@@ -46,7 +48,11 @@ def resolve_snapshot_target_date(
         .date()
     )
 
-    if normalized_role == "opening":
+    if normalized_role in {
+        "opening",
+        "evening",
+        "late_night",
+    }:
         return pacific_date + timedelta(days=1)
 
     return pacific_date
