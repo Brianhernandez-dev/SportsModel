@@ -1,0 +1,66 @@
+{
+  "provenance": {
+    "source": "nflverse/nflverse-data GitHub release assets",
+    "retrieved_on": "2026-08-13",
+    "assets": {
+      "schedules": "releases/download/schedules/games.csv",
+      "teams": "releases/download/teams/teams_colors_logos.csv",
+      "team_stats": "releases/download/stats_team/stats_team_week_2025.csv"
+    },
+    "transformation": "Selected source columns and representative rows were copied to JSON without value changes. Empty CSV cells are represented as null. No live API was used."
+  },
+  "teams": [
+    {"team_abbr":"ATL","team_name":"Atlanta Falcons","team_id":"0200","team_nick":"Falcons","team_conf":"NFC","team_division":"NFC South"},
+    {"team_abbr":"BAL","team_name":"Baltimore Ravens","team_id":"0325","team_nick":"Ravens","team_conf":"AFC","team_division":"AFC North"},
+    {"team_abbr":"DAL","team_name":"Dallas Cowboys","team_id":"1200","team_nick":"Cowboys","team_conf":"NFC","team_division":"NFC East"},
+    {"team_abbr":"DET","team_name":"Detroit Lions","team_id":"1540","team_nick":"Lions","team_conf":"NFC","team_division":"NFC North"},
+    {"team_abbr":"HOU","team_name":"Houston Texans","team_id":"2120","team_nick":"Texans","team_conf":"AFC","team_division":"AFC South"},
+    {"team_abbr":"IND","team_name":"Indianapolis Colts","team_id":"2200","team_nick":"Colts","team_conf":"AFC","team_division":"AFC South"},
+    {"team_abbr":"JAX","team_name":"Jacksonville Jaguars","team_id":"2250","team_nick":"Jaguars","team_conf":"AFC","team_division":"AFC South"},
+    {"team_abbr":"KC","team_name":"Kansas City Chiefs","team_id":"2310","team_nick":"Chiefs","team_conf":"AFC","team_division":"AFC West"},
+    {"team_abbr":"LV","team_name":"Las Vegas Raiders","team_id":"2520","team_nick":"Raiders","team_conf":"AFC","team_division":"AFC West"},
+    {"team_abbr":"NE","team_name":"New England Patriots","team_id":"3200","team_nick":"Patriots","team_conf":"AFC","team_division":"AFC East"},
+    {"team_abbr":"OAK","team_name":"Oakland Raiders","team_id":"2520","team_nick":"Raiders","team_conf":"AFC","team_division":"AFC West"},
+    {"team_abbr":"PHI","team_name":"Philadelphia Eagles","team_id":"3700","team_nick":"Eagles","team_conf":"NFC","team_division":"NFC East"},
+    {"team_abbr":"PIT","team_name":"Pittsburgh Steelers","team_id":"3900","team_nick":"Steelers","team_conf":"AFC","team_division":"AFC North"},
+    {"team_abbr":"SF","team_name":"San Francisco 49ers","team_id":"4500","team_nick":"49ers","team_conf":"NFC","team_division":"NFC West"},
+    {"team_abbr":"SEA","team_name":"Seattle Seahawks","team_id":"4600","team_nick":"Seahawks","team_conf":"NFC","team_division":"NFC West"},
+    {"team_abbr":"WAS","team_name":"Washington Commanders","team_id":"5110","team_nick":"Commanders","team_conf":"NFC","team_division":"NFC East"}
+  ],
+  "schedule_cases": [
+    {
+      "case": "regular_season_final",
+      "provenance": {"season": 2023, "game_id": "2023_01_DET_KC", "transformation": "selected columns only"},
+      "row": {"game_id":"2023_01_DET_KC","season":"2023","game_type":"REG","week":"1","gameday":"2023-09-07","gametime":"20:20","away_team":"DET","away_score":"21","home_team":"KC","home_score":"20","location":"Home","overtime":"0"}
+    },
+    {
+      "case": "postseason_overtime_neutral_final",
+      "provenance": {"season": 2023, "game_id": "2023_22_SF_KC", "transformation": "selected columns only"},
+      "row": {"game_id":"2023_22_SF_KC","season":"2023","game_type":"SB","week":"22","gameday":"2024-02-11","gametime":"18:30","away_team":"SF","away_score":"22","home_team":"KC","home_score":"25","location":"Neutral","overtime":"1"}
+    },
+    {
+      "case": "regular_season_overtime_tie",
+      "provenance": {"season": 2022, "game_id": "2022_01_IND_HOU", "transformation": "selected columns only"},
+      "row": {"game_id":"2022_01_IND_HOU","season":"2022","game_type":"REG","week":"1","gameday":"2022-09-11","gametime":"13:00","away_team":"IND","away_score":"20","home_team":"HOU","home_score":"20","location":"Home","overtime":"1"}
+    },
+    {
+      "case": "neutral_site_regular_final",
+      "provenance": {"season": 2023, "game_id": "2023_04_ATL_JAX", "transformation": "selected columns only"},
+      "row": {"game_id":"2023_04_ATL_JAX","season":"2023","game_type":"REG","week":"4","gameday":"2023-10-01","gametime":"09:30","away_team":"ATL","away_score":"7","home_team":"JAX","home_score":"23","location":"Neutral","overtime":"0"}
+    },
+    {
+      "case": "rescheduled_final_without_source_marker",
+      "provenance": {"season": 2020, "game_id": "2020_12_BAL_PIT", "transformation": "selected columns only; nflverse row contains the final Wednesday date but no original date or reschedule flag"},
+      "row": {"game_id":"2020_12_BAL_PIT","season":"2020","game_type":"REG","week":"12","gameday":"2020-12-02","gametime":"15:40","away_team":"BAL","away_score":"14","home_team":"PIT","home_score":"19","location":"Home","overtime":"0"}
+    },
+    {
+      "case": "scheduled_unplayed",
+      "provenance": {"season": 2026, "game_id": "2026_01_NE_SEA", "transformation": "selected columns only; empty CSV result cells represented as null"},
+      "row": {"game_id":"2026_01_NE_SEA","season":"2026","game_type":"REG","week":"1","gameday":"2026-09-09","gametime":"20:20","away_team":"NE","away_score":null,"home_team":"SEA","home_score":null,"location":"Home","overtime":null}
+    }
+  ],
+  "team_stats": [
+    {"season":"2025","week":"1","team":"DAL","season_type":"REG","game_id":"2025_01_DAL_PHI","opponent_team":"PHI","completions":"21","attempts":"34","passing_yards":"188","passing_tds":"0","passing_interceptions":"0","sacks_suffered":"0","carries":"22","rushing_yards":"119","rushing_tds":"2","fumbles_lost_total":"1","penalties":"4","penalty_yards":"42"},
+    {"season":"2025","week":"1","team":"PHI","season_type":"REG","game_id":"2025_01_DAL_PHI","opponent_team":"DAL","completions":"19","attempts":"23","passing_yards":"152","passing_tds":"0","passing_interceptions":"0","sacks_suffered":"1","carries":"38","rushing_yards":"158","rushing_tds":"3","fumbles_lost_total":"0","penalties":"9","penalty_yards":"110"}
+  ]
+}

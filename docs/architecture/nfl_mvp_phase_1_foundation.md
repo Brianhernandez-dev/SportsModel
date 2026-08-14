@@ -43,6 +43,19 @@ Preseason data may be stored, but it is not required in the first baseline
 training population. Spread and Total compatibility must be designed now, not
 implemented now.
 
+### Approved Phase 1 source decision
+
+The approved historical provider is **nflverse**, consumed through static
+`nflverse-data` release assets or an `nflreadpy`-compatible adapter. The
+SportsModel contract is its own immutable Python records; Polars DataFrames and
+`nflreadpy` objects must stop at the adapter boundary.
+
+The approved historical population is 2018-2025 regular season plus
+postseason. Preseason rows may be retained when available but are excluded from
+the baseline population by default. This approval is only for the historical
+Phase 1 foundation. nflverse is not automatically the future live production
+provider; that remains a separate operational decision.
+
 ## 3. Existing SportsModel components reviewed
 
 The audit covered the following repository areas at base commit
@@ -197,8 +210,12 @@ created_at              timestamptz
 updated_at              timestamptz
 ```
 
-Do not use a provider ID or city/name as `franchise_key`. A project-owned key
-such as `nfl_ari` or `nfl_lvr` is stable across providers and relocations.
+Do not use a provider ID, city, nickname, or abbreviation as `franchise_key`.
+Use a project-issued UUID stored in canonical lowercase form, prefixed for
+human context (for example `nfl_franchise_<uuid>`). The UUID is assigned once
+when SportsModel creates the franchise and never recomputed. Readable current
+abbreviations remain separate attributes. This avoids embedding a relocation,
+rename, or provider convention in immutable identity.
 
 ### `nfl_team_seasons`
 
@@ -398,30 +415,35 @@ All clients must be injectable so tests use fixtures and never the network.
 The first implementation should include a fixture-directory input mode before
 any HTTP client is enabled.
 
-Minimum retained raw fields:
+Minimum retained raw fields, subject to the actual source contract:
 
 - provider and external game ID;
 - provider team IDs and names;
 - season, season type, and week/round;
 - scheduled start and provider update timestamps;
 - home/away designation;
-- game status and status detail;
+- game status and status detail when supplied;
 - scores by side;
 - overtime/period count when available;
 - neutral-site and venue fields;
 - source payload/hash and retrieval timestamp; and
 - stable team box-score fields when supplied.
 
-Recommended initial historical range is **2018 through 2025**, including
+The approved initial historical range is **2018 through 2025**, including
 regular season and postseason. Eight completed seasons provide roughly two
 thousand games, cover current rules and team environments reasonably well, and
 match the repository's preference for modern, chronologically evaluated data.
 Load preseason for identity/schedule validation only if it comes from the same
 source, and exclude it from baseline training by default.
 
-The target range is a recommendation, not a license/provider conclusion. A
-coverage report by season, team, season type, final-score completeness, and
-duplicate source ID is required before training readiness is declared.
+The inspected nflverse schedule asset does not expose a lifecycle status,
+original scheduled date, reschedule flag, or timezone marker. SportsModel must
+not invent those facts: two scores mean `final`; two missing scores mean
+`unplayed`; a single missing score is malformed. `gameday` plus `gametime` is
+normalized using the documented nflverse schedule convention of US Eastern
+time and immediately retained as a timezone-aware value. A coverage report by
+season, team, season type, final-score completeness, and duplicate source ID is
+required before training readiness is declared.
 
 ## 10. NFL odds integration boundary
 
@@ -686,23 +708,19 @@ platform.
 
 ### Human decisions required
 
-1. **Historical provider:** choose the authoritative schedule/results and
-   box-score source after licensing, stable-ID, historical-depth, correction,
-   and rate-limit review. The architecture intentionally does not name an
-   unverified provider as authoritative.
-2. **Historical range:** approve 2018-2025 or expand earlier after coverage and
-   rules-era analysis.
-3. **Postseason week representation:** numeric week plus label is recommended;
+1. **Postseason week representation:** numeric week plus label is recommended;
    confirm desired reporting labels.
-4. **Team baseline statistics:** approve the stable subset supported by the
+2. **Team baseline statistics:** approve the stable subset supported by the
    chosen provider before migration DDL is fixed.
-5. **Quarterback scope:** decide whether actual starter identity is retained in
+3. **Quarterback scope:** decide whether actual starter identity is retained in
    Phase 1 typed tables or only raw observations. It should not block the first
    team-only baseline.
-6. **NFL prediction cutoff:** choose an operational context before feature
+4. **NFL prediction cutoff:** choose an operational context before feature
    snapshots (for example, a fixed weekly time versus game-relative cutoff).
-7. **Odds cadence:** define NFL meanings for opening/official/near-close rather
+5. **Odds cadence:** define NFL meanings for opening/official/near-close rather
    than copying MLB clock times.
+6. **Future live provider:** select separately from nflverse historical-source
+   approval after freshness, corrections, availability, and support review.
 
 ### Technical risks
 
