@@ -1,6 +1,8 @@
 param(
     [ValidateSet(
         "opening",
+        "evening",
+        "late_night",
         "morning",
         "afternoon",
         "near_close"
@@ -71,7 +73,8 @@ try {
         if ([string]::IsNullOrWhiteSpace($SnapshotRole)) {
             throw (
                 "SnapshotRole is required for live execution. " +
-                "Choose opening, morning, afternoon, or near_close."
+                "Choose opening, evening, late_night, morning, " +
+                "afternoon, or near_close."
             )
         }
 

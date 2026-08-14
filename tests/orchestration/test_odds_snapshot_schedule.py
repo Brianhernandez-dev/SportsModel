@@ -24,6 +24,22 @@ def test_opening_targets_next_pacific_date() -> None:
     ) == date(2026, 8, 7)
 
 
+@pytest.mark.parametrize(
+    "snapshot_role",
+    (
+        "evening",
+        "late_night",
+    ),
+)
+def test_evening_roles_target_next_pacific_date(
+    snapshot_role: str,
+) -> None:
+    assert resolve_snapshot_target_date(
+        snapshot_role,
+        REFERENCE_TIME,
+    ) == date(2026, 8, 7)
+
+
 def test_morning_targets_current_pacific_date() -> None:
     assert resolve_snapshot_target_date(
         "morning",

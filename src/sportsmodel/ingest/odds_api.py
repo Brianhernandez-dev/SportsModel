@@ -24,6 +24,8 @@ LIVE_SNAPSHOT_ROLES = frozenset(
     {
         "manual",
         "opening",
+        "evening",
+        "late_night",
         "morning",
         "entry",
         "afternoon",
@@ -34,6 +36,8 @@ LIVE_SNAPSHOT_ROLES = frozenset(
 SCHEDULED_SNAPSHOT_ROLES = frozenset(
     {
         "opening",
+        "evening",
+        "late_night",
         "morning",
         "entry",
         "afternoon",

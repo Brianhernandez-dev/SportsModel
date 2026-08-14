@@ -11,6 +11,8 @@ from sportsmodel.ingest.odds_api import (
 AUXILIARY_SNAPSHOT_ROLES = (
     "manual",
     "opening",
+    "evening",
+    "late_night",
     "morning",
     "afternoon",
     "near_close",

@@ -2,6 +2,8 @@ param(
     [Parameter(Mandatory)]
     [ValidateSet(
         "opening",
+        "evening",
+        "late_night",
         "morning",
         "afternoon"
     )]

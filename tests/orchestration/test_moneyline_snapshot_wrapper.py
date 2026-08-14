@@ -7,6 +7,34 @@ WRAPPER_PATH = (
     / "run_moneyline_odds_snapshot.ps1"
 )
 
+TASK_WRAPPER_PATH = (
+    Path(__file__).parents[2]
+    / "scripts"
+    / "run_moneyline_odds_snapshot_task.ps1"
+)
+
+EXPECTED_SNAPSHOT_ROLES = (
+    "opening",
+    "evening",
+    "late_night",
+    "morning",
+    "afternoon",
+    "near_close",
+)
+
+
+def test_snapshot_wrappers_accept_expected_roles() -> None:
+    wrapper = WRAPPER_PATH.read_text(encoding="utf-8-sig")
+    task_wrapper = TASK_WRAPPER_PATH.read_text(
+        encoding="utf-8-sig"
+    )
+
+    for snapshot_role in EXPECTED_SNAPSHOT_ROLES:
+        assert f'"{snapshot_role}"' in wrapper
+
+    for snapshot_role in EXPECTED_SNAPSHOT_ROLES[:-1]:
+        assert f'"{snapshot_role}"' in task_wrapper
+
 
 def test_live_snapshot_uses_shared_database_readiness() -> None:
     wrapper = WRAPPER_PATH.read_text(encoding="utf-8-sig")

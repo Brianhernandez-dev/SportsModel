@@ -5,6 +5,15 @@ import pytest
 from sportsmodel.ingest import odds_api
 
 
+def test_evening_roles_are_live_scheduled_snapshots() -> None:
+    for snapshot_role in (
+        "evening",
+        "late_night",
+    ):
+        assert snapshot_role in odds_api.LIVE_SNAPSHOT_ROLES
+        assert snapshot_role in odds_api.SCHEDULED_SNAPSHOT_ROLES
+
+
 class FakeCursor:
     def __enter__(self):
         return self
