@@ -12,11 +12,13 @@ schedule-history source.
 
 Two source-time anomalies must be resolved or quarantined before scheduled
 timestamps are persisted: `2018_07_TEN_LAC` and `2018_08_PHI_JAX` contain
-`gametime=21:30` at Wembley. The current parser truthfully applies its declared
-Eastern-time assumption but consequently produces 2018-10-22 and 2018-10-29
-01:30 UTC. The NFL's published schedule says both kicked off at 09:30 Eastern,
-so these are provider values that are syntactically accepted but semantically
-wrong. This audit does not repair them.
+`gametime=21:30` at Wembley. At audit time, the then-current parser truthfully
+applied its declared Eastern-time assumption and consequently produced
+2018-10-22 and 2018-10-29 01:30 UTC. The NFL's published schedule says both
+kicked off at 09:30 Eastern, so these are provider values that were
+syntactically accepted but semantically wrong. The later persistence
+implementation added exact reviewed overrides; this section preserves the
+historical audit result.
 
 The 2022 population contains 271 rather than 272 regular-season rows because
 the cancelled `2022_17_BUF_CIN` event is absent. That behavior is consistent
@@ -106,9 +108,9 @@ rows. Historical aliases therefore require alias mappings, not duplicate
 canonical franchises. Migration 022's one source mapping per stable provider
 ID is compatible with every observed identity.
 
-## 6. Current parser compatibility
+## 6. Parser compatibility at audit time
 
-The unchanged current parser was run one row at a time over the complete
+The parser at the audit commit was run one row at a time over the complete
 in-scope dataset to retain rejection evidence:
 
 | Attempted | Parsed | Rejected | Rejection rate | Categories |

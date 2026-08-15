@@ -15,6 +15,33 @@ class NflGameStatus(StrEnum):
 
 
 @dataclass(frozen=True)
+class NflGame:
+    """Provider-independent canonical NFL game read model."""
+
+    game_id: int
+    season: int
+    season_type: NflSeasonType
+    week: int
+    week_label: str
+    scheduled_start_time: datetime
+    home_team_id: int
+    away_team_id: int
+    status: NflGameStatus
+    home_score: int | None
+    away_score: int | None
+    overtime: bool | None
+    neutral_site: bool
+
+    def __post_init__(self) -> None:
+        if self.game_id <= 0 or self.home_team_id <= 0 or self.away_team_id <= 0:
+            raise ValueError("canonical game and team IDs must be positive")
+        if self.home_team_id == self.away_team_id:
+            raise ValueError("home and away teams must be different")
+        if self.scheduled_start_time.tzinfo is None:
+            raise ValueError("scheduled_start_time must be timezone-aware")
+
+
+@dataclass(frozen=True)
 class NflTeamSourceRecord:
     """One provider-owned NFL team identity or historical alias."""
 

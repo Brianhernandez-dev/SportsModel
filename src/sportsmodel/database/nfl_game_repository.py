@@ -2,20 +2,25 @@ from __future__ import annotations
 
 from typing import Any
 
-from sportsmodel.nfl.models import NflGameSourceRecord, NflGameStatus, NflSeasonType
+from sportsmodel.nfl.models import (
+    NflGame,
+    NflGameSourceRecord,
+    NflGameStatus,
+    NflSeasonType,
+)
 
 
-def load_nfl_game_by_id(cursor: Any, *, game_id: int) -> NflGameSourceRecord | None:
-    cursor.execute(_SELECT_GAME + " WHERE nfl.game_id = %s;", (game_id,))
+def load_nfl_game_by_id(cursor: Any, *, game_id: int) -> NflGame | None:
+    cursor.execute(_SELECT_CANONICAL_GAME + " WHERE nfl.game_id = %s;", (game_id,))
     row = cursor.fetchone()
-    return None if row is None else _game_from_row(row)
+    return None if row is None else _canonical_game_from_row(row)
 
 
 def resolve_nfl_game_by_source(
     cursor: Any, *, source_name: str, external_game_id: str
 ) -> NflGameSourceRecord | None:
     cursor.execute(
-        _SELECT_GAME
+        _SELECT_SOURCE_GAME
         + " WHERE src.source_name = %s AND src.external_game_id = %s;",
         (source_name, external_game_id),
     )
@@ -25,13 +30,13 @@ def resolve_nfl_game_by_source(
 
 def list_nfl_games_by_season(
     cursor: Any, *, season: int
-) -> tuple[NflGameSourceRecord, ...]:
+) -> tuple[NflGame, ...]:
     cursor.execute(
-        _SELECT_GAME
+        _SELECT_CANONICAL_GAME
         + " WHERE nfl.season = %s ORDER BY nfl.scheduled_start_time, nfl.game_id;",
         (season,),
     )
-    return tuple(_game_from_row(row) for row in cursor.fetchall())
+    return tuple(_canonical_game_from_row(row) for row in cursor.fetchall())
 
 
 def persist_nfl_game(
@@ -161,7 +166,16 @@ def list_nfl_game_anomaly_evidence(
     return tuple(dict(zip(names, row, strict=True)) for row in cursor.fetchall())
 
 
-_SELECT_GAME = """
+_SELECT_CANONICAL_GAME = """
+SELECT nfl.game_id, nfl.season, nfl.season_type, nfl.week, nfl.week_label,
+       nfl.scheduled_start_time, game.home_team_id, game.away_team_id,
+       nfl.status, nfl.home_score, nfl.away_score, nfl.overtime, nfl.neutral_site
+FROM nfl_games nfl
+JOIN games game ON game.game_id = nfl.game_id
+"""
+
+
+_SELECT_SOURCE_GAME = """
 SELECT src.source_name, src.external_game_id, nfl.season, nfl.season_type,
        nfl.week, nfl.week_label, nfl.scheduled_start_time,
        home_source.external_team_id, away_source.external_team_id,
@@ -174,6 +188,16 @@ JOIN nfl_team_sources home_source ON home_source.team_id = game.home_team_id
 JOIN nfl_team_sources away_source ON away_source.team_id = game.away_team_id
     AND away_source.source_name = src.source_name
 """
+
+
+def _canonical_game_from_row(row: tuple[Any, ...]) -> NflGame:
+    return NflGame(
+        game_id=row[0], season=row[1], season_type=NflSeasonType(row[2]),
+        week=row[3], week_label=row[4], scheduled_start_time=row[5],
+        home_team_id=row[6], away_team_id=row[7],
+        status=NflGameStatus(row[8]), home_score=row[9], away_score=row[10],
+        overtime=row[11], neutral_site=row[12],
+    )
 
 
 def _game_from_row(row: tuple[Any, ...]) -> NflGameSourceRecord:

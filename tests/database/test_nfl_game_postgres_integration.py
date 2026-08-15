@@ -1,5 +1,6 @@
 import json
 import os
+from copy import deepcopy
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
@@ -11,6 +12,10 @@ from sportsmodel.database.migrations import (
     apply_pending_migrations,
     discover_migrations,
     ensure_schema_migrations_table,
+)
+from sportsmodel.database.nfl_game_repository import (
+    list_nfl_games_by_season,
+    load_nfl_game_by_id,
 )
 from sportsmodel.nfl.game_persistence import ingest_nflverse_games
 from sportsmodel.nfl.nflverse_parser import (
@@ -108,34 +113,32 @@ def test_migrations_and_nfl_game_ingestion_on_disposable_postgres() -> None:
         digest = sha256(fixture_bytes).hexdigest()
         retrieved_at = datetime(2026, 8, 13, 12, tzinfo=timezone.utc)
 
-        with connection.cursor() as cursor:
-            first = ingest_nflverse_games(
-                cursor,
-                rows=rows,
-                team_identities=identities,
-                source_asset=str(NFLVERSE_FIXTURE),
-                source_sha256=digest,
-                retrieved_at=retrieved_at,
-            )
-            second = ingest_nflverse_games(
-                cursor,
-                rows=rows,
-                team_identities=identities,
-                source_asset=str(NFLVERSE_FIXTURE),
-                source_sha256=digest,
-                retrieved_at=retrieved_at,
-            )
-            scheduled = ingest_nflverse_games(
-                cursor,
-                rows=rows,
-                team_identities=identities,
-                source_asset=str(NFLVERSE_FIXTURE),
-                source_sha256=digest,
-                retrieved_at=retrieved_at,
-                season_from=2026,
-                season_to=2026,
-            )
-        connection.commit()
+        first = ingest_nflverse_games(
+            connection,
+            rows=rows,
+            team_identities=identities,
+            source_asset=str(NFLVERSE_FIXTURE),
+            source_sha256=digest,
+            retrieved_at=retrieved_at,
+        )
+        second = ingest_nflverse_games(
+            connection,
+            rows=rows,
+            team_identities=identities,
+            source_asset=str(NFLVERSE_FIXTURE),
+            source_sha256=digest,
+            retrieved_at=retrieved_at,
+        )
+        scheduled = ingest_nflverse_games(
+            connection,
+            rows=rows,
+            team_identities=identities,
+            source_asset=str(NFLVERSE_FIXTURE),
+            source_sha256=digest,
+            retrieved_at=retrieved_at,
+            season_from=2026,
+            season_to=2026,
+        )
 
         assert first.rows_inserted == 7
         assert second.rows_inserted == 0
@@ -171,6 +174,25 @@ def test_migrations_and_nfl_game_ingestion_on_disposable_postgres() -> None:
             assert canonical_time.hour == 13  # 09:30 Eastern in UTC
             cursor.execute(
                 """
+                SELECT raw_payload, raw_row_sha256
+                FROM nfl_game_source_observations
+                WHERE external_game_id = '2018_07_TEN_LAC'
+                ORDER BY nfl_game_source_observation_id LIMIT 1;
+                """
+            )
+            retained_payload, retained_hash = cursor.fetchone()
+            expected_row = wembley_rows[0]
+            expected_json = json.dumps(
+                expected_row,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            )
+            assert retained_hash == sha256(expected_json.encode("utf-8")).hexdigest()
+            assert retained_payload == expected_row
+            assert retained_payload["gametime"] == "21:30"
+            cursor.execute(
+                """
                 SELECT status, home_score, away_score, overtime
                 FROM nfl_games nfl
                 JOIN game_sources source ON source.game_id = nfl.game_id
@@ -189,5 +211,193 @@ def test_migrations_and_nfl_game_ingestion_on_disposable_postgres() -> None:
             assert cursor.fetchone()[0] == 0
             cursor.execute("SELECT team_name FROM teams WHERE team_id = 5;")
             assert cursor.fetchone()[0] == "Athletics"
+
+        _assert_provider_independent_canonical_reads(connection)
+        _assert_quarantine_continues_run(
+            connection, identities, digest, retrieved_at, wembley_rows[0]
+        )
+        _assert_failed_run_is_durable_and_atomic(
+            connection, identities, digest, retrieved_at
+        )
+        _assert_provider_identity_conflict_is_atomic(
+            connection, identities, digest, retrieved_at
+        )
     finally:
         connection.close()
+
+
+def _assert_provider_independent_canonical_reads(connection) -> None:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT game_id FROM game_sources
+            WHERE source_name = 'nflverse'
+              AND external_game_id = '2023_01_DET_KC';
+            """
+        )
+        game_id = cursor.fetchone()[0]
+        cursor.execute(
+            """
+            INSERT INTO game_sources (game_id, source_name, external_game_id)
+            VALUES (%s, 'second_provider', 'second-provider-event');
+            """,
+            (game_id,),
+        )
+        canonical = load_nfl_game_by_id(cursor, game_id=game_id)
+        season_games = list_nfl_games_by_season(cursor, season=2023)
+    connection.commit()
+    assert canonical is not None
+    assert canonical.game_id == game_id
+    assert sum(game.game_id == game_id for game in season_games) == 1
+
+
+def _assert_quarantine_continues_run(
+    connection, identities, digest, retrieved_at, reviewed_row
+) -> None:
+    mismatch = deepcopy(reviewed_row)
+    mismatch["gametime"] = "20:30"
+    valid = {
+        "game_id": "2024_02_ATL_JAX", "season": "2024",
+        "game_type": "REG", "week": "2", "gameday": "2024-09-15",
+        "gametime": "13:00", "away_team": "ATL", "away_score": "17",
+        "home_team": "JAX", "home_score": "20", "location": "Home",
+        "overtime": "0",
+    }
+    result = ingest_nflverse_games(
+        connection,
+        rows=(mismatch, valid),
+        team_identities=identities,
+        source_asset="quarantine-test",
+        source_sha256=digest,
+        retrieved_at=retrieved_at,
+        season_from=2018,
+        season_to=2024,
+    )
+    assert result.rows_processed == 2
+    assert result.rows_quarantined == 1
+    assert result.rows_inserted == 1
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT game_id, anomaly_state, raw_payload->>'gametime',
+                   anomaly_reason, override_provenance
+            FROM nfl_game_source_observations
+            WHERE nfl_ingestion_run_id = %s
+              AND external_game_id = '2018_07_TEN_LAC';
+            """,
+            (result.nfl_ingestion_run_id,),
+        )
+        game_id, state, raw_time, reason, provenance = cursor.fetchone()
+        assert game_id is None
+        assert state == "quarantined"
+        assert raw_time == "20:30"
+        assert "evidence mismatch" in reason
+        assert "nflverse_2018_2025_coverage_audit.md" in provenance
+        cursor.execute(
+            """
+            SELECT COUNT(*) FROM game_sources
+            WHERE source_name = 'nflverse'
+              AND external_game_id = '2024_02_ATL_JAX';
+            """
+        )
+        assert cursor.fetchone()[0] == 1
+
+
+def _assert_failed_run_is_durable_and_atomic(
+    connection, identities, digest, retrieved_at
+) -> None:
+    valid = {
+        "game_id": "2024_03_DAL_PHI", "season": "2024",
+        "game_type": "REG", "week": "3", "gameday": "2024-09-22",
+        "gametime": "13:00", "away_team": "DAL", "away_score": "21",
+        "home_team": "PHI", "home_score": "24", "location": "Home",
+        "overtime": "0",
+    }
+    malformed_id = "x" * 101
+    malformed = dict(valid, game_id=malformed_id, week="4")
+    with pytest.raises(psycopg2.errors.StringDataRightTruncation):
+        ingest_nflverse_games(
+            connection,
+            rows=(valid, malformed),
+            team_identities=identities,
+            source_asset="failed-run-test",
+            source_sha256=digest,
+            retrieved_at=retrieved_at,
+            season_from=2024,
+            season_to=2024,
+        )
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT nfl_ingestion_run_id, status, error_message
+            FROM nfl_ingestion_runs WHERE source_asset = 'failed-run-test';
+            """
+        )
+        run_id, status, error_message = cursor.fetchone()
+        assert status == "failed"
+        assert "value too long" in error_message
+        cursor.execute(
+            "SELECT COUNT(*) FROM nfl_game_source_observations WHERE nfl_ingestion_run_id = %s;",
+            (run_id,),
+        )
+        assert cursor.fetchone()[0] == 0
+        cursor.execute(
+            """
+            SELECT COUNT(*) FROM game_sources
+            WHERE source_name = 'nflverse'
+              AND external_game_id = '2024_03_DAL_PHI';
+            """
+        )
+        assert cursor.fetchone()[0] == 0
+    subsequent = ingest_nflverse_games(
+        connection,
+        rows=(valid,),
+        team_identities=identities,
+        source_asset="post-failure-valid-test",
+        source_sha256=digest,
+        retrieved_at=retrieved_at,
+        season_from=2024,
+        season_to=2024,
+    )
+    assert subsequent.rows_inserted == 1
+
+
+def _assert_provider_identity_conflict_is_atomic(
+    connection, identities, digest, retrieved_at
+) -> None:
+    conflict = {
+        "game_id": "2023_01_DET_KC", "season": "2023",
+        "game_type": "REG", "week": "1", "gameday": "2023-09-07",
+        "gametime": "20:20", "away_team": "DET", "away_score": "21",
+        "home_team": "JAX", "home_score": "20", "location": "Home",
+        "overtime": "0",
+    }
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT COUNT(*) FROM nfl_games;")
+        before = cursor.fetchone()[0]
+    with pytest.raises(ValueError, match="conflicting matchup"):
+        ingest_nflverse_games(
+            connection,
+            rows=(conflict,),
+            team_identities=identities,
+            source_asset="identity-conflict-test",
+            source_sha256=digest,
+            retrieved_at=retrieved_at,
+            season_from=2023,
+            season_to=2023,
+        )
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT COUNT(*) FROM nfl_games;")
+        assert cursor.fetchone()[0] == before
+        cursor.execute(
+            """
+            SELECT home.current_abbreviation, away.current_abbreviation
+            FROM game_sources source
+            JOIN games game ON game.game_id = source.game_id
+            JOIN nfl_team_profiles home ON home.team_id = game.home_team_id
+            JOIN nfl_team_profiles away ON away.team_id = game.away_team_id
+            WHERE source.source_name = 'nflverse'
+              AND source.external_game_id = '2023_01_DET_KC';
+            """
+        )
+        assert cursor.fetchone() == ("KC", "DET")

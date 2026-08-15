@@ -47,8 +47,9 @@ REVIEWED_TIMESTAMP_OVERRIDES = {
         corrected_gametime="09:30",
         reason="nflverse encoded the Wembley kickoff twelve hours late",
         provenance=(
-            "NFL published schedule reviewed in nflverse 2018-2025 "
-            "coverage audit"
+            "docs/architecture/nflverse_2018_2025_coverage_audit.md; "
+            "https://www.nfl.com/news/nfl-announces-times-dates-for-2018-"
+            "london-games-0ap3000000927291"
         ),
     ),
     (SOURCE_NAME, "2018_08_PHI_JAX"): ReviewedTimestampOverride(
@@ -60,8 +61,9 @@ REVIEWED_TIMESTAMP_OVERRIDES = {
         corrected_gametime="09:30",
         reason="nflverse encoded the Wembley kickoff twelve hours late",
         provenance=(
-            "NFL published schedule reviewed in nflverse 2018-2025 "
-            "coverage audit"
+            "docs/architecture/nflverse_2018_2025_coverage_audit.md; "
+            "https://www.nfl.com/news/nfl-announces-times-dates-for-2018-"
+            "london-games-0ap3000000927291"
         ),
     ),
 }
