@@ -22,6 +22,15 @@ def test_wrapper_uses_only_authoritative_project_paths() -> None:
     assert "$env:PYTHONPATH = $SourcePath" in wrapper
 
 
+def test_wrapper_logging_allows_and_preserves_empty_output_lines() -> None:
+    wrapper = _wrapper()
+    write_log = wrapper.index("function Write-Log")
+    logging_loop = wrapper.index("foreach ($OutputLine in $PreviewOutput)")
+
+    assert "[AllowEmptyString()]" in wrapper[write_log:logging_loop]
+    assert 'Write-Log "$OutputLine"' in wrapper[logging_loop:]
+
+
 def test_wrapper_checks_opening_before_preview_generation() -> None:
     wrapper = _wrapper()
     opening_check = wrapper.index("Get-ScheduledTask -TaskName")

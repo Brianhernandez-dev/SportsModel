@@ -32,6 +32,7 @@ $LogPath = Join-Path $LogDirectory "preview_$TargetDate.log"
 function Write-Log {
     param(
         [Parameter(Mandatory)]
+        [AllowEmptyString()]
         [string]$Message
     )
 
