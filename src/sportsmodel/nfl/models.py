@@ -93,6 +93,12 @@ class NflGameSourceRecord:
         for score in (self.home_score, self.away_score):
             if score is not None and score < 0:
                 raise ValueError("scores cannot be negative")
+        if (
+            self.season_type is NflSeasonType.POSTSEASON
+            and self.status is NflGameStatus.FINAL
+            and self.home_score == self.away_score
+        ):
+            raise ValueError("postseason games cannot end in a tie")
 
 
 @dataclass(frozen=True)

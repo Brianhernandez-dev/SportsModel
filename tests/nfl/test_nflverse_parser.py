@@ -10,6 +10,7 @@ from sportsmodel.nfl.models import (
     NflSeasonType,
 )
 from sportsmodel.nfl.nflverse_parser import (
+    REVIEWED_TIMESTAMP_OVERRIDES,
     build_nflverse_team_identity_index,
     parse_nflverse_game_records,
     parse_nflverse_team_game_statistics_records,
@@ -247,3 +248,61 @@ def test_parses_stable_team_game_statistics(
     assert dallas.rushing_yards == 119
     assert dallas.fumbles_lost == 1
     assert dallas.penalty_yards == 42
+
+
+@pytest.mark.parametrize(
+    ("game_id", "gameday"),
+    (
+        ("2018_07_TEN_LAC", "2018-10-21"),
+        ("2018_08_PHI_JAX", "2018-10-28"),
+    ),
+)
+def test_wembley_timestamp_is_corrected_only_by_reviewed_identity(
+    team_identities, game_id, gameday
+) -> None:
+    identities = dict(team_identities)
+    identities.update(TEN="2100", LAC="4400")
+    row = {
+        "game_id": game_id,
+        "season": "2018",
+        "game_type": "REG",
+        "week": "7" if "_07_" in game_id else "8",
+        "gameday": gameday,
+        "gametime": "21:30",
+        "away_team": "TEN" if "TEN_LAC" in game_id else "PHI",
+        "away_score": "20",
+        "home_team": "LAC" if "TEN_LAC" in game_id else "JAX",
+        "home_score": "21",
+        "location": "Neutral",
+        "overtime": "0",
+    }
+    game = parse_nflverse_game_records(
+        [row], team_identities=identities
+    )[0]
+    assert game.scheduled_start_time.hour == 9
+    assert row["gametime"] == "21:30"
+    assert ("nflverse", game_id) in REVIEWED_TIMESTAMP_OVERRIDES
+
+
+def test_neutral_late_game_has_no_generic_timestamp_correction(
+    fixture_data, team_identities
+) -> None:
+    row = deepcopy(_case(fixture_data, "neutral_site_regular_final"))
+    row["gametime"] = "21:30"
+    game = parse_nflverse_game_records([row], team_identities=team_identities)[0]
+    assert game.scheduled_start_time.hour == 21
+
+
+def test_reviewed_override_rejects_unexpected_provider_evidence(
+    fixture_data, team_identities
+) -> None:
+    row = deepcopy(_case(fixture_data, "neutral_site_regular_final"))
+    row.update(
+        game_id="2018_08_PHI_JAX",
+        season="2018",
+        week="8",
+        gameday="2018-10-28",
+        gametime="20:30",
+    )
+    with pytest.raises(ValueError, match="does not match provider evidence"):
+        parse_nflverse_game_records([row], team_identities=team_identities)

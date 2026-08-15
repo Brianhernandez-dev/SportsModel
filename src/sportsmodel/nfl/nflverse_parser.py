@@ -1,4 +1,5 @@
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from datetime import date, datetime, time
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -20,6 +21,49 @@ _POSTSEASON_LABELS = {
     "DIV": "Divisional",
     "CON": "Conference Championship",
     "SB": "Super Bowl",
+}
+
+
+@dataclass(frozen=True)
+class ReviewedTimestampOverride:
+    source_name: str
+    external_game_id: str
+    provider_gameday: str
+    provider_gametime: str
+    corrected_gameday: str
+    corrected_gametime: str
+    reason: str
+    provenance: str
+
+
+# Reviewed, identity-specific corrections. This is deliberately not a heuristic.
+REVIEWED_TIMESTAMP_OVERRIDES = {
+    (SOURCE_NAME, "2018_07_TEN_LAC"): ReviewedTimestampOverride(
+        source_name=SOURCE_NAME,
+        external_game_id="2018_07_TEN_LAC",
+        provider_gameday="2018-10-21",
+        provider_gametime="21:30",
+        corrected_gameday="2018-10-21",
+        corrected_gametime="09:30",
+        reason="nflverse encoded the Wembley kickoff twelve hours late",
+        provenance=(
+            "NFL published schedule reviewed in nflverse 2018-2025 "
+            "coverage audit"
+        ),
+    ),
+    (SOURCE_NAME, "2018_08_PHI_JAX"): ReviewedTimestampOverride(
+        source_name=SOURCE_NAME,
+        external_game_id="2018_08_PHI_JAX",
+        provider_gameday="2018-10-28",
+        provider_gametime="21:30",
+        corrected_gameday="2018-10-28",
+        corrected_gametime="09:30",
+        reason="nflverse encoded the Wembley kickoff twelve hours late",
+        provenance=(
+            "NFL published schedule reviewed in nflverse 2018-2025 "
+            "coverage audit"
+        ),
+    ),
 }
 
 
@@ -201,9 +245,23 @@ def _normalize_game_type(value: str) -> tuple[NflSeasonType, str]:
 
 
 def _parse_scheduled_start(row: Mapping[str, Any]) -> datetime:
+    gameday = _required_text(row, "gameday")
+    gametime = _required_text(row, "gametime")
+    external_game_id = _required_text(row, "game_id")
+    override = REVIEWED_TIMESTAMP_OVERRIDES.get((SOURCE_NAME, external_game_id))
+    if override is not None:
+        if (gameday, gametime) != (
+            override.provider_gameday,
+            override.provider_gametime,
+        ):
+            raise ValueError(
+                "Reviewed timestamp override does not match provider evidence"
+            )
+        gameday = override.corrected_gameday
+        gametime = override.corrected_gametime
     try:
-        game_date = date.fromisoformat(_required_text(row, "gameday"))
-        game_time = time.fromisoformat(_required_text(row, "gametime"))
+        game_date = date.fromisoformat(gameday)
+        game_time = time.fromisoformat(gametime)
     except ValueError as error:
         raise ValueError("Invalid nflverse gameday or gametime") from error
     return datetime.combine(
