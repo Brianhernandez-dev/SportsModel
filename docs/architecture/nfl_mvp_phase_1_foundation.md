@@ -109,6 +109,27 @@ Important repository facts:
     clean-bootstrap schema audit is therefore required before writing the
     first NFL migration.
 
+### Foundation DDL audit (2026-08-14)
+
+The audit confirmed that numbered migrations do not create `teams`, `games`,
+`historical_games`, or `sportsbooks`. Migration `003` fully creates
+`game_sources`; later migrations only alter or reference the other tables.
+Current repositories establish these minimum pre-migration contracts:
+
+- `teams(team_id PK, team_name UNIQUE NOT NULL)`;
+- `games(game_id PK, game_date, home_team_id FK, away_team_id FK)`;
+- `sportsbooks(sportsbook_id PK, name UNIQUE NOT NULL)`; and
+- `game_sources(game_source_id PK, game_id FK, source_name,
+  external_game_id, UNIQUE(source_name, external_game_id))`.
+
+Migrations `001`, `002`, `008`, and `011` add the current game columns and
+indexes. Because the migration runner only creates `schema_migrations`, an
+empty PostgreSQL database cannot apply migrations `001-021` without a base
+schema supplied out of band. NFL migration tests therefore use the smallest
+test-only foundation fixture at
+`tests/fixtures/database/sportsmodel_foundation_schema.sql`. It is not a new
+production bootstrap mechanism and must not be applied to production.
+
 ## 4. Reuse matrix
 
 | Subsystem | Classification | Phase 1 decision |

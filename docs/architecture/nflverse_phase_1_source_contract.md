@@ -234,7 +234,26 @@ Each case records source, season, game ID, retrieval date at corpus level, and
 transformation. Only selected source columns are retained. Empty CSV cells are
 represented as JSON null; other values are unchanged.
 
-## Coverage checks required before database work
+## Persistence identity decision
+
+The Phase 1 persistence seed maps each of the 32 distinct nflverse `team_id`
+values to one project-owned UUID franchise key. The key is assigned once and
+is not computed from nflverse data, abbreviation, city, or nickname.
+
+The teams release represents relocation aliases with the same stable source
+ID: STL/LA/LAR use `2510`, OAK/LV use `2520`, and SD/LAC use `4400`. Persistence
+stores one `(source_name='nflverse', external_team_id)` mapping per stable ID;
+the current source name is descriptive only. Alias names therefore cannot
+create additional franchises. Source validity dates are omitted because the
+inspected release does not provide authoritative effective dates for alias
+rows. Season-specific project names remain in `nfl_team_seasons`.
+
+The foundational production DDL for `teams`, `games`, and `sportsbooks` is
+still absent from numbered migrations. Migration `022` is additive and assumes
+the established shared tables; disposable tests use the documented test-only
+foundation fixture rather than inventing a production bootstrap history.
+
+## Coverage checks required before historical game persistence
 
 Before migrations or persistence are implemented, inspect every 2018-2025
 release and report:
@@ -248,6 +267,6 @@ release and report:
 - correction/retrieval strategy and asset hashes; and
 - preseason availability if retention remains desired.
 
-This source contract is sufficient for pure parsing and domain records. It is
-not yet approval to create database tables, perform a historical backfill, or
-operate a live ingestion workflow.
+This source contract now supports the approved canonical NFL team identity
+tables only. It is not approval to persist NFL games or statistics, perform a
+historical backfill, or operate a live ingestion workflow.
