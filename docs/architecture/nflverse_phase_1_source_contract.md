@@ -148,16 +148,16 @@ special-teams, kicking, punting, return, fumble, and penalty aggregates.
 | `opponent_team` | abbreviation | Opponent alias | Required | Resolve through team alias index | Does not directly say home/away. |
 | `completions` | integer | Completed passes | Required | Non-negative integer | PBP-derived. |
 | `attempts` | integer | Official pass attempts | Required | Non-negative integer; completions cannot exceed attempts | nflverse definition excludes sacks. |
-| `passing_yards` | integer | Team passing yards | Required | Non-negative integer | Net/team definition must be validated against desired model meaning. |
+| `passing_yards` | integer | Team passing yards | Required | Signed integer | The provider contract does not guarantee nonnegative game totals; net/team definition must be validated against desired model meaning. |
 | `passing_tds` | integer | Passing touchdowns | Required | Non-negative integer | Does not equal all offensive TDs. |
 | `passing_interceptions` | integer | Interceptions thrown | Required | Non-negative integer | Used as one turnover component. |
 | `sacks_suffered` | integer | Sacks taken | Required | Non-negative integer | Sack yards are separately available upstream. |
 | `carries` | integer | Official team rush attempts | Required | Non-negative integer | Includes scrambles and kneel-downs per nflverse dictionary. |
-| `rushing_yards` | integer | Team rushing yards | Required | Non-negative integer | PBP-derived. |
+| `rushing_yards` | integer | Team rushing yards | Required | Signed integer | PBP-derived; the provider contract does not guarantee nonnegative game totals. |
 | `rushing_tds` | integer | Rushing touchdowns | Required | Non-negative integer | Does not include receiving/return TDs. |
 | `fumbles_lost_total` | integer | Total fumbles lost | Required | Non-negative integer | Selected over narrower passing/rushing-only fumble fields. |
-| `penalties` | integer | Team penalties | Required | Non-negative integer | Verify correction behavior across seasons. |
-| `penalty_yards` | integer | Team penalty yards | Required | Non-negative integer | PBP-derived. |
+| `penalties` | nullable integer | Team penalties | Optional/nullable evidence | Preserve missing as null; when present, require a non-negative integer | Zero is a real observed value and must not be conflated with missing evidence; verify correction behavior across seasons. |
+| `penalty_yards` | nullable integer | Team penalty yards | Optional/nullable evidence | Preserve missing as null; when present, require a non-negative integer | Zero is a real observed value and must not be conflated with missing evidence; PBP-derived. |
 
 The record deliberately does not expose Polars types, lazy frames, or
 nflreadpy metadata.
@@ -267,6 +267,6 @@ release and report:
 - correction/retrieval strategy and asset hashes; and
 - preseason availability if retention remains desired.
 
-This source contract now supports the approved canonical NFL team identity
-tables only. It is not approval to persist NFL games or statistics, perform a
-historical backfill, or operate a live ingestion workflow.
+This source contract supplies the provider boundary referenced by the
+canonical game and team-game statistics persistence implementations. It does
+not authorize a historical backfill or a live ingestion workflow.

@@ -149,8 +149,8 @@ class NflTeamGameStatisticsSourceRecord:
     rushing_yards: int
     rushing_touchdowns: int
     fumbles_lost: int
-    penalties: int
-    penalty_yards: int
+    penalties: int | None
+    penalty_yards: int | None
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -167,18 +167,55 @@ class NflTeamGameStatisticsSourceRecord:
         for field_name in (
             "completions",
             "pass_attempts",
-            "passing_yards",
             "passing_touchdowns",
             "passing_interceptions",
             "sacks_suffered",
             "carries",
-            "rushing_yards",
             "rushing_touchdowns",
             "fumbles_lost",
-            "penalties",
-            "penalty_yards",
         ):
             if getattr(self, field_name) < 0:
+                raise ValueError(f"{field_name} cannot be negative")
+        for field_name in ("penalties", "penalty_yards"):
+            value = getattr(self, field_name)
+            if value is not None and value < 0:
+                raise ValueError(f"{field_name} cannot be negative")
+        if self.completions > self.pass_attempts:
+            raise ValueError("completions cannot exceed pass attempts")
+
+
+@dataclass(frozen=True)
+class NflTeamGameStatistics:
+    """Provider-independent canonical statistics for one team in one game."""
+
+    game_id: int
+    team_id: int
+    completions: int
+    pass_attempts: int
+    passing_yards: int
+    passing_touchdowns: int
+    passing_interceptions: int
+    sacks_suffered: int
+    carries: int
+    rushing_yards: int
+    rushing_touchdowns: int
+    fumbles_lost: int
+    penalties: int | None
+    penalty_yards: int | None
+
+    def __post_init__(self) -> None:
+        if self.game_id <= 0 or self.team_id <= 0:
+            raise ValueError("canonical game and team IDs must be positive")
+        for field_name in (
+            "completions", "pass_attempts",
+            "passing_touchdowns", "passing_interceptions", "sacks_suffered",
+            "carries", "rushing_touchdowns", "fumbles_lost",
+        ):
+            if getattr(self, field_name) < 0:
+                raise ValueError(f"{field_name} cannot be negative")
+        for field_name in ("penalties", "penalty_yards"):
+            value = getattr(self, field_name)
+            if value is not None and value < 0:
                 raise ValueError(f"{field_name} cannot be negative")
         if self.completions > self.pass_attempts:
             raise ValueError("completions cannot exceed pass attempts")
