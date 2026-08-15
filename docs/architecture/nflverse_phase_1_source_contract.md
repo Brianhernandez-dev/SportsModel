@@ -267,6 +267,6 @@ release and report:
 - correction/retrieval strategy and asset hashes; and
 - preseason availability if retention remains desired.
 
-This source contract now supports the approved canonical NFL team identity
-tables only. It is not approval to persist NFL games or statistics, perform a
-historical backfill, or operate a live ingestion workflow.
+This source contract supplies the provider boundary used by the separately
+approved canonical game and team-game statistics persistence slices. It is not
+approval to perform a historical backfill or operate a live ingestion workflow.

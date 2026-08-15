@@ -200,9 +200,15 @@ def _parse_team_statistics(
     *,
     team_identities: Mapping[str, str],
 ) -> NflTeamGameStatisticsSourceRecord:
-    season_type, _ = _normalize_game_type(
-        _required_text(row, "season_type")
-    )
+    source_season_type = _required_text(row, "season_type")
+    if source_season_type == "REG":
+        season_type = NflSeasonType.REGULAR
+    elif source_season_type == "POST":
+        season_type = NflSeasonType.POSTSEASON
+    else:
+        raise ValueError(
+            f"Unsupported nflverse team-stat season type: {source_season_type!r}"
+        )
     return NflTeamGameStatisticsSourceRecord(
         source_name=SOURCE_NAME,
         external_game_id=_required_text(row, "game_id"),
@@ -229,8 +235,8 @@ def _parse_team_statistics(
         rushing_yards=_required_integer(row, "rushing_yards"),
         rushing_touchdowns=_required_integer(row, "rushing_tds"),
         fumbles_lost=_required_integer(row, "fumbles_lost_total"),
-        penalties=_required_integer(row, "penalties"),
-        penalty_yards=_required_integer(row, "penalty_yards"),
+        penalties=_optional_integer(row, "penalties"),
+        penalty_yards=_optional_integer(row, "penalty_yards"),
     )
 
 
@@ -296,6 +302,10 @@ def _required_text(row: Mapping[str, Any], field_name: str) -> str:
 def _required_integer(row: Mapping[str, Any], field_name: str) -> int:
     value = row.get(field_name)
     if isinstance(value, bool):
+        raise ValueError(f"{field_name} must be an integer")
+    if isinstance(value, float) and not value.is_integer():
+        raise ValueError(f"{field_name} must be an integer")
+    if isinstance(value, str) and any(mark in value for mark in (".", "e", "E")):
         raise ValueError(f"{field_name} must be an integer")
     try:
         parsed = int(value)
