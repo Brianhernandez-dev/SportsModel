@@ -13,6 +13,9 @@ data/models/*.joblib
 data/models/*_report.json
 
 *.egg-info/
+.audit-cache/
+.pytest-temp/
+.pytest_cache/
 
 # Superseded versioned walk-forward evaluation copies
 data/models/mlb_moneyline_walk_forward_report_v*.json
