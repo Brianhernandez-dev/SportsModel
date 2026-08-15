@@ -156,8 +156,8 @@ special-teams, kicking, punting, return, fumble, and penalty aggregates.
 | `rushing_yards` | integer | Team rushing yards | Required | Signed integer | PBP-derived; the provider contract does not guarantee nonnegative game totals. |
 | `rushing_tds` | integer | Rushing touchdowns | Required | Non-negative integer | Does not include receiving/return TDs. |
 | `fumbles_lost_total` | integer | Total fumbles lost | Required | Non-negative integer | Selected over narrower passing/rushing-only fumble fields. |
-| `penalties` | integer | Team penalties | Required | Non-negative integer | Verify correction behavior across seasons. |
-| `penalty_yards` | integer | Team penalty yards | Required | Non-negative integer | PBP-derived. |
+| `penalties` | nullable integer | Team penalties | Optional/nullable evidence | Preserve missing as null; when present, require a non-negative integer | Zero is a real observed value and must not be conflated with missing evidence; verify correction behavior across seasons. |
+| `penalty_yards` | nullable integer | Team penalty yards | Optional/nullable evidence | Preserve missing as null; when present, require a non-negative integer | Zero is a real observed value and must not be conflated with missing evidence; PBP-derived. |
 
 The record deliberately does not expose Polars types, lazy frames, or
 nflreadpy metadata.
