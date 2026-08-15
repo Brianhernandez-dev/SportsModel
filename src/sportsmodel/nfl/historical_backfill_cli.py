@@ -45,6 +45,14 @@ class AssetProvenance:
     retrieved_at: str
 
 
+@dataclass(frozen=True)
+class PreparedHistoricalBackfill:
+    report: dict[str, Any]
+    plan: HistoricalBackfillPlan
+    team_identities: dict[str, str]
+    provenance: tuple[AssetProvenance, ...]
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Validate local nflverse historical assets without writes."
@@ -69,6 +77,27 @@ def build_historical_backfill_report(
     season_to: int = 2025,
 ) -> dict[str, Any]:
     """Read explicit local assets and return a deterministic dry-run report."""
+
+    return prepare_historical_backfill(
+        schedules_path=schedules_path,
+        teams_path=teams_path,
+        team_stats_dir=team_stats_dir,
+        retrieved_at=retrieved_at,
+        season_from=season_from,
+        season_to=season_to,
+    ).report
+
+
+def prepare_historical_backfill(
+    *,
+    schedules_path: Path,
+    teams_path: Path,
+    team_stats_dir: Path,
+    retrieved_at: str,
+    season_from: int = 2018,
+    season_to: int = 2025,
+) -> PreparedHistoricalBackfill:
+    """Read once and retain the exact plan and provenance used for validation."""
 
     _validate_inputs(retrieved_at, season_from, season_to, team_stats_dir)
     schedule_rows, schedule_provenance = _read_csv_asset(
@@ -97,6 +126,7 @@ def build_historical_backfill_report(
         rows, asset = _read_csv_asset(
             path, "team_statistics", season, retrieved_at
         )
+        _validate_annual_statistics_season(rows, path, season)
         all_stats.extend(rows)
         provenance.append(asset)
 
@@ -107,11 +137,17 @@ def build_historical_backfill_report(
         season_from=season_from,
         season_to=season_to,
     )
-    return _report_from_plan(
+    report = _report_from_plan(
         plan,
         schedule_asset_rows=len(schedule_rows),
         statistics_asset_rows=len(all_stats),
         provenance=provenance,
+    )
+    return PreparedHistoricalBackfill(
+        report=report,
+        plan=plan,
+        team_identities=dict(identities),
+        provenance=tuple(provenance),
     )
 
 
@@ -217,6 +253,25 @@ def _validate_inputs(
         raise HistoricalBackfillInputError(
             f"Team-statistics directory does not exist: {team_stats_dir}"
         )
+
+
+def _validate_annual_statistics_season(
+    rows: list[dict[str, str]], path: Path, expected_season: int
+) -> None:
+    for row in rows:
+        observed = row.get("season")
+        try:
+            parsed = int(observed)
+        except (TypeError, ValueError) as error:
+            raise HistoricalBackfillInputError(
+                f"Team-statistics asset {path} expected season "
+                f"{expected_season}, observed {observed!r}"
+            ) from error
+        if parsed != expected_season:
+            raise HistoricalBackfillInputError(
+                f"Team-statistics asset {path} expected season "
+                f"{expected_season}, observed {observed!r}"
+            )
 
 
 def _report_from_plan(

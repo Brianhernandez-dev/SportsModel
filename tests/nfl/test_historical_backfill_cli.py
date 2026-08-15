@@ -6,11 +6,15 @@ from pathlib import Path
 import socket
 import urllib.request
 
+import pytest
+
 from sportsmodel.nfl.historical_backfill_cli import (
     APPROVED_SCHEDULE_ROWS,
+    HistoricalBackfillInputError,
     build_historical_backfill_report,
     deterministic_json,
     main,
+    prepare_historical_backfill,
 )
 
 
@@ -127,6 +131,32 @@ def test_annual_stats_provenance_is_in_deterministic_season_order(tmp_path):
         season_from=2021, season_to=2023,
     )
     assert [item["season"] for item in report["provenance"][2:]] == [2021, 2022, 2023]
+
+
+def test_matching_physical_annual_season_prepares_successfully(tmp_path):
+    assets = _assets(tmp_path)
+    prepared = prepare_historical_backfill(
+        schedules_path=assets[0], teams_path=assets[1],
+        team_stats_dir=assets[2], retrieved_at=RETRIEVED_AT,
+        season_from=2023, season_to=2023,
+    )
+    assert prepared.report["backfill_ready"] is True
+
+
+def test_cross_year_row_in_annual_asset_fails_explicitly(tmp_path):
+    assets = _assets(tmp_path, season_from=2019, season_to=2020)
+    wrong_path = assets[2] / "stats_team_week_2019.csv"
+    _write_csv(wrong_path, [_stat(season=2020)], list(_stat()))
+    with pytest.raises(HistoricalBackfillInputError) as raised:
+        prepare_historical_backfill(
+            schedules_path=assets[0], teams_path=assets[1],
+            team_stats_dir=assets[2], retrieved_at=RETRIEVED_AT,
+            season_from=2019, season_to=2020,
+        )
+    message = str(raised.value)
+    assert str(wrong_path) in message
+    assert "expected season 2019" in message
+    assert "observed '2020'" in message
 
 
 def test_missing_required_annual_stats_file_is_explicit(tmp_path, capsys):

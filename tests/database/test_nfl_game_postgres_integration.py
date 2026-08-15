@@ -8,11 +8,6 @@ from pathlib import Path
 import psycopg2
 import pytest
 
-from sportsmodel.database.migrations import (
-    apply_pending_migrations,
-    discover_migrations,
-    ensure_schema_migrations_table,
-)
 from sportsmodel.database.nfl_game_repository import (
     list_nfl_games_by_season,
     load_nfl_game_by_id,
@@ -33,9 +28,6 @@ from sportsmodel.nfl.nflverse_parser import (
 
 
 ROOT = Path(__file__).parents[2]
-FOUNDATION = (
-    ROOT / "tests" / "fixtures" / "database" / "sportsmodel_foundation_schema.sql"
-)
 NFLVERSE_FIXTURE = (
     ROOT / "tests" / "fixtures" / "nflverse" / "phase_1_source_rows.json"
 )
@@ -45,53 +37,11 @@ NFLVERSE_FIXTURE = (
     not os.getenv("SPORTSMODEL_TEST_DATABASE_URL"),
     reason="requires disposable SPORTSMODEL_TEST_DATABASE_URL",
 )
-def test_migrations_and_nfl_game_ingestion_on_disposable_postgres() -> None:
-    connection = psycopg2.connect(os.environ["SPORTSMODEL_TEST_DATABASE_URL"])
+def test_migrations_and_nfl_game_ingestion_on_disposable_postgres(
+    initialized_nfl_test_database,
+) -> None:
+    connection = psycopg2.connect(initialized_nfl_test_database)
     try:
-        with connection.cursor() as cursor:
-            cursor.execute(FOUNDATION.read_text(encoding="utf-8-sig"))
-        connection.commit()
-        ensure_schema_migrations_table(connection)
-        connection.commit()
-        migrations = discover_migrations()
-        assert apply_pending_migrations(connection, migrations[:5]) == 5
-        # Migration 007 assumes at least one legacy odds snapshot exists so
-        # MIN/MAX(snapshot_time) can satisfy its NOT NULL started_at backfill.
-        # Reconstruct that approved legacy state without changing migration 007.
-        with connection.cursor() as cursor:
-            cursor.execute(
-                "INSERT INTO teams (team_name) VALUES ('Legacy Away') RETURNING team_id;"
-            )
-            away_team_id = cursor.fetchone()[0]
-            cursor.execute(
-                "INSERT INTO teams (team_name) VALUES ('Legacy Home') RETURNING team_id;"
-            )
-            home_team_id = cursor.fetchone()[0]
-            cursor.execute(
-                """
-                INSERT INTO games (game_date, home_team_id, away_team_id)
-                VALUES ('2025-01-01T00:00:00Z', %s, %s) RETURNING game_id;
-                """,
-                (home_team_id, away_team_id),
-            )
-            legacy_game_id = cursor.fetchone()[0]
-            cursor.execute(
-                "INSERT INTO sportsbooks (name) VALUES ('Legacy Book') RETURNING sportsbook_id;"
-            )
-            sportsbook_id = cursor.fetchone()[0]
-            cursor.execute(
-                """
-                INSERT INTO odds_market_snapshots (
-                    game_id, sportsbook_id, market_type, selection_name,
-                    price, snapshot_time
-                ) VALUES (%s, %s, 'h2h', 'Legacy Home', -110,
-                          '2025-01-01T00:00:00Z');
-                """,
-                (legacy_game_id, sportsbook_id),
-            )
-        connection.commit()
-        assert apply_pending_migrations(connection, migrations) == 19
-
         fixture_bytes = NFLVERSE_FIXTURE.read_bytes()
         fixture = json.loads(fixture_bytes.decode("utf-8-sig"))
         identities = build_nflverse_team_identity_index(
