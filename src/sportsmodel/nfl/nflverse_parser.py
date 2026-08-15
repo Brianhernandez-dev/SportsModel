@@ -225,14 +225,14 @@ def _parse_team_statistics(
         ),
         completions=_required_integer(row, "completions"),
         pass_attempts=_required_integer(row, "attempts"),
-        passing_yards=_required_integer(row, "passing_yards"),
+        passing_yards=_required_signed_integer(row, "passing_yards"),
         passing_touchdowns=_required_integer(row, "passing_tds"),
         passing_interceptions=_required_integer(
             row, "passing_interceptions"
         ),
         sacks_suffered=_required_integer(row, "sacks_suffered"),
         carries=_required_integer(row, "carries"),
-        rushing_yards=_required_integer(row, "rushing_yards"),
+        rushing_yards=_required_signed_integer(row, "rushing_yards"),
         rushing_touchdowns=_required_integer(row, "rushing_tds"),
         fumbles_lost=_required_integer(row, "fumbles_lost_total"),
         penalties=_optional_integer(row, "penalties"),
@@ -300,6 +300,13 @@ def _required_text(row: Mapping[str, Any], field_name: str) -> str:
 
 
 def _required_integer(row: Mapping[str, Any], field_name: str) -> int:
+    parsed = _required_signed_integer(row, field_name)
+    if parsed < 0:
+        raise ValueError(f"{field_name} cannot be negative")
+    return parsed
+
+
+def _required_signed_integer(row: Mapping[str, Any], field_name: str) -> int:
     value = row.get(field_name)
     if isinstance(value, bool):
         raise ValueError(f"{field_name} must be an integer")
@@ -311,8 +318,6 @@ def _required_integer(row: Mapping[str, Any], field_name: str) -> int:
         parsed = int(value)
     except (TypeError, ValueError) as error:
         raise ValueError(f"{field_name} must be an integer") from error
-    if parsed < 0:
-        raise ValueError(f"{field_name} cannot be negative")
     return parsed
 
 

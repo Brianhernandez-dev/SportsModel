@@ -2,6 +2,7 @@ from copy import deepcopy
 
 import pytest
 
+from sportsmodel.nfl.models import NflTeamGameStatistics
 from sportsmodel.nfl.nflverse_parser import (
     parse_nflverse_team_game_statistics_records,
 )
@@ -26,6 +27,23 @@ def test_zero_values_and_nullable_penalties_are_preserved() -> None:
     assert record.fumbles_lost == 0
     assert record.penalties is None
     assert record.penalty_yards is None
+
+
+def test_negative_passing_and_rushing_yardage_are_preserved() -> None:
+    row = deepcopy(ROW)
+    row["passing_yards"] = "-7"
+    row["rushing_yards"] = -3
+    record = parse_nflverse_team_game_statistics_records(
+        (row,), team_identities=IDENTITIES)[0]
+    assert record.passing_yards == -7
+    assert record.rushing_yards == -3
+    canonical = NflTeamGameStatistics(
+        game_id=1, team_id=2, completions=0, pass_attempts=0,
+        passing_yards=-7, passing_touchdowns=0, passing_interceptions=0,
+        sacks_suffered=0, carries=0, rushing_yards=-3,
+        rushing_touchdowns=0, fumbles_lost=0, penalties=None,
+        penalty_yards=None)
+    assert (canonical.passing_yards, canonical.rushing_yards) == (-7, -3)
 
 
 @pytest.mark.parametrize("field,value", [

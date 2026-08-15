@@ -14,6 +14,10 @@ def test_migration_024_is_additive_typed_and_canonical() -> None:
     assert "REFERENCES teams(team_id)" in sql
     assert "raw_payload JSONB NOT NULL" in sql
     assert "completions SMALLINT NOT NULL" in sql
+    assert "passing_yards SMALLINT NOT NULL," in sql
+    assert "rushing_yards SMALLINT NOT NULL," in sql
+    assert "passing_yards >= 0" not in sql
+    assert "rushing_yards >= 0" not in sql
     assert "CHECK (completions <= pass_attempts)" in sql
     assert "ALTER TABLE" not in sql
     assert "DELETE FROM" not in sql

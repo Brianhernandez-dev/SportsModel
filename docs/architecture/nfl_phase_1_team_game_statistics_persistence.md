@@ -21,9 +21,11 @@ it does not copy scores, kickoff, status, opponent, home/away, or provider IDs.
 | `penalties` | `penalties` | team penalties; nullable when absent |
 | `penalty_yards` | `penalty_yards` | team penalty yards; nullable when absent |
 
-Counts use typed, nonnegative `SMALLINT` columns. Zero is preserved. Penalty
-fields are nullable so missing historical evidence is not silently converted
-to zero. Completions cannot exceed attempts.
+All values use typed `SMALLINT` columns. True counts and volumes are
+nonnegative, while passing and rushing yardage are signed because the provider
+contract does not guarantee nonnegative game totals. Zero is preserved.
+Penalty fields are nullable so missing historical evidence is not silently
+converted to zero. Completions cannot exceed attempts.
 
 Fantasy metrics, player/receiver shares, EPA, CPOE, air yards, defensive
 derived values, returns, kicking/punting splits, timeouts, points, total yards,
@@ -36,9 +38,10 @@ for canonical persistence. Scores remain exclusively in `nfl_games`.
 The adapter resolves `team` and `opponent_team` aliases through the stable
 nflverse team mapping. It then requires exactly one existing canonical game
 with the same season, season type, week, and unordered pair of participants.
-It never infers home/away and never creates a game. A provider game mapping, if
-present, must agree. Missing, conflicting, or ambiguous resolution is a hard
-run failure. This includes stats for a cancelled/absent game such as 2022
+It never infers home/away and never creates a game. The nflverse provider game
+mapping must exist and must resolve to that same canonical game. Mapping
+absence, disagreement, conflicting participants, or ambiguous resolution is a
+hard run failure. This includes stats for a cancelled/absent game such as 2022
 BUF-CIN: no row is synthesized or quarantined because there is no canonical
 identity to attach durable accepted evidence to.
 

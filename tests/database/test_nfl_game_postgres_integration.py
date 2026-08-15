@@ -97,7 +97,7 @@ def test_migrations_and_nfl_game_ingestion_on_disposable_postgres() -> None:
         identities = build_nflverse_team_identity_index(
             parse_nflverse_team_records(fixture["teams"])
         )
-        identities.update(TEN="2100", LAC="4400")
+        identities.update(TEN="2100", LAC="4400", DEN="1400")
         wembley_rows = (
             {
                 "game_id": "2018_07_TEN_LAC", "season": "2018",
@@ -122,6 +122,12 @@ def test_migrations_and_nfl_game_ingestion_on_disposable_postgres() -> None:
                 "game_type": "REG", "week": "1", "gameday": "2025-09-04",
                 "gametime": "20:20", "away_team": "DAL", "away_score": "20",
                 "home_team": "PHI", "home_score": "24", "location": "Home",
+                "overtime": "0",
+            }, {
+                "game_id": "2019_01_DEN_OAK", "season": "2019",
+                "game_type": "REG", "week": "1", "gameday": "2019-09-09",
+                "gametime": "22:20", "away_team": "DEN", "away_score": "16",
+                "home_team": "OAK", "home_score": "24", "location": "Home",
                 "overtime": "0",
             },)
         )
@@ -155,9 +161,9 @@ def test_migrations_and_nfl_game_ingestion_on_disposable_postgres() -> None:
             season_to=2026,
         )
 
-        assert first.rows_inserted == 8
+        assert first.rows_inserted == 9
         assert second.rows_inserted == 0
-        assert second.rows_updated == 8
+        assert second.rows_updated == 9
         assert scheduled.rows_inserted == 1
 
         with connection.cursor() as cursor:
@@ -166,11 +172,11 @@ def test_migrations_and_nfl_game_ingestion_on_disposable_postgres() -> None:
             cursor.execute("SELECT COUNT(*) FROM nfl_team_profiles;")
             assert cursor.fetchone()[0] == 32
             cursor.execute("SELECT COUNT(*) FROM nfl_games;")
-            assert cursor.fetchone()[0] == 9
+            assert cursor.fetchone()[0] == 10
             cursor.execute("SELECT COUNT(*) FROM game_sources WHERE source_name = 'nflverse';")
-            assert cursor.fetchone()[0] == 9
+            assert cursor.fetchone()[0] == 10
             cursor.execute("SELECT COUNT(*) FROM nfl_game_source_observations;")
-            assert cursor.fetchone()[0] == 17
+            assert cursor.fetchone()[0] == 19
             cursor.execute(
                 """
                 SELECT observation.provider_gametime,
@@ -247,23 +253,19 @@ def test_migrations_and_nfl_game_ingestion_on_disposable_postgres() -> None:
 def _assert_team_statistics_persistence(
     connection, rows, identities, digest, retrieved_at
 ) -> None:
+    signed_rows = deepcopy(rows)
+    signed_rows[0]["passing_yards"] = "-7"
+    signed_rows[0]["rushing_yards"] = "-3"
     first = ingest_nflverse_team_game_statistics(
-        connection, rows=rows, team_identities=identities,
+        connection, rows=signed_rows, team_identities=identities,
         source_asset="team-stats-first", source_sha256=digest,
         retrieved_at=retrieved_at)
     repeat = ingest_nflverse_team_game_statistics(
-        connection, rows=rows, team_identities=identities,
+        connection, rows=signed_rows, team_identities=identities,
         source_asset="team-stats-repeat", source_sha256=digest,
         retrieved_at=retrieved_at)
     assert (first.rows_inserted, first.rows_updated) == (2, 0)
     assert (repeat.rows_inserted, repeat.rows_updated) == (0, 2)
-    corrected = deepcopy(rows[0])
-    corrected["passing_yards"] = "199"
-    correction = ingest_nflverse_team_game_statistics(
-        connection, rows=(corrected,), team_identities=identities,
-        source_asset="team-stats-correction", source_sha256=digest,
-        retrieved_at=retrieved_at)
-    assert correction.rows_updated == 1
     with connection.cursor() as cursor:
         cursor.execute(
             "SELECT game_id FROM game_sources WHERE source_name = 'nflverse' "
@@ -273,9 +275,21 @@ def _assert_team_statistics_persistence(
             "SELECT team_id FROM nfl_team_sources WHERE source_name = 'nflverse' "
             "AND external_team_id = '1200';")
         dal_id = cursor.fetchone()[0]
+        signed = load_nfl_team_game_statistics(
+            cursor, game_id=game_id, team_id=dal_id)
+        assert signed.passing_yards == -7
+        assert signed.rushing_yards == -3
+    corrected = deepcopy(signed_rows[0])
+    corrected["passing_yards"] = "-9"
+    correction = ingest_nflverse_team_game_statistics(
+        connection, rows=(corrected,), team_identities=identities,
+        source_asset="team-stats-correction", source_sha256=digest,
+        retrieved_at=retrieved_at)
+    assert correction.rows_updated == 1
+    with connection.cursor() as cursor:
         canonical = load_nfl_team_game_statistics(
             cursor, game_id=game_id, team_id=dal_id)
-        assert canonical.passing_yards == 199
+        assert canonical.passing_yards == -9
         assert len(list_nfl_team_game_statistics_for_game(
             cursor, game_id=game_id)) == 2
         assert len(list_nfl_team_game_statistics_for_team_season(
@@ -293,9 +307,32 @@ def _assert_team_statistics_persistence(
             (first.nfl_ingestion_run_id,))
         raw_payload, raw_hash = cursor.fetchone()
         expected_json = json.dumps(
-            rows[0], sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-        assert raw_payload == rows[0]
+            signed_rows[0], sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        assert raw_payload == signed_rows[0]
         assert raw_hash == sha256(expected_json.encode("utf-8")).hexdigest()
+    alias_row = dict(
+        signed_rows[0], season="2019", week="1", team="OAK",
+        opponent_team="DEN", game_id="2019_01_DEN_OAK")
+    alias_result = ingest_nflverse_team_game_statistics(
+        connection, rows=(alias_row,), team_identities=identities,
+        source_asset="team-stats-oak-alias", source_sha256=digest,
+        retrieved_at=retrieved_at)
+    assert alias_result.rows_inserted == 1
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT profile.current_abbreviation, source.external_team_id "
+            "FROM nfl_team_game_statistics stats "
+            "JOIN nfl_team_profiles profile ON profile.team_id = stats.team_id "
+            "JOIN nfl_team_sources source ON source.team_id = stats.team_id "
+            "WHERE source.source_name = 'nflverse' AND stats.game_id = "
+            "(SELECT game_id FROM game_sources WHERE source_name = 'nflverse' "
+            "AND external_game_id = '2019_01_DEN_OAK');")
+        assert cursor.fetchone() == ("LV", "2520")
+        with pytest.raises(psycopg2.errors.CheckViolation):
+            cursor.execute(
+                "UPDATE nfl_team_game_statistics SET carries = -1 "
+                "WHERE game_id = %s AND team_id = %s;", (game_id, dal_id))
+    connection.rollback()
     bad = deepcopy(rows[1])
     bad["game_id"] = "2025_02_DAL_PHI"
     bad["week"] = "2"
@@ -309,7 +346,7 @@ def _assert_team_statistics_persistence(
     with connection.cursor() as cursor:
         canonical = load_nfl_team_game_statistics(
             cursor, game_id=game_id, team_id=dal_id)
-        assert canonical.passing_yards == 199
+        assert canonical.passing_yards == -9
         cursor.execute(
             "SELECT status FROM nfl_ingestion_runs "
             "WHERE source_asset = 'team-stats-failed';")

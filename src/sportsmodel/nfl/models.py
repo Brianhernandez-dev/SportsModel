@@ -167,12 +167,10 @@ class NflTeamGameStatisticsSourceRecord:
         for field_name in (
             "completions",
             "pass_attempts",
-            "passing_yards",
             "passing_touchdowns",
             "passing_interceptions",
             "sacks_suffered",
             "carries",
-            "rushing_yards",
             "rushing_touchdowns",
             "fumbles_lost",
         ):
@@ -209,9 +207,9 @@ class NflTeamGameStatistics:
         if self.game_id <= 0 or self.team_id <= 0:
             raise ValueError("canonical game and team IDs must be positive")
         for field_name in (
-            "completions", "pass_attempts", "passing_yards",
+            "completions", "pass_attempts",
             "passing_touchdowns", "passing_interceptions", "sacks_suffered",
-            "carries", "rushing_yards", "rushing_touchdowns", "fumbles_lost",
+            "carries", "rushing_touchdowns", "fumbles_lost",
         ):
             if getattr(self, field_name) < 0:
                 raise ValueError(f"{field_name} cannot be negative")

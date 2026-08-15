@@ -1,4 +1,5 @@
-from dataclasses import replace
+import json
+from pathlib import Path
 
 import pytest
 
@@ -7,7 +8,13 @@ from sportsmodel.database.nfl_team_game_statistics_repository import (
     NflStatisticsGameNotFoundError,
     resolve_statistics_game,
 )
+from sportsmodel.database.nfl_team_repository import resolve_nfl_team_by_source
 from sportsmodel.nfl.models import NflSeasonType, NflTeamGameStatisticsSourceRecord
+from sportsmodel.nfl.nflverse_parser import (
+    build_nflverse_team_identity_index,
+    parse_nflverse_team_game_statistics_records,
+    parse_nflverse_team_records,
+)
 
 
 RECORD = NflTeamGameStatisticsSourceRecord(
@@ -64,6 +71,24 @@ def test_provider_game_mapping_must_match_resolved_game() -> None:
 
 
 def test_historical_alias_external_identity_is_provider_owned_not_canonical() -> None:
-    oak = replace(RECORD, team_external_id="2520")
-    lv = replace(RECORD, team_external_id="2520")
-    assert oak.team_external_id == lv.team_external_id
+    fixture_path = Path(__file__).parents[1] / "fixtures" / "nflverse" / "phase_1_source_rows.json"
+    fixture = json.loads(fixture_path.read_text(encoding="utf-8-sig"))
+    identities = build_nflverse_team_identity_index(
+        parse_nflverse_team_records(fixture["teams"]))
+    raw = dict(fixture["team_stats"][0])
+    oak = parse_nflverse_team_game_statistics_records(
+        (dict(raw, team="OAK"),), team_identities=identities)[0]
+    lv = parse_nflverse_team_game_statistics_records(
+        (dict(raw, team="LV"),), team_identities=identities)[0]
+    assert oak.team_external_id == lv.team_external_id == "2520"
+
+    canonical_row = (
+        101, "nfl_franchise_38f7d31e-ff94-48ec-905a-0c80ca64c6db", "LV", True)
+    oak_team = resolve_nfl_team_by_source(
+        Cursor([], provider_match=canonical_row), source_name="nflverse",
+        external_team_id=oak.team_external_id)
+    lv_team = resolve_nfl_team_by_source(
+        Cursor([], provider_match=canonical_row), source_name="nflverse",
+        external_team_id=lv.team_external_id)
+    assert oak_team == lv_team
+    assert oak_team.team_id == 101
