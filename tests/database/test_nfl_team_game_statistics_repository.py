@@ -1,11 +1,14 @@
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
 from sportsmodel.database.nfl_team_game_statistics_repository import (
+    GET_NFL_COMPLETED_GAMES_BEFORE_QUERY,
     NflStatisticsGameAmbiguousError,
     NflStatisticsGameNotFoundError,
+    PostgresNflTeamHistoryRepository,
     resolve_statistics_game,
 )
 from sportsmodel.database.nfl_team_repository import resolve_nfl_team_by_source
@@ -92,3 +95,69 @@ def test_historical_alias_external_identity_is_provider_owned_not_canonical() ->
         external_team_id=lv.team_external_id)
     assert oak_team == lv_team
     assert oak_team.team_id == 101
+
+
+def test_point_in_time_history_repository_passes_scope_and_maps_domain_row() -> None:
+    cutoff = datetime(2025, 9, 14, 20, 20, tzinfo=timezone.utc)
+    kickoff = datetime(2025, 9, 7, 20, 20, tzinfo=timezone.utc)
+    row = (
+        44, 2025, "regular", 1, "Week 1", kickoff, 10, 20,
+        "final", 24, 17, False, False, 20,
+        21, 31, 245, 2, 1, 3, 24, 112, 1, 0, 6, 55,
+    )
+    cursor = HistoryCursor([row])
+    connection = HistoryConnection(cursor)
+    repository = PostgresNflTeamHistoryRepository(
+        connection_factory=lambda: connection
+    )
+
+    result = repository.get_completed_games_before(
+        team_id=20, cutoff_time=cutoff, season=2025, limit=8
+    )
+
+    assert cursor.sql == GET_NFL_COMPLETED_GAMES_BEFORE_QUERY
+    assert cursor.params == (20, cutoff, 2025, 2025, 8)
+    assert connection.closed is True
+    assert len(result) == 1
+    assert result[0].game.game_id == 44
+    assert result[0].game.scheduled_start_time == kickoff
+    assert result[0].team_statistics.game_id == 44
+    assert result[0].team_statistics.team_id == 20
+    assert result[0].points_for == 17
+    assert result[0].points_against == 24
+
+    normalized = " ".join(cursor.sql.split())
+    assert "nfl.scheduled_start_time < %s" in normalized
+    assert "nfl.status = 'final'" in normalized
+    assert "stats.team_id = game.home_team_id" in normalized
+    assert "stats.team_id = game.away_team_id" in normalized
+
+
+class HistoryCursor:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        return False
+
+    def execute(self, sql, params):
+        self.sql = sql
+        self.params = params
+
+    def fetchall(self):
+        return self.rows
+
+
+class HistoryConnection:
+    def __init__(self, cursor):
+        self._cursor = cursor
+        self.closed = False
+
+    def cursor(self):
+        return self._cursor
+
+    def close(self):
+        self.closed = True
