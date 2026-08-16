@@ -91,6 +91,17 @@ def test_late_night_task_captures_early_entry_after_snapshot() -> None:
     assert "Early Entry capture failed with exit code" in wrapper
 
 
+def test_late_night_task_logging_allows_empty_output_lines() -> None:
+    wrapper = TASK_WRAPPER_PATH.read_text(encoding="utf-8-sig")
+    write_log = wrapper.index("function Write-Log")
+    logging_loop = wrapper.index(
+        "foreach ($OutputLine in $CaptureOutput)"
+    )
+
+    assert "[AllowEmptyString()]" in wrapper[write_log:logging_loop]
+    assert 'Write-Log "$OutputLine"' in wrapper[logging_loop:]
+
+
 def test_non_live_task_modes_precede_early_entry_capture() -> None:
     wrapper = TASK_WRAPPER_PATH.read_text(encoding="utf-8-sig")
     capture_guard = wrapper.index('if ($SnapshotRole -eq "late_night")')

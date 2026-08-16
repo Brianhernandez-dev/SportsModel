@@ -61,6 +61,7 @@ $LogPath = Join-Path `
 function Write-Log {
     param(
         [Parameter(Mandatory)]
+        [AllowEmptyString()]
         [string]$Message
     )
 
