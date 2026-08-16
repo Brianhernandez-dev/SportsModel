@@ -20,10 +20,22 @@ SELECT nfl.game_id, nfl.season, nfl.season_type, nfl.week, nfl.week_label,
        stats.team_id, stats.completions, stats.pass_attempts, stats.passing_yards,
        stats.passing_touchdowns, stats.passing_interceptions, stats.sacks_suffered,
        stats.carries, stats.rushing_yards, stats.rushing_touchdowns,
-       stats.fumbles_lost, stats.penalties, stats.penalty_yards
+       stats.fumbles_lost, stats.penalties, stats.penalty_yards,
+       opponent.team_id, opponent.completions, opponent.pass_attempts,
+       opponent.passing_yards, opponent.passing_touchdowns,
+       opponent.passing_interceptions, opponent.sacks_suffered,
+       opponent.carries, opponent.rushing_yards,
+       opponent.rushing_touchdowns, opponent.fumbles_lost,
+       opponent.penalties, opponent.penalty_yards
 FROM nfl_team_game_statistics stats
 JOIN nfl_games nfl ON nfl.game_id = stats.game_id
 JOIN games game ON game.game_id = nfl.game_id
+JOIN nfl_team_game_statistics opponent
+  ON opponent.game_id = stats.game_id
+ AND opponent.team_id = CASE
+       WHEN stats.team_id = game.home_team_id THEN game.away_team_id
+       ELSE game.home_team_id
+     END
 WHERE stats.team_id = %s
   AND (stats.team_id = game.home_team_id
        OR stats.team_id = game.away_team_id)
@@ -85,7 +97,19 @@ def _historical_nfl_team_game_from_row(row: tuple[Any, ...]) -> "HistoricalNflTe
                                        carries=row[20], rushing_yards=row[21],
                                        rushing_touchdowns=row[22], fumbles_lost=row[23],
                                        penalties=row[24], penalty_yards=row[25])
-    return HistoricalNflTeamGame(game=game, team_statistics=statistics)
+    opponent_statistics = NflTeamGameStatistics(
+        game_id=row[0], team_id=row[26], completions=row[27],
+        pass_attempts=row[28], passing_yards=row[29],
+        passing_touchdowns=row[30], passing_interceptions=row[31],
+        sacks_suffered=row[32], carries=row[33], rushing_yards=row[34],
+        rushing_touchdowns=row[35], fumbles_lost=row[36],
+        penalties=row[37], penalty_yards=row[38],
+    )
+    return HistoricalNflTeamGame(
+        game=game,
+        team_statistics=statistics,
+        opponent_statistics=opponent_statistics,
+    )
 
 
 class NflStatisticsGameNotFoundError(ValueError):

@@ -1,7 +1,11 @@
 from dataclasses import dataclass
 from collections.abc import Callable, Iterable
 
-from sportsmodel.nfl.features import NFLFeatureDataProvider, NFLGameFeatureVectorBuilder
+from sportsmodel.nfl.features import (
+    NFLFeatureDataProvider,
+    NFLGameFeatureVectorBuilder,
+    NFLTeamFeatureVector,
+)
 from sportsmodel.nfl.models import NflGame, NflGameStatus
 
 
@@ -50,6 +54,39 @@ class NFLMoneylineTrainingDatasetBuilder:
                 "away_average_points_for": vector.away.average_points_for,
                 "home_average_points_against": vector.home.average_points_against,
                 "away_average_points_against": vector.away.average_points_against,
+                "home_average_point_differential": vector.home.average_point_differential,
+                "away_average_point_differential": vector.away.average_point_differential,
+                "home_average_passing_yards": vector.home.average_passing_yards,
+                "away_average_passing_yards": vector.away.average_passing_yards,
+                "home_average_passing_yards_allowed": vector.home.average_passing_yards_allowed,
+                "away_average_passing_yards_allowed": vector.away.average_passing_yards_allowed,
+                "home_average_rushing_yards": vector.home.average_rushing_yards,
+                "away_average_rushing_yards": vector.away.average_rushing_yards,
+                "home_average_rushing_yards_allowed": vector.home.average_rushing_yards_allowed,
+                "away_average_rushing_yards_allowed": vector.away.average_rushing_yards_allowed,
+                "home_average_turnovers": vector.home.average_turnovers,
+                "away_average_turnovers": vector.away.average_turnovers,
+                "home_average_takeaways": vector.home.average_takeaways,
+                "away_average_takeaways": vector.away.average_takeaways,
+                "home_average_turnover_differential": vector.home.average_turnover_differential,
+                "away_average_turnover_differential": vector.away.average_turnover_differential,
+                **_rolling_columns("home", vector.home),
+                **_rolling_columns("away", vector.away),
                 "home_win": game.home_score > game.away_score,
             })
         return NFLMoneylineDatasetBuildResult(tuple(rows), received, ties, nonfinal)
+
+
+def _rolling_columns(
+    prefix: str,
+    features: NFLTeamFeatureVector,
+) -> dict[str, object]:
+    columns: dict[str, object] = {}
+    for window, rolling in ((3, features.rolling_3), (5, features.rolling_5)):
+        base = f"{prefix}_rolling_{window}"
+        columns[f"{base}_games_used"] = rolling.games_used
+        columns[f"{base}_average_points_for"] = rolling.average_points_for
+        columns[f"{base}_average_points_against"] = rolling.average_points_against
+        columns[f"{base}_average_point_differential"] = rolling.average_point_differential
+        columns[f"{base}_average_turnover_differential"] = rolling.average_turnover_differential
+    return columns

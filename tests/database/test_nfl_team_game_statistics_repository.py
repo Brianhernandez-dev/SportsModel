@@ -104,6 +104,7 @@ def test_point_in_time_history_repository_passes_scope_and_maps_domain_row() -> 
         44, 2025, "regular", 1, "Week 1", kickoff, 10, 20,
         "final", 24, 17, False, False, 20,
         21, 31, 245, 2, 1, 3, 24, 112, 1, 0, 6, 55,
+        10, 18, 29, 205, 1, 2, 2, 26, 130, 1, 0, 4, 35,
     )
     cursor = HistoryCursor([row])
     connection = HistoryConnection(cursor)
@@ -123,6 +124,8 @@ def test_point_in_time_history_repository_passes_scope_and_maps_domain_row() -> 
     assert result[0].game.scheduled_start_time == kickoff
     assert result[0].team_statistics.game_id == 44
     assert result[0].team_statistics.team_id == 20
+    assert result[0].opponent_statistics.team_id == 10
+    assert result[0].opponent_statistics.passing_yards == 205
     assert result[0].points_for == 17
     assert result[0].points_against == 24
 
