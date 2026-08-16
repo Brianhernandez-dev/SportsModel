@@ -47,6 +47,52 @@ LIMIT %s;
 """
 
 
+GET_ALL_NFL_COMPLETED_HISTORY_QUERY = """
+SELECT nfl.game_id, nfl.season, nfl.season_type, nfl.week, nfl.week_label,
+       nfl.scheduled_start_time, game.home_team_id, game.away_team_id,
+       nfl.status, nfl.home_score, nfl.away_score, nfl.overtime, nfl.neutral_site,
+       stats.team_id, stats.completions, stats.pass_attempts, stats.passing_yards,
+       stats.passing_touchdowns, stats.passing_interceptions, stats.sacks_suffered,
+       stats.carries, stats.rushing_yards, stats.rushing_touchdowns,
+       stats.fumbles_lost, stats.penalties, stats.penalty_yards,
+       opponent.team_id, opponent.completions, opponent.pass_attempts,
+       opponent.passing_yards, opponent.passing_touchdowns,
+       opponent.passing_interceptions, opponent.sacks_suffered,
+       opponent.carries, opponent.rushing_yards,
+       opponent.rushing_touchdowns, opponent.fumbles_lost,
+       opponent.penalties, opponent.penalty_yards
+FROM nfl_team_game_statistics stats
+JOIN nfl_games nfl ON nfl.game_id = stats.game_id
+JOIN games game ON game.game_id = nfl.game_id
+JOIN nfl_team_game_statistics opponent
+  ON opponent.game_id = stats.game_id
+ AND opponent.team_id = CASE
+       WHEN stats.team_id = game.home_team_id THEN game.away_team_id
+       ELSE game.home_team_id
+     END
+WHERE (stats.team_id = game.home_team_id
+       OR stats.team_id = game.away_team_id)
+  AND nfl.status = 'final'
+  AND nfl.season BETWEEN %s AND %s
+ORDER BY stats.team_id, nfl.scheduled_start_time DESC, nfl.game_id DESC;
+"""
+
+
+def list_all_nfl_completed_history(
+    cursor: Any, *, season_from: int, season_to: int,
+) -> tuple["HistoricalNflTeamGame", ...]:
+    if season_from > season_to:
+        raise ValueError("season_from cannot exceed season_to")
+    cursor.execute(
+        GET_ALL_NFL_COMPLETED_HISTORY_QUERY,
+        (season_from, season_to),
+    )
+    return tuple(
+        _historical_nfl_team_game_from_row(row)
+        for row in cursor.fetchall()
+    )
+
+
 class NflTeamHistoryRepository(ABC):
     @abstractmethod
     def get_completed_games_before(

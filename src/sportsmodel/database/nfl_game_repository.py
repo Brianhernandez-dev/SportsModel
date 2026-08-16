@@ -39,6 +39,20 @@ def list_nfl_games_by_season(
     return tuple(_canonical_game_from_row(row) for row in cursor.fetchall())
 
 
+def list_nfl_games_by_season_range(
+    cursor: Any, *, season_from: int, season_to: int,
+) -> tuple[NflGame, ...]:
+    if season_from > season_to:
+        raise ValueError("season_from cannot exceed season_to")
+    cursor.execute(
+        _SELECT_CANONICAL_GAME
+        + " WHERE nfl.season BETWEEN %s AND %s "
+        "ORDER BY nfl.scheduled_start_time, nfl.game_id;",
+        (season_from, season_to),
+    )
+    return tuple(_canonical_game_from_row(row) for row in cursor.fetchall())
+
+
 def persist_nfl_game(
     cursor: Any,
     *,
