@@ -115,6 +115,7 @@ class TargetNflTeamHistoryRepository(NflTeamHistoryRepository):
 
 @dataclass(frozen=True)
 class NFLHistoricalDatasetAuditOutcome:
+    canonical_games: tuple[NflGame, ...]
     dataset: NFLMoneylineDatasetBuildResult
     report: dict[str, Any]
     fingerprint: str
@@ -147,6 +148,7 @@ def build_and_audit_production_dataset(
         games, dataset, snapshot.traces, canonical_history=history,
     )
     return NFLHistoricalDatasetAuditOutcome(
+        canonical_games=games,
         dataset=dataset,
         report=report,
         fingerprint=dataset_fingerprint(dataset.rows),

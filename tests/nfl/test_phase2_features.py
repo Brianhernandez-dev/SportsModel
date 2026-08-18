@@ -54,6 +54,80 @@ def test_point_in_time_history_uses_strict_kickoff_not_week_or_insertion_order()
     assert [item.game.game_id for item in history] == [99, 500]
 
 
+def test_simultaneous_kickoff_games_cannot_see_each_other() -> None:
+    first_target = _game(50, KICKOFF, home=1, away=2)
+    second_target = _game(51, KICKOFF, home=1, away=3)
+    earlier = _history(
+        40, KICKOFF - timedelta(hours=1), team=1, opponent=4,
+    )
+    first_as_history = _history(50, KICKOFF, team=1, opponent=2)
+    second_as_history = _history(51, KICKOFF, team=1, opponent=3)
+    repository = InMemoryHistoryRepository([
+        second_as_history, earlier, first_as_history,
+    ])
+
+    first_history = NFLFeatureDataProvider(
+        first_target, repository=repository,
+    ).get_team_history(team_id=1, season=2025)
+    second_history = NFLFeatureDataProvider(
+        second_target, repository=repository,
+    ).get_team_history(team_id=1, season=2025)
+
+    assert [item.game.game_id for item in first_history] == [40]
+    assert [item.game.game_id for item in second_history] == [40]
+
+
+def test_schedule_length_change_does_not_normalize_history_or_rolling_windows() -> None:
+    for season, game_count in ((2020, 16), (2021, 17)):
+        target_kickoff = datetime(season, 12, 31, 20, tzinfo=timezone.utc)
+        target = _game(
+            900 + season, target_kickoff, season=season, home=1, away=2,
+        )
+        history = [
+            _history(
+                (season * 100) + index + 1,
+                target_kickoff - timedelta(days=index + 1),
+                season=season, team=1, opponent=10 + index,
+            )
+            for index in range(game_count)
+        ]
+
+        vector = NFLGameFeatureVectorBuilder().build(
+            target,
+            provider=NFLFeatureDataProvider(
+                target, repository=InMemoryHistoryRepository(history),
+            ),
+        ).home
+
+        assert vector.prior_games_used == game_count
+        assert vector.rolling_3.games_used == 3
+        assert vector.rolling_5.games_used == 5
+
+
+def test_2020_rescheduled_game_eligibility_uses_actual_kickoff_not_week() -> None:
+    target_kickoff = datetime(2020, 11, 29, 18, tzinfo=timezone.utc)
+    target = _game(
+        900, target_kickoff, season=2020, week=12, home=1, away=2,
+    )
+    earlier_later_week = _history(
+        901, target_kickoff - timedelta(hours=2),
+        season=2020, week=13, team=1, opponent=3,
+    )
+    rescheduled_earlier_week = _history(
+        902, target_kickoff + timedelta(days=3),
+        season=2020, week=6, team=1, opponent=4,
+    )
+
+    history = NFLFeatureDataProvider(
+        target,
+        repository=InMemoryHistoryRepository([
+            rescheduled_earlier_week, earlier_later_week,
+        ]),
+    ).get_team_history(team_id=1, season=2020)
+
+    assert [item.game.game_id for item in history] == [901]
+
+
 def test_provider_defensively_rejects_repository_cutoff_violation() -> None:
     target = _game(50, KICKOFF, home=1, away=2)
 
