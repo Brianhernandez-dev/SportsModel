@@ -284,9 +284,45 @@ def build_nfl_moneyline_modeling_examples(
 ) -> tuple[NflMoneylineModelingExample, ...]:
     games = tuple(canonical_games)
     _reject_holdout_games(games)
+    return _build_nfl_moneyline_modeling_examples(
+        rows,
+        games,
+        allowed_seasons=frozenset(range(
+            NFL_DEVELOPMENT_FIRST_SEASON,
+            NFL_DEVELOPMENT_FINAL_SEASON + 1,
+        )),
+        population_label="development",
+    )
+
+
+def build_nfl_moneyline_holdout_examples(
+    rows: Iterable[dict[str, object]],
+    canonical_games: Iterable[NflGame],
+) -> tuple[NflMoneylineModelingExample, ...]:
+    """Build already-loaded holdout rows; this function performs no database I/O."""
+    games = tuple(canonical_games)
+    return _build_nfl_moneyline_modeling_examples(
+        rows,
+        games,
+        allowed_seasons=frozenset({NFL_FINAL_HOLDOUT_SEASON}),
+        population_label="final holdout",
+    )
+
+
+def _build_nfl_moneyline_modeling_examples(
+    rows: Iterable[dict[str, object]],
+    games: tuple[NflGame, ...],
+    *,
+    allowed_seasons: frozenset[int],
+    population_label: str,
+) -> tuple[NflMoneylineModelingExample, ...]:
     game_by_id = {game.game_id: game for game in games}
     if len(game_by_id) != len(games):
         raise ValueError("canonical NFL modeling games must have unique IDs")
+    if any(game.season not in allowed_seasons for game in games):
+        raise ValueError(
+            f"canonical NFL {population_label} games have an invalid season"
+        )
 
     examples: list[NflMoneylineModelingExample] = []
     seen_ids: set[int] = set()
@@ -298,10 +334,10 @@ def build_nfl_moneyline_modeling_examples(
         game = game_by_id.get(game_id)
         if game is None:
             raise ValueError(f"NFL modeling row {game_id} has no canonical game")
-        if game.season >= NFL_FINAL_HOLDOUT_SEASON:
-            raise ValueError("2025 holdout rows cannot enter Phase 2D modeling")
-        if not NFL_DEVELOPMENT_FIRST_SEASON <= game.season <= NFL_DEVELOPMENT_FINAL_SEASON:
-            raise ValueError(f"NFL modeling row {game_id} is outside 2018-2024")
+        if game.season not in allowed_seasons:
+            raise ValueError(
+                f"NFL modeling row {game_id} is outside the {population_label} seasons"
+            )
         if row.get("feature_schema_version") != NFL_MONEYLINE_FEATURE_SCHEMA_VERSION:
             raise ValueError(
                 f"NFL modeling row {game_id} has an unsupported feature schema"
@@ -351,8 +387,7 @@ def build_nfl_moneyline_modeling_examples(
         raise ValueError("NFL modeling rows must be in deterministic chronological order")
     if set(seen_ids) != {
         game.game_id for game in games
-        if game.season <= NFL_DEVELOPMENT_FINAL_SEASON
-        and game.home_score != game.away_score
+        if game.season in allowed_seasons and game.home_score != game.away_score
     }:
         raise ValueError("NFL modeling rows differ from canonical eligible target games")
     return ordered
