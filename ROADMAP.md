@@ -8,6 +8,23 @@ The long-term objective is not simply predicting games, but building a reproduci
 
 ---
 
+# NFL Program Status
+
+**NFL Phase 2: COMPLETE**
+
+The first frozen NFL Moneyline baseline and its one-time 2025 historical
+holdout result are recorded in
+[`docs/architecture/nfl_phase_2_closeout.md`](docs/architecture/nfl_phase_2_closeout.md).
+The 2025 season is now exposed and is not an untouched holdout for subsequent
+model development.
+
+Next: **NFL Phase 3A — Early-Season Coverage**. Design and validate a separate
+point-in-time-safe strategy for games where one or both teams have fewer than
+three current-season prior games, without altering the frozen Phase 2
+baseline. Phase 3A is not implemented yet.
+
+---
+
 # Version 1.0 — Analytics Platform ✅
 
 Completed

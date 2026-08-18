@@ -12,6 +12,9 @@ data/training/*.csv
 data/models/*.joblib
 data/models/*_report.json
 
+# One-time NFL historical holdout output; immutable result is recorded in docs.
+artifacts/nfl_2025_final_holdout.json
+
 *.egg-info/
 .audit-cache/
 .pytest-temp/
