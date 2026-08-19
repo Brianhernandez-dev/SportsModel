@@ -1,0 +1,61 @@
+{
+  "classification_threshold": 0.5,
+  "coefficients": [
+    0.1447250182823086,
+    0.5450243417363718,
+    0.2741947891184368,
+    -0.21013420949170053
+  ],
+  "dataset_fingerprint": "a88db604039fb277d63813152912ccfcc89b31b3938b12fdcdb38553d2f83b98",
+  "feature_names": [
+    "prior_season_games_played_difference",
+    "prior_season_win_percentage_difference",
+    "prior_season_average_point_differential_difference",
+    "prior_season_average_turnover_differential_difference"
+  ],
+  "feature_schema_version": "nfl_moneyline_early_0.1.0",
+  "historical_evidence_status": "2019-2025 HISTORICAL EVIDENCE IS EXPOSED FOR THIS MODEL FAMILY. THE NEXT GENUINELY UNSEEN EVIDENCE IS 2026 FORWARD PERFORMANCE.",
+  "imputation": "training-row SimpleImputer(strategy='median', add_indicator=False)",
+  "imputer_statistics": [
+    0.0,
+    0.0,
+    0.5294117647058824,
+    0.0
+  ],
+  "intercept": 0.008096129332869476,
+  "max_iterations": 5000,
+  "model_fingerprint": "ea7a9e90c59e4cdd87a2115895dddbfe117feb8b5f53a593eb6c3007fe0c1fd8",
+  "next_forward_evidence_season": 2026,
+  "random_state": 42,
+  "regularization_c": 1.0,
+  "retrospective_status": "RETROSPECTIVE CONSISTENCY ONLY — NOT VALIDATION",
+  "routing_population": "early when home_current_prior_games < 3 or away_current_prior_games < 3; scheduled week is never used",
+  "scaler_means": [
+    0.0,
+    0.0033152734778121797,
+    0.002696078431372478,
+    0.004695562435500513
+  ],
+  "scaler_scales": [
+    0.14509525002200233,
+    0.24038196073565718,
+    8.290214755114635,
+    0.6968044362464318
+  ],
+  "scaling": "training-row StandardScaler",
+  "solver": "lbfgs",
+  "specification_fingerprint": "109d8bf693f67836d0acd39a631a50dccfdfaea61284aa9ef09349f2b71b9675",
+  "specification_version": "nfl_moneyline_early_frozen_0.1.0",
+  "target": "home_win",
+  "training_home_win_rate": 0.5017543859649123,
+  "training_population": "Final non-tied NFL early-route targets in seasons 2019-2024; either team has fewer than 3 PIT-safe current-season prior games",
+  "training_row_count": 285,
+  "training_seasons": [
+    2019,
+    2020,
+    2021,
+    2022,
+    2023,
+    2024
+  ]
+}
