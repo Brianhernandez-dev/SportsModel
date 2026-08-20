@@ -126,6 +126,32 @@ class PostgresNflTeamHistoryRepository(NflTeamHistoryRepository):
             connection.close()
 
 
+class CursorNflTeamHistoryRepository(NflTeamHistoryRepository):
+    """Read point-in-time history through a caller-owned transaction cursor."""
+
+    def __init__(self, cursor: Any):
+        self._cursor = cursor
+
+    def get_completed_games_before(
+        self, *, team_id: int, cutoff_time: datetime,
+        season: int | None = None, limit: int | None = None,
+    ) -> tuple["HistoricalNflTeamGame", ...]:
+        if team_id <= 0:
+            raise ValueError("team_id must be positive")
+        if cutoff_time.tzinfo is None or cutoff_time.utcoffset() is None:
+            raise ValueError("cutoff_time must be timezone-aware")
+        if limit is not None and limit <= 0:
+            raise ValueError("limit must be positive")
+        self._cursor.execute(
+            GET_NFL_COMPLETED_GAMES_BEFORE_QUERY,
+            (team_id, cutoff_time, season, season, limit),
+        )
+        return tuple(
+            _historical_nfl_team_game_from_row(row)
+            for row in self._cursor.fetchall()
+        )
+
+
 def _historical_nfl_team_game_from_row(row: tuple[Any, ...]) -> "HistoricalNflTeamGame":
     from sportsmodel.nfl.features import HistoricalNflTeamGame
     from sportsmodel.nfl.models import NflGame, NflGameStatus, NflSeasonType

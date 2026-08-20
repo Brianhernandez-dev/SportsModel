@@ -1,0 +1,439 @@
+from datetime import date, datetime, timedelta, timezone
+from uuid import UUID
+
+import pytest
+
+import sportsmodel.nfl.moneyline_prediction_service as service
+from sportsmodel.nfl.models import NflGame, NflGameStatus, NflSeasonType
+from sportsmodel.nfl.moneyline_frozen import (
+    fingerprint_payload,
+    load_frozen_nfl_early_artifact,
+    load_frozen_nfl_mature_artifact,
+)
+from sportsmodel.nfl.moneyline_inference import (
+    NFLMoneylineInferenceResult,
+    NFLPredictedSide,
+    NFLSourceTraceChannel,
+)
+from sportsmodel.nfl.moneyline_prediction import (
+    NFL_MONEYLINE_EVALUATION_PROTOCOL_VERSION,
+    NFLMoneylinePredictionRun,
+    NFLMoneylinePredictionRunStatus,
+    NFLMoneylinePredictionRunType,
+)
+from sportsmodel.nfl.moneyline_routing import (
+    NFL_MONEYLINE_ROUTING_CONTRACT_VERSION,
+    NFLMoneylineRoute,
+)
+
+
+START = datetime(2026, 9, 10, tzinfo=timezone.utc)
+END = START + timedelta(days=1)
+RUN_KEY = UUID("b8eebca7-44f1-4e64-a821-01876b4db323")
+EARLY_ARTIFACT = load_frozen_nfl_early_artifact()
+MATURE_ARTIFACT = load_frozen_nfl_mature_artifact()
+
+
+class FakeCursor:
+    def __init__(self):
+        self.row = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def execute(self, query, parameters=None):
+        if "transaction_timestamp" in query:
+            self.row = (START - timedelta(hours=1),)
+
+    def fetchone(self):
+        return self.row
+
+
+class FakeConnection:
+    def __init__(self):
+        self.commits = 0
+        self.rollbacks = 0
+        self.closed = False
+        self.sessions = []
+
+    def cursor(self):
+        return FakeCursor()
+
+    def set_session(self, **values):
+        self.sessions.append(values)
+
+    def commit(self):
+        self.commits += 1
+
+    def rollback(self):
+        self.rollbacks += 1
+
+    def close(self):
+        self.closed = True
+
+
+def test_dry_run_infers_and_performs_zero_writes(monkeypatch) -> None:
+    connections = []
+    monkeypatch.setattr(service, "list_nfl_prediction_targets", lambda *a, **k: (_game(1),))
+    monkeypatch.setattr(service, "database_clock", lambda cursor: START - timedelta(days=1))
+    monkeypatch.setattr(service, "list_existing_official_nfl_game_ids", lambda *a, **k: ())
+    monkeypatch.setattr(
+        service, "create_nfl_prediction_run",
+        lambda *a, **k: pytest.fail("dry-run created a run"),
+    )
+    monkeypatch.setattr(
+        service, "insert_nfl_game_prediction",
+        lambda *a, **k: pytest.fail("dry-run inserted a prediction"),
+    )
+
+    result = service.execute_nfl_moneyline_prediction_run(
+        season=2026,
+        target_date=date(2026, 9, 10),
+        slate_start_time=START,
+        slate_end_time=END,
+        run_type=NFLMoneylinePredictionRunType.OFFICIAL,
+        run_key=None,
+        dry_run=True,
+        connection_factory=lambda: _connection(connections),
+        inference_runner=_inference,
+    )
+
+    assert result.dry_run
+    assert len(result.inference_results) == 1
+    assert result.inference_results[0].feature_vector_fingerprint == (
+        result.inference_results[0].feature_vector_fingerprint
+    )
+    assert connections[0].commits == 0
+    assert connections[0].rollbacks == 1
+    assert connections[0].sessions == [{
+        "isolation_level": "REPEATABLE READ", "read_only": True
+    }]
+
+
+@pytest.mark.parametrize(
+    "run_type",
+    [NFLMoneylinePredictionRunType.OFFICIAL, NFLMoneylinePredictionRunType.PREVIEW],
+)
+def test_write_run_uses_repeatable_read_and_persists_atomically(
+    monkeypatch, run_type,
+) -> None:
+    connections = []
+    inserted = []
+    running = _run(run_type=run_type)
+    completed = _run(
+        run_type=run_type,
+        status=NFLMoneylinePredictionRunStatus.COMPLETED,
+        prediction_count=1,
+        source_snapshot_sha256="a" * 64,
+        prediction_set_sha256="b" * 64,
+    )
+    monkeypatch.setattr(service, "list_nfl_prediction_targets", lambda *a, **k: (_game(1),))
+    monkeypatch.setattr(service, "load_nfl_prediction_run_by_key", lambda *a, **k: None)
+    monkeypatch.setattr(service, "create_nfl_prediction_run", lambda *a, **k: running)
+    monkeypatch.setattr(service, "lock_nfl_prediction_run", lambda *a, **k: running)
+    monkeypatch.setattr(service, "database_clock", lambda cursor: START - timedelta(days=1))
+    monkeypatch.setattr(service, "list_existing_official_nfl_game_ids", lambda *a, **k: ())
+    monkeypatch.setattr(
+        service, "insert_nfl_game_prediction",
+        lambda *a, **values: inserted.append(values) or (91, START - timedelta(hours=1)),
+    )
+    monkeypatch.setattr(service, "complete_nfl_prediction_run", lambda *a, **k: completed)
+
+    result = service.execute_nfl_moneyline_prediction_run(
+        season=2026,
+        target_date=date(2026, 9, 10),
+        slate_start_time=START,
+        slate_end_time=END,
+        run_type=run_type,
+        run_key=RUN_KEY,
+        dry_run=False,
+        connection_factory=lambda: _connection(connections),
+        inference_runner=_inference,
+    )
+
+    assert result.run is completed
+    assert len(inserted) == 1
+    assert inserted[0]["run_type"] is run_type
+    assert inserted[0]["feature_payload"]["ordered_feature_names"] == ["x"]
+    assert inserted[0]["source_trace_payload"] == {
+        "channels": [{"side": "home", "channel": "current_season_routing", "games": []}]
+    }
+    assert connections[0].commits == 1  # durable running audit row
+    assert connections[1].commits == 1  # atomic children + completion
+    assert connections[1].sessions == [{"isolation_level": "REPEATABLE READ"}]
+
+
+def test_partial_slate_failure_rolls_back_children_and_retains_failed_run(
+    monkeypatch,
+) -> None:
+    connections = []
+    running = _run()
+    inference_calls = []
+    failure_updates = []
+    monkeypatch.setattr(
+        service, "list_nfl_prediction_targets",
+        lambda *a, **k: (_game(1), _game(2)),
+    )
+    monkeypatch.setattr(service, "load_nfl_prediction_run_by_key", lambda *a, **k: None)
+    monkeypatch.setattr(service, "create_nfl_prediction_run", lambda *a, **k: running)
+    monkeypatch.setattr(service, "lock_nfl_prediction_run", lambda *a, **k: running)
+    monkeypatch.setattr(service, "database_clock", lambda cursor: START - timedelta(days=1))
+    monkeypatch.setattr(service, "list_existing_official_nfl_game_ids", lambda *a, **k: ())
+    monkeypatch.setattr(
+        service, "insert_nfl_game_prediction",
+        lambda *a, **k: pytest.fail("no child inserts before all inference succeeds"),
+    )
+    monkeypatch.setattr(
+        service, "fail_nfl_prediction_run",
+        lambda *a, **values: failure_updates.append(values),
+    )
+
+    def failing_inference(game, **kwargs):
+        inference_calls.append(game.game_id)
+        if game.game_id == 2:
+            raise ValueError("ineligible target")
+        return _inference(game, **kwargs)
+
+    with pytest.raises(ValueError, match="ineligible target"):
+        service.execute_nfl_moneyline_prediction_run(
+            season=2026,
+            target_date=date(2026, 9, 10),
+            slate_start_time=START,
+            slate_end_time=END,
+            run_type=NFLMoneylinePredictionRunType.OFFICIAL,
+            run_key=RUN_KEY,
+            dry_run=False,
+            connection_factory=lambda: _connection(connections),
+            inference_runner=failing_inference,
+        )
+
+    assert inference_calls == [1, 2]
+    assert connections[1].rollbacks == 1
+    assert connections[2].commits == 1
+    assert failure_updates[0]["prediction_run_id"] == 7
+
+
+def test_completed_run_key_returns_existing_and_mismatch_is_rejected(monkeypatch) -> None:
+    targets = (_game(1),)
+    early = EARLY_ARTIFACT
+    mature = MATURE_ARTIFACT
+    slate_sha = service._slate_fingerprint(targets)
+    request_sha = service._request_fingerprint(
+        season=2026, target_date=date(2026, 9, 10),
+        slate_start_time=START, slate_end_time=END,
+        run_type=NFLMoneylinePredictionRunType.OFFICIAL,
+        slate_fingerprint=slate_sha,
+        early_artifact=early, mature_artifact=mature,
+    )
+    existing = _run(
+        status=NFLMoneylinePredictionRunStatus.COMPLETED,
+        prediction_count=1,
+        slate_fingerprint=slate_sha,
+        request_sha256=request_sha,
+        source_snapshot_sha256="a" * 64,
+        prediction_set_sha256="b" * 64,
+    )
+    monkeypatch.setattr(
+        service, "list_nfl_prediction_targets",
+        lambda *a, **k: pytest.fail(
+            "completed run retry must use its stored immutable slate"
+        ),
+    )
+    monkeypatch.setattr(service, "load_nfl_prediction_run_by_key", lambda *a, **k: existing)
+    result = service.execute_nfl_moneyline_prediction_run(
+        season=2026, target_date=date(2026, 9, 10),
+        slate_start_time=START, slate_end_time=END,
+        run_type=NFLMoneylinePredictionRunType.OFFICIAL,
+        run_key=RUN_KEY, dry_run=False,
+        connection_factory=FakeConnection,
+    )
+    assert result.run is existing
+
+    mismatched = _run(
+        status=NFLMoneylinePredictionRunStatus.COMPLETED,
+        prediction_count=1,
+        slate_fingerprint=slate_sha,
+        request_sha256="f" * 64,
+        source_snapshot_sha256="a" * 64,
+        prediction_set_sha256="b" * 64,
+    )
+    monkeypatch.setattr(service, "load_nfl_prediction_run_by_key", lambda *a, **k: mismatched)
+    with pytest.raises(ValueError, match="different request identity"):
+        service.execute_nfl_moneyline_prediction_run(
+            season=2026, target_date=date(2026, 9, 10),
+            slate_start_time=START, slate_end_time=END,
+            run_type=NFLMoneylinePredictionRunType.OFFICIAL,
+            run_key=RUN_KEY, dry_run=False,
+            connection_factory=FakeConnection,
+        )
+
+
+def test_failed_run_key_cannot_be_reused(monkeypatch) -> None:
+    targets = (_game(1),)
+    early = EARLY_ARTIFACT
+    mature = MATURE_ARTIFACT
+    slate_sha = service._slate_fingerprint(targets)
+    request_sha = service._request_fingerprint(
+        season=2026, target_date=date(2026, 9, 10),
+        slate_start_time=START, slate_end_time=END,
+        run_type=NFLMoneylinePredictionRunType.OFFICIAL,
+        slate_fingerprint=slate_sha, early_artifact=early, mature_artifact=mature,
+    )
+    failed = _run(
+        status=NFLMoneylinePredictionRunStatus.FAILED,
+        slate_fingerprint=slate_sha,
+        request_sha256=request_sha,
+    )
+    monkeypatch.setattr(
+        service, "list_nfl_prediction_targets",
+        lambda *a, **k: pytest.fail(
+            "failed run retry must use its stored immutable slate"
+        ),
+    )
+    monkeypatch.setattr(service, "load_nfl_prediction_run_by_key", lambda *a, **k: failed)
+    with pytest.raises(ValueError, match="new run_key"):
+        service.execute_nfl_moneyline_prediction_run(
+            season=2026, target_date=date(2026, 9, 10),
+            slate_start_time=START, slate_end_time=END,
+            run_type=NFLMoneylinePredictionRunType.OFFICIAL,
+            run_key=RUN_KEY, dry_run=False,
+            connection_factory=FakeConnection,
+        )
+
+
+def test_running_identical_run_key_recovers_only_with_no_children(monkeypatch) -> None:
+    targets = (_game(1),)
+    slate_sha = service._slate_fingerprint(targets)
+    request_sha = service._request_fingerprint(
+        season=2026, target_date=date(2026, 9, 10),
+        slate_start_time=START, slate_end_time=END,
+        run_type=NFLMoneylinePredictionRunType.OFFICIAL,
+        slate_fingerprint=slate_sha,
+        early_artifact=EARLY_ARTIFACT, mature_artifact=MATURE_ARTIFACT,
+    )
+    running = _run(
+        slate_fingerprint=slate_sha,
+        request_sha256=request_sha,
+    )
+    completed = _run(
+        status=NFLMoneylinePredictionRunStatus.COMPLETED,
+        prediction_count=1,
+        slate_fingerprint=slate_sha,
+        request_sha256=request_sha,
+        source_snapshot_sha256="a" * 64,
+        prediction_set_sha256="b" * 64,
+    )
+    connections = []
+    target_reads = []
+    monkeypatch.setattr(service, "load_nfl_prediction_run_by_key", lambda *a, **k: running)
+    monkeypatch.setattr(service, "count_nfl_predictions_for_run", lambda *a, **k: 0)
+    monkeypatch.setattr(service, "lock_nfl_prediction_run", lambda *a, **k: running)
+    monkeypatch.setattr(
+        service, "list_nfl_prediction_targets",
+        lambda *a, **k: target_reads.append(True) or targets,
+    )
+    monkeypatch.setattr(service, "database_clock", lambda cursor: START - timedelta(days=1))
+    monkeypatch.setattr(service, "list_existing_official_nfl_game_ids", lambda *a, **k: ())
+    monkeypatch.setattr(
+        service, "insert_nfl_game_prediction",
+        lambda *a, **k: (91, START - timedelta(hours=1)),
+    )
+    monkeypatch.setattr(service, "complete_nfl_prediction_run", lambda *a, **k: completed)
+
+    result = service.execute_nfl_moneyline_prediction_run(
+        season=2026, target_date=date(2026, 9, 10),
+        slate_start_time=START, slate_end_time=END,
+        run_type=NFLMoneylinePredictionRunType.OFFICIAL,
+        run_key=RUN_KEY, dry_run=False,
+        connection_factory=lambda: _connection(connections),
+        inference_runner=_inference,
+    )
+    assert result.run is completed
+    assert target_reads == [True]
+    assert connections[1].sessions == [{"isolation_level": "REPEATABLE READ"}]
+
+
+def _connection(connections):
+    connection = FakeConnection()
+    connections.append(connection)
+    return connection
+
+
+def _game(game_id):
+    return NflGame(
+        game_id=game_id, season=2026, season_type=NflSeasonType.REGULAR,
+        week=1, week_label="Week 1",
+        scheduled_start_time=START + timedelta(hours=game_id),
+        home_team_id=game_id * 2 + 10, away_team_id=game_id * 2 + 11,
+        status=NflGameStatus.UNPLAYED, home_score=None, away_score=None,
+        overtime=None, neutral_site=False,
+    )
+
+
+def _inference(game, **kwargs):
+    payload = {
+        "feature_schema_version": "test-schema",
+        "ordered_feature_names": ["x"],
+        "ordered_feature_values": [1.0],
+    }
+    return NFLMoneylineInferenceResult(
+        game_id=game.game_id, target_kickoff=game.scheduled_start_time,
+        season=game.season, home_team_id=game.home_team_id,
+        away_team_id=game.away_team_id, home_current_prior_games=0,
+        away_current_prior_games=0, selected_route=NFLMoneylineRoute.EARLY,
+        routing_contract_version=NFL_MONEYLINE_ROUTING_CONTRACT_VERSION,
+        model_specification_version="test-model",
+        feature_schema_version="test-schema",
+        specification_fingerprint="c" * 64, model_fingerprint="d" * 64,
+        ordered_feature_names=("x",), ordered_feature_values=(1.0,),
+        feature_vector_fingerprint=fingerprint_payload(payload),
+        feature_cutoff=game.scheduled_start_time, latest_source_kickoff=None,
+        model_home_win_probability=0.6, classification_threshold=0.5,
+        predicted_side=NFLPredictedSide.HOME,
+        frozen_empirical_home_baseline=0.55,
+        source_trace=(NFLSourceTraceChannel(
+            side="home", channel="current_season_routing", games=(),
+        ),),
+    )
+
+
+def _run(
+    *, run_type=NFLMoneylinePredictionRunType.OFFICIAL,
+    status=NFLMoneylinePredictionRunStatus.RUNNING,
+    prediction_count=0,
+    slate_fingerprint="e" * 64,
+    request_sha256="f" * 64,
+    source_snapshot_sha256=None,
+    prediction_set_sha256=None,
+):
+    return NFLMoneylinePredictionRun(
+        prediction_run_id=7, run_key=RUN_KEY,
+        request_sha256=request_sha256, run_type=run_type,
+        evaluation_protocol_version=NFL_MONEYLINE_EVALUATION_PROTOCOL_VERSION,
+        routing_contract_version=NFL_MONEYLINE_ROUTING_CONTRACT_VERSION,
+        season=2026, target_date=date(2026, 9, 10),
+        slate_start_time=START, slate_end_time=END,
+        slate_fingerprint=slate_fingerprint, target_count=1,
+        early_model_specification_version=EARLY_ARTIFACT.specification_version,
+        early_feature_schema_version=EARLY_ARTIFACT.feature_schema_version,
+        early_specification_fingerprint=(
+            EARLY_ARTIFACT.specification_fingerprint
+        ),
+        early_model_fingerprint=EARLY_ARTIFACT.model_fingerprint,
+        mature_model_specification_version=(
+            MATURE_ARTIFACT.specification_version
+        ),
+        mature_feature_schema_version=MATURE_ARTIFACT.feature_schema_version,
+        mature_specification_fingerprint=(
+            MATURE_ARTIFACT.specification_fingerprint
+        ),
+        mature_model_fingerprint=MATURE_ARTIFACT.model_fingerprint,
+        prediction_count=prediction_count, status=status,
+        source_data_as_of=None,
+        source_snapshot_sha256=source_snapshot_sha256,
+        prediction_set_sha256=prediction_set_sha256,
+        failure_message="failed" if status is NFLMoneylinePredictionRunStatus.FAILED else None,
+    )

@@ -101,6 +101,24 @@ def test_early_inference_is_fit_free_exact_and_deterministic(monkeypatch) -> Non
         else NFLPredictedSide.AWAY
     )
     assert first.feature_vector_fingerprint == second.feature_vector_fingerprint
+    assert tuple(channel.channel for channel in first.source_trace) == (
+        "current_season_routing",
+        "current_season_routing",
+        "prior_season_regular_model",
+        "prior_season_regular_model",
+    )
+    assert all(
+        tuple(game.game_id for game in channel.games)
+        == tuple(
+            game.game_id
+            for game in sorted(
+                channel.games,
+                key=lambda item: (item.kickoff, item.game_id),
+                reverse=True,
+            )
+        )
+        for channel in first.source_trace
+    )
 
 
 def test_mature_inference_uses_exact_frozen_order_and_is_deterministic() -> None:
@@ -121,6 +139,10 @@ def test_mature_inference_uses_exact_frozen_order_and_is_deterministic() -> None
     assert first.away_current_prior_games == 3
     assert 0 <= first.model_home_win_probability <= 1
     assert first.model_home_win_probability == 0.5324024480464203
+    assert tuple(channel.channel for channel in first.source_trace) == (
+        "current_season_routing_and_model",
+        "current_season_routing_and_model",
+    )
 
 
 def test_only_selected_route_artifact_is_loaded() -> None:

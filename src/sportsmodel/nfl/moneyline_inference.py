@@ -34,6 +34,21 @@ class NFLPredictedSide(StrEnum):
 
 
 @dataclass(frozen=True)
+class NFLSourceTraceGame:
+    game_id: int
+    kickoff: datetime
+    season: int
+    season_type: str
+
+
+@dataclass(frozen=True)
+class NFLSourceTraceChannel:
+    side: str
+    channel: str
+    games: tuple[NFLSourceTraceGame, ...]
+
+
+@dataclass(frozen=True)
 class NFLMoneylineInferenceResult:
     game_id: int
     target_kickoff: datetime
@@ -57,6 +72,7 @@ class NFLMoneylineInferenceResult:
     classification_threshold: float
     predicted_side: NFLPredictedSide
     frozen_empirical_home_baseline: float
+    source_trace: tuple[NFLSourceTraceChannel, ...]
 
 
 ArtifactLoader = Callable[[], FrozenNFLMoneylineArtifact]
@@ -111,14 +127,31 @@ def _infer_nfl_moneyline(
     ]
     if route is NFLMoneylineRoute.EARLY:
         artifact = early_artifact_loader()
-        values, additional_kickoffs = _build_early_values(
+        values, early_trace = _build_early_values(
             target_game,
             resolved_provider,
         )
-        source_kickoffs.extend(additional_kickoffs)
+        source_trace = (
+            _trace_channel("home", "current_season_routing", home_history),
+            _trace_channel("away", "current_season_routing", away_history),
+            *early_trace,
+        )
+        source_kickoffs.extend(
+            game.kickoff
+            for channel in early_trace
+            for game in channel.games
+        )
     else:
         artifact = mature_artifact_loader()
         values = _build_mature_values(target_game, resolved_provider)
+        source_trace = (
+            _trace_channel(
+                "home", "current_season_routing_and_model", home_history
+            ),
+            _trace_channel(
+                "away", "current_season_routing_and_model", away_history
+            ),
+        )
 
     if artifact.route is not route:
         raise ValueError("selected route does not match frozen artifact route")
@@ -165,13 +198,17 @@ def _infer_nfl_moneyline(
         classification_threshold=artifact.classification_threshold,
         predicted_side=predicted_side,
         frozen_empirical_home_baseline=artifact.training_home_win_rate,
+        source_trace=source_trace,
     )
 
 
 def _build_early_values(
     target_game: NflGame,
     provider: NFLFeatureDataProvider,
-) -> tuple[tuple[float | int | None, ...], list[datetime]]:
+) -> tuple[
+    tuple[float | int | None, ...],
+    tuple[NFLSourceTraceChannel, ...],
+]:
     builder = NFLEarlyTeamFeatureBuilder()
     home = builder.build(
         team_id=target_game.home_team_id,
@@ -198,9 +235,60 @@ def _build_early_values(
             away.prior_season.average_turnover_differential,
         ),
     )
-    kickoffs = list(home.prior_season.source_kickoffs)
-    kickoffs.extend(away.prior_season.source_kickoffs)
-    return values, kickoffs
+    return values, (
+        _aggregate_trace_channel(
+            "home",
+            "prior_season_regular_model",
+            target_game.season - 1,
+            home.prior_season.source_game_ids,
+            home.prior_season.source_kickoffs,
+        ),
+        _aggregate_trace_channel(
+            "away",
+            "prior_season_regular_model",
+            target_game.season - 1,
+            away.prior_season.source_game_ids,
+            away.prior_season.source_kickoffs,
+        ),
+    )
+
+
+def _trace_channel(side, channel, history) -> NFLSourceTraceChannel:
+    return NFLSourceTraceChannel(
+        side=side,
+        channel=channel,
+        games=tuple(
+            NFLSourceTraceGame(
+                game_id=item.game.game_id,
+                kickoff=item.game.scheduled_start_time,
+                season=item.game.season,
+                season_type=item.game.season_type.value,
+            )
+            for item in history
+        ),
+    )
+
+
+def _aggregate_trace_channel(
+    side,
+    channel,
+    season,
+    game_ids,
+    kickoffs,
+) -> NFLSourceTraceChannel:
+    return NFLSourceTraceChannel(
+        side=side,
+        channel=channel,
+        games=tuple(
+            NFLSourceTraceGame(
+                game_id=game_id,
+                kickoff=kickoff,
+                season=season,
+                season_type="regular",
+            )
+            for game_id, kickoff in zip(game_ids, kickoffs, strict=True)
+        ),
+    )
 
 
 def _build_mature_values(

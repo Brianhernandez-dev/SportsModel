@@ -36,7 +36,7 @@ def initialized_nfl_test_database() -> str:
         migrations = discover_migrations()
         assert apply_pending_migrations(connection, migrations[:5]) == 5
         _create_legacy_migration_state(connection)
-        assert apply_pending_migrations(connection, migrations) == 19
+        assert apply_pending_migrations(connection, migrations) == len(migrations) - 5
     finally:
         connection.close()
     return database_url
