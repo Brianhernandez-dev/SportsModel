@@ -2,16 +2,54 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
+from decimal import Decimal, InvalidOperation, ROUND_HALF_EVEN
 from enum import StrEnum
+import math
 from typing import Any
 from uuid import UUID
 
-from sportsmodel.nfl.moneyline_inference import NFLMoneylineInferenceResult
+from sportsmodel.nfl.moneyline_inference import (
+    NFLMoneylineInferenceResult,
+    NFLPredictedSide,
+)
 
 
 NFL_MONEYLINE_EVALUATION_PROTOCOL_VERSION = (
     "nfl_moneyline_forward_0.1.0"
 )
+NFL_MONEYLINE_PROBABILITY_QUANTUM = Decimal("0.0000000000000001")
+
+
+def canonicalize_nfl_moneyline_probability(
+    value: float | Decimal,
+) -> Decimal:
+    """Return the persisted 16-place probability using round-half-even."""
+
+    if isinstance(value, bool):
+        raise TypeError("NFL Moneyline probability must be numeric")
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError("NFL Moneyline probability must be finite")
+    try:
+        decimal_value = Decimal(str(value))
+        if not decimal_value.is_finite():
+            raise ValueError("NFL Moneyline probability must be finite")
+        canonical = decimal_value.quantize(
+            NFL_MONEYLINE_PROBABILITY_QUANTUM,
+            rounding=ROUND_HALF_EVEN,
+        )
+    except (InvalidOperation, ValueError) as error:
+        raise ValueError("NFL Moneyline probability cannot be canonicalized") from error
+    if not Decimal("0") <= canonical <= Decimal("1"):
+        raise ValueError("NFL Moneyline probability must be between zero and one")
+    return canonical
+
+
+def canonical_nfl_moneyline_probability_text(
+    value: float | Decimal,
+) -> str:
+    """Serialize exactly as the NUMERIC(18,16) database representation."""
+
+    return format(canonicalize_nfl_moneyline_probability(value), ".16f")
 
 
 class NFLMoneylinePredictionRunType(StrEnum):
@@ -63,6 +101,10 @@ class PersistedNFLMoneylinePrediction:
     feature_payload: dict[str, Any]
     source_trace_payload: dict[str, Any]
     source_trace_sha256: str
+    model_home_win_probability: Decimal
+    frozen_route_home_baseline_probability: Decimal
+    classification_threshold: Decimal
+    predicted_side: NFLPredictedSide
 
 
 @dataclass(frozen=True)

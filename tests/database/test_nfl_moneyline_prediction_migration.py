@@ -52,6 +52,30 @@ def test_migration_026_enforces_official_uniqueness_and_immutability() -> None:
     assert "actual_prediction_count <> new.target_count" in sql
 
 
+def test_migration_026_hardens_run_lifecycle_and_parent_coherence() -> None:
+    sql = _sql()
+    assert "before insert or update on nfl_moneyline_prediction_runs" in sql
+    assert "new nfl prediction runs must begin running and empty" in sql
+    assert "nfl prediction run identity is immutable" in sql
+    assert "run_type <> 'official' or target_count >= 1" in sql
+    assert "new.season <> parent_run.season" in sql
+    assert "new.target_kickoff < parent_run.slate_start_time" in sql
+    assert "new.target_kickoff >= parent_run.slate_end_time" in sql
+    assert "new.source_data_as_of is distinct from transaction_timestamp()" in sql
+    assert "mismatched_source_count <> 0" in sql
+    assert "for update;" in sql
+    assert "for share of nfl, game" in sql
+
+
+def test_current_protocol_artifact_identity_is_database_authoritative() -> None:
+    sql = _sql()
+    assert "chk_nfl_moneyline_runs_current_protocol_identity" in sql
+    assert "nfl_moneyline_forward_0.1.0" in sql
+    assert "nfl_moneyline_routing_0.1.0" in sql
+    assert "nfl_moneyline_early_frozen_0.1.0" in sql
+    assert "nfl_moneyline_frozen_0.1.0" in sql
+
+
 def test_prediction_schema_excludes_out_of_scope_results_and_odds() -> None:
     prediction_table = _sql().split(
         "create table nfl_moneyline_game_predictions", 1

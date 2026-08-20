@@ -78,6 +78,7 @@ def _result(*, dry_run):
     return SimpleNamespace(
         dry_run=dry_run,
         run=None,
+        predictions=(),
         inference_results=(),
         slate_fingerprint="a" * 64,
         source_snapshot_sha256="b" * 64,

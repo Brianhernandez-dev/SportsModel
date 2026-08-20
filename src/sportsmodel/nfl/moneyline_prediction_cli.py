@@ -62,13 +62,28 @@ def main(argv: list[str] | None = None) -> int:
             f"run_id={result.run.prediction_run_id} "
             f"run_key={result.run.run_key} status={result.run.status.value}"
         )
+    persisted_by_game = {
+        prediction.inference.game_id: prediction
+        for prediction in result.predictions
+    }
     for inference in result.inference_results:
+        persisted = persisted_by_game.get(inference.game_id)
+        probability = (
+            persisted.model_home_win_probability
+            if persisted is not None
+            else inference.model_home_win_probability
+        )
+        predicted_side = (
+            persisted.predicted_side
+            if persisted is not None
+            else inference.predicted_side
+        )
         print(
             f"game_id={inference.game_id} "
             f"kickoff={inference.target_kickoff.isoformat()} "
             f"route={inference.selected_route.value} "
-            f"home_probability={inference.model_home_win_probability:.6f} "
-            f"predicted_side={inference.predicted_side.value} "
+            f"home_probability={probability:.6f} "
+            f"predicted_side={predicted_side.value} "
             f"feature_sha256={inference.feature_vector_fingerprint}"
         )
     print(f"slate_sha256={result.slate_fingerprint}")

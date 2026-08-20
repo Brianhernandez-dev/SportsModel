@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date, datetime, timezone
+from decimal import Decimal
 from typing import Any, Callable
 from uuid import UUID
+
+from psycopg2.errors import DeadlockDetected, SerializationFailure
 
 from sportsmodel.database.connection import get_connection
 from sportsmodel.database.nfl_moneyline_prediction_repository import (
@@ -29,6 +33,7 @@ from sportsmodel.nfl.moneyline_frozen import (
 )
 from sportsmodel.nfl.moneyline_inference import (
     NFLMoneylineInferenceResult,
+    NFLPredictedSide,
     infer_nfl_moneyline,
 )
 from sportsmodel.nfl.moneyline_prediction import (
@@ -37,6 +42,8 @@ from sportsmodel.nfl.moneyline_prediction import (
     NFLMoneylinePredictionRunStatus,
     NFLMoneylinePredictionRunType,
     PersistedNFLMoneylinePrediction,
+    canonical_nfl_moneyline_probability_text,
+    canonicalize_nfl_moneyline_probability,
 )
 from sportsmodel.nfl.moneyline_routing import (
     NFL_MONEYLINE_ROUTING_CONTRACT_VERSION,
@@ -46,9 +53,49 @@ from sportsmodel.nfl.moneyline_routing import (
 ConnectionFactory = Callable[[], Any]
 ArtifactLoader = Callable[[], FrozenNFLMoneylineArtifact]
 InferenceRunner = Callable[..., NFLMoneylineInferenceResult]
+_MAX_CONCURRENCY_ATTEMPTS = 3
+_RETRYABLE_CONCURRENCY_ERRORS = (SerializationFailure, DeadlockDetected)
+
+
+@dataclass(frozen=True)
+class _PreparedPrediction:
+    feature_payload: dict[str, Any]
+    source_trace_payload: dict[str, Any]
+    source_trace_sha256: str
+    model_home_win_probability: Decimal
+    frozen_route_home_baseline_probability: Decimal
+    classification_threshold: Decimal
+    predicted_side: NFLPredictedSide
 
 
 def execute_nfl_moneyline_prediction_run(
+    *,
+    season: int,
+    target_date: date,
+    slate_start_time: datetime,
+    slate_end_time: datetime,
+    run_type: NFLMoneylinePredictionRunType,
+    run_key: UUID | None,
+    dry_run: bool,
+) -> NFLMoneylinePredictionExecutionResult:
+    """Execute the strict production path with committed inference identities."""
+
+    return _execute_nfl_moneyline_prediction_run(
+        season=season,
+        target_date=target_date,
+        slate_start_time=slate_start_time,
+        slate_end_time=slate_end_time,
+        run_type=run_type,
+        run_key=run_key,
+        dry_run=dry_run,
+        connection_factory=get_connection,
+        early_artifact_loader=load_frozen_nfl_early_artifact,
+        mature_artifact_loader=load_frozen_nfl_mature_artifact,
+        inference_runner=infer_nfl_moneyline,
+    )
+
+
+def _execute_nfl_moneyline_prediction_run(
     *,
     season: int,
     target_date: date,
@@ -61,6 +108,44 @@ def execute_nfl_moneyline_prediction_run(
     early_artifact_loader: ArtifactLoader = load_frozen_nfl_early_artifact,
     mature_artifact_loader: ArtifactLoader = load_frozen_nfl_mature_artifact,
     inference_runner: InferenceRunner = infer_nfl_moneyline,
+) -> NFLMoneylinePredictionExecutionResult:
+    """Internal dependency-injected path used by focused tests."""
+
+    for attempt in range(1, _MAX_CONCURRENCY_ATTEMPTS + 1):
+        try:
+            return _execute_nfl_moneyline_prediction_run_once(
+                season=season,
+                target_date=target_date,
+                slate_start_time=slate_start_time,
+                slate_end_time=slate_end_time,
+                run_type=run_type,
+                run_key=run_key,
+                dry_run=dry_run,
+                connection_factory=connection_factory,
+                early_artifact_loader=early_artifact_loader,
+                mature_artifact_loader=mature_artifact_loader,
+                inference_runner=inference_runner,
+            )
+        except _RETRYABLE_CONCURRENCY_ERRORS:
+            if attempt == _MAX_CONCURRENCY_ATTEMPTS:
+                raise
+
+    raise AssertionError("unreachable NFL prediction concurrency retry state")
+
+
+def _execute_nfl_moneyline_prediction_run_once(
+    *,
+    season: int,
+    target_date: date,
+    slate_start_time: datetime,
+    slate_end_time: datetime,
+    run_type: NFLMoneylinePredictionRunType,
+    run_key: UUID | None,
+    dry_run: bool,
+    connection_factory: ConnectionFactory,
+    early_artifact_loader: ArtifactLoader,
+    mature_artifact_loader: ArtifactLoader,
+    inference_runner: InferenceRunner,
 ) -> NFLMoneylinePredictionExecutionResult:
     """Infer one explicit UTC slate and optionally persist it atomically."""
 
@@ -122,6 +207,13 @@ def execute_nfl_moneyline_prediction_run(
                 )
                 expected_slate_fingerprint = _slate_fingerprint(targets)
                 expected_target_count = len(targets)
+                if (
+                    run_type is NFLMoneylinePredictionRunType.OFFICIAL
+                    and expected_target_count == 0
+                ):
+                    raise ValueError(
+                        "official NFL prediction slate must contain at least one target"
+                    )
                 request_sha = _request_fingerprint(
                     season=season,
                     target_date=target_date,
@@ -206,6 +298,8 @@ def execute_nfl_moneyline_prediction_run(
             connection_factory=connection_factory,
             inference_runner=inference_runner,
         )
+    except _RETRYABLE_CONCURRENCY_ERRORS:
+        raise
     except Exception as error:
         _retain_failed_run(
             prediction_run_id=prediction_run_id,
@@ -313,18 +407,34 @@ def _execute_write_transaction(
                         inference=inference,
                         neutral_site=game.neutral_site,
                         source_data_as_of=source_data_as_of,
-                        feature_payload=payload[0],
-                        source_trace_payload=payload[1],
-                        source_trace_sha256=payload[2],
+                        feature_payload=payload.feature_payload,
+                        source_trace_payload=payload.source_trace_payload,
+                        source_trace_sha256=payload.source_trace_sha256,
+                        model_home_win_probability=(
+                            payload.model_home_win_probability
+                        ),
+                        frozen_route_home_baseline_probability=(
+                            payload.frozen_route_home_baseline_probability
+                        ),
+                        classification_threshold=payload.classification_threshold,
+                        predicted_side=payload.predicted_side,
                     )
                 )
                 persisted.append(PersistedNFLMoneylinePrediction(
                     prediction_id=prediction_id,
                     prediction_created_at=prediction_created_at,
                     inference=inference,
-                    feature_payload=payload[0],
-                    source_trace_payload=payload[1],
-                    source_trace_sha256=payload[2],
+                    feature_payload=payload.feature_payload,
+                    source_trace_payload=payload.source_trace_payload,
+                    source_trace_sha256=payload.source_trace_sha256,
+                    model_home_win_probability=(
+                        payload.model_home_win_probability
+                    ),
+                    frozen_route_home_baseline_probability=(
+                        payload.frozen_route_home_baseline_probability
+                    ),
+                    classification_threshold=payload.classification_threshold,
+                    predicted_side=payload.predicted_side,
                 ))
             completed = complete_nfl_prediction_run(
                 cursor,
@@ -439,7 +549,7 @@ def _infer_targets(
 
 def _prediction_payloads(
     inference: NFLMoneylineInferenceResult,
-) -> tuple[dict[str, Any], dict[str, Any], str]:
+) -> _PreparedPrediction:
     feature_payload = {
         "feature_schema_version": inference.feature_schema_version,
         "ordered_feature_names": list(inference.ordered_feature_names),
@@ -465,7 +575,29 @@ def _prediction_payloads(
             for channel in inference.source_trace
         ]
     }
-    return feature_payload, source_trace, fingerprint_payload(source_trace)
+    probability = canonicalize_nfl_moneyline_probability(
+        inference.model_home_win_probability
+    )
+    baseline = canonicalize_nfl_moneyline_probability(
+        inference.frozen_empirical_home_baseline
+    )
+    threshold = canonicalize_nfl_moneyline_probability(
+        inference.classification_threshold
+    )
+    predicted_side = (
+        NFLPredictedSide.HOME
+        if probability >= threshold
+        else NFLPredictedSide.AWAY
+    )
+    return _PreparedPrediction(
+        feature_payload=feature_payload,
+        source_trace_payload=source_trace,
+        source_trace_sha256=fingerprint_payload(source_trace),
+        model_home_win_probability=probability,
+        frozen_route_home_baseline_probability=baseline,
+        classification_threshold=threshold,
+        predicted_side=predicted_side,
+    )
 
 
 def _slate_fingerprint(targets: tuple[Any, ...]) -> str:
@@ -490,7 +622,7 @@ def _source_snapshot_fingerprint(inferences, payloads) -> str:
         "games": [
             {
                 "game_id": inference.game_id,
-                "source_trace_sha256": payload[2],
+                "source_trace_sha256": payload.source_trace_sha256,
             }
             for inference, payload in zip(inferences, payloads, strict=True)
         ]
@@ -498,12 +630,8 @@ def _source_snapshot_fingerprint(inferences, payloads) -> str:
 
 
 def _prediction_set_fingerprint(inferences, payloads) -> str:
-    return fingerprint_payload({
-        "evaluation_protocol_version": (
-            NFL_MONEYLINE_EVALUATION_PROTOCOL_VERSION
-        ),
-        "predictions": [
-            {
+    records = tuple(
+        {
                 "game_id": inference.game_id,
                 "selected_route": inference.selected_route.value,
                 "model_specification_version": (
@@ -512,17 +640,32 @@ def _prediction_set_fingerprint(inferences, payloads) -> str:
                 "feature_vector_sha256": (
                     inference.feature_vector_fingerprint
                 ),
-                "source_trace_sha256": payload[2],
+                "source_trace_sha256": payload.source_trace_sha256,
                 "model_home_win_probability": (
-                    inference.model_home_win_probability
+                    canonical_nfl_moneyline_probability_text(
+                        payload.model_home_win_probability
+                    )
                 ),
                 "classification_threshold": (
-                    inference.classification_threshold
+                    canonical_nfl_moneyline_probability_text(
+                        payload.classification_threshold
+                    )
                 ),
-                "predicted_side": inference.predicted_side.value,
-            }
-            for inference, payload in zip(inferences, payloads, strict=True)
-        ],
+                "predicted_side": payload.predicted_side.value,
+        }
+        for inference, payload in zip(inferences, payloads, strict=True)
+    )
+    return _prediction_set_fingerprint_from_records(records)
+
+
+def _prediction_set_fingerprint_from_records(
+    records: tuple[dict[str, Any], ...],
+) -> str:
+    """Hash records reconstructed from the persisted canonical values."""
+
+    return fingerprint_payload({
+        "evaluation_protocol_version": NFL_MONEYLINE_EVALUATION_PROTOCOL_VERSION,
+        "predictions": list(records),
     })
 
 

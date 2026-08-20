@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
 from psycopg2.extras import Json
 
 from sportsmodel.nfl.models import NflGame, NflGameStatus, NflSeasonType
+from sportsmodel.nfl.moneyline_inference import NFLPredictedSide
 from sportsmodel.nfl.moneyline_prediction import (
     NFLMoneylinePredictionRun,
     NFLMoneylinePredictionRunStatus,
@@ -182,6 +184,10 @@ def insert_nfl_game_prediction(
     feature_payload: dict[str, Any],
     source_trace_payload: dict[str, Any],
     source_trace_sha256: str,
+    model_home_win_probability: Decimal,
+    frozen_route_home_baseline_probability: Decimal,
+    classification_threshold: Decimal,
+    predicted_side: NFLPredictedSide,
 ) -> tuple[int, datetime]:
     cursor.execute(
         """
@@ -220,9 +226,9 @@ def insert_nfl_game_prediction(
             inference.model_fingerprint, Json(feature_payload),
             inference.feature_vector_fingerprint, Json(source_trace_payload),
             source_trace_sha256, inference.latest_source_kickoff,
-            inference.model_home_win_probability,
-            inference.frozen_empirical_home_baseline,
-            inference.classification_threshold, inference.predicted_side.value,
+            model_home_win_probability,
+            frozen_route_home_baseline_probability,
+            classification_threshold, predicted_side.value,
         ),
     )
     return cursor.fetchone()

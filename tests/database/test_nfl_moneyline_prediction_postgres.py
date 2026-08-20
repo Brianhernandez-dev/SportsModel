@@ -1,10 +1,18 @@
 import os
-from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
+from threading import Barrier
 from uuid import uuid4
 
 import psycopg2
 from psycopg2.extras import Json
 import pytest
+
+from sportsmodel.nfl.moneyline_prediction import NFLMoneylinePredictionRunType
+from sportsmodel.nfl.moneyline_prediction_service import (
+    _execute_nfl_moneyline_prediction_run,
+)
 
 
 @pytest.mark.skipif(
@@ -25,12 +33,17 @@ def test_nfl_forward_prediction_constraints_and_append_only_evidence(
             cursor.execute(
                 """
                 UPDATE nfl_moneyline_prediction_runs
-                SET prediction_count = 1, source_data_as_of = clock_timestamp(),
+                SET prediction_count = 1,
+                    source_data_as_of = (
+                        SELECT MIN(source_data_as_of)
+                        FROM nfl_moneyline_game_predictions
+                        WHERE nfl_moneyline_prediction_run_id = %s
+                    ),
                     source_snapshot_sha256 = %s, prediction_set_sha256 = %s,
                     status = 'completed', completed_at = clock_timestamp()
                 WHERE nfl_moneyline_prediction_run_id = %s;
                 """,
-                ("6" * 64, "7" * 64, official_run),
+                (official_run, "6" * 64, "7" * 64, official_run),
             )
         connection.commit()
 
@@ -180,8 +193,222 @@ def test_nfl_forward_prediction_rejects_time_route_identity_and_run_drift(
         with pytest.raises(psycopg2.errors.CheckViolation):
             _create_run(connection, "preview", season=2025)
         connection.rollback()
+
+        _assert_run_lifecycle_and_parent_coherence(
+            connection, game_id, home_id, away_id
+        )
     finally:
         connection.close()
+
+
+@pytest.mark.skipif(
+    not os.getenv("SPORTSMODEL_TEST_DATABASE_URL"),
+    reason="requires disposable SPORTSMODEL_TEST_DATABASE_URL",
+)
+def test_nfl_prediction_locks_canonical_target_against_concurrent_mutation(
+    initialized_nfl_test_database,
+) -> None:
+    first = psycopg2.connect(initialized_nfl_test_database)
+    second = psycopg2.connect(initialized_nfl_test_database)
+    try:
+        game_id, home_id, away_id = _create_game(first)
+        run_id = _create_run(first, "preview")
+        _insert_prediction(first, run_id, game_id, home_id, away_id, "preview")
+
+        with second.cursor() as cursor:
+            cursor.execute("SET LOCAL lock_timeout = '250ms';")
+            with pytest.raises(psycopg2.errors.LockNotAvailable):
+                cursor.execute(
+                    "UPDATE nfl_games SET status = 'final', home_score = 1, "
+                    "away_score = 0, overtime = FALSE WHERE game_id = %s;",
+                    (game_id,),
+                )
+        second.rollback()
+        first.rollback()
+    finally:
+        first.close()
+        second.close()
+
+
+@pytest.mark.skipif(
+    not os.getenv("SPORTSMODEL_TEST_DATABASE_URL"),
+    reason="requires disposable SPORTSMODEL_TEST_DATABASE_URL",
+)
+def test_concurrent_identical_run_key_returns_one_completed_evidence_set(
+    initialized_nfl_test_database,
+) -> None:
+    setup = psycopg2.connect(initialized_nfl_test_database)
+    try:
+        game_id, _, _ = _create_game(setup)
+    finally:
+        setup.close()
+    run_key = uuid4()
+    barrier = Barrier(2)
+
+    def execute():
+        barrier.wait()
+        return _execute_nfl_moneyline_prediction_run(
+            season=2026,
+            target_date=date(2099, 9, 10),
+            slate_start_time=datetime(2099, 9, 10, tzinfo=timezone.utc),
+            slate_end_time=datetime(2099, 9, 11, tzinfo=timezone.utc),
+            run_type=NFLMoneylinePredictionRunType.OFFICIAL,
+            run_key=run_key,
+            dry_run=False,
+            connection_factory=lambda: psycopg2.connect(
+                initialized_nfl_test_database
+            ),
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = tuple(executor.map(lambda _: execute(), range(2)))
+
+    assert results[0].run is not None
+    assert results[1].run is not None
+    assert results[0].run.prediction_run_id == results[1].run.prediction_run_id
+    verification = psycopg2.connect(initialized_nfl_test_database)
+    try:
+        with verification.cursor() as cursor:
+            cursor.execute(
+                "SELECT status, target_count, prediction_count FROM "
+                "nfl_moneyline_prediction_runs WHERE run_key = %s;",
+                (run_key,),
+            )
+            assert cursor.fetchone() == ("completed", 1, 1)
+            cursor.execute(
+                "SELECT COUNT(*) FROM nfl_moneyline_game_predictions "
+                "WHERE game_id = %s;",
+                (game_id,),
+            )
+            assert cursor.fetchone()[0] == 1
+    finally:
+        verification.close()
+
+
+def _assert_run_lifecycle_and_parent_coherence(
+    connection, game_id, home_id, away_id,
+) -> None:
+    with pytest.raises(psycopg2.errors.RaiseException, match="begin running"):
+        with connection.cursor() as cursor:
+            _insert_direct_terminal_run(cursor, "completed")
+    connection.rollback()
+    with pytest.raises(psycopg2.errors.RaiseException, match="begin running"):
+        with connection.cursor() as cursor:
+            _insert_direct_terminal_run(cursor, "failed")
+    connection.rollback()
+
+    run_id = _create_run(connection, "preview")
+    with pytest.raises(psycopg2.errors.RaiseException, match="identity is immutable"):
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE nfl_moneyline_prediction_runs SET target_count = 2 "
+                "WHERE nfl_moneyline_prediction_run_id = %s;",
+                (run_id,),
+            )
+    connection.rollback()
+
+    wrong_season_run = _create_run(connection, "preview", season=2027)
+    with pytest.raises(psycopg2.errors.RaiseException, match="season"):
+        _insert_prediction(
+            connection, wrong_season_run, game_id, home_id, away_id, "preview"
+        )
+    connection.rollback()
+
+    outside_run = _create_run(
+        connection,
+        "preview",
+        slate_start=datetime(2099, 9, 9, tzinfo=timezone.utc),
+        slate_end=datetime(2099, 9, 10, tzinfo=timezone.utc),
+    )
+    with pytest.raises(psycopg2.errors.RaiseException, match="outside parent"):
+        _insert_prediction(
+            connection, outside_run, game_id, home_id, away_id, "preview"
+        )
+    connection.rollback()
+
+    snapshot_run = _create_run(connection, "preview")
+    with pytest.raises(psycopg2.errors.RaiseException, match="transaction snapshot"):
+        _insert_prediction(
+            connection, snapshot_run, game_id, home_id, away_id, "preview",
+            source_data_as_of=datetime(2099, 1, 1, tzinfo=timezone.utc),
+        )
+    connection.rollback()
+
+    source_run = _create_run(connection, "preview")
+    prediction_id = _insert_prediction(
+        connection, source_run, game_id, home_id, away_id, "preview",
+        probability=Decimal("0.0523316383502806"),
+    )
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT source_data_as_of, model_home_win_probability FROM "
+            "nfl_moneyline_game_predictions WHERE "
+            "nfl_moneyline_game_prediction_id = %s;",
+            (prediction_id,),
+        )
+        child_source, stored_probability = cursor.fetchone()
+    assert stored_probability == Decimal("0.0523316383502806")
+    with pytest.raises(psycopg2.errors.RaiseException, match="source timestamp"):
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE nfl_moneyline_prediction_runs
+                SET prediction_count = 1, source_data_as_of = %s,
+                    source_snapshot_sha256 = %s, prediction_set_sha256 = %s,
+                    status = 'completed', completed_at = clock_timestamp()
+                WHERE nfl_moneyline_prediction_run_id = %s;
+                """,
+                (
+                    child_source + timedelta(seconds=1),
+                    "6" * 64,
+                    "7" * 64,
+                    source_run,
+                ),
+            )
+    connection.rollback()
+
+    with pytest.raises(psycopg2.errors.CheckViolation):
+        _create_run(connection, "official", target_count=0)
+    connection.rollback()
+
+
+def _insert_direct_terminal_run(cursor, status):
+    terminal_values = {
+        "completed": (1, 1, datetime.now(timezone.utc), "6" * 64, "7" * 64,
+                      datetime.now(timezone.utc), None, None),
+        "failed": (0, 0, None, None, None, None,
+                   datetime.now(timezone.utc), "direct failure"),
+    }[status]
+    cursor.execute(
+        """
+        INSERT INTO nfl_moneyline_prediction_runs (
+            run_key, request_sha256, run_type, evaluation_protocol_version,
+            routing_contract_version, season, target_date, slate_start_time,
+            slate_end_time, slate_fingerprint,
+            early_model_specification_version, early_feature_schema_version,
+            early_specification_fingerprint, early_model_fingerprint,
+            mature_model_specification_version, mature_feature_schema_version,
+            mature_specification_fingerprint, mature_model_fingerprint,
+            target_count, prediction_count, status, source_data_as_of,
+            source_snapshot_sha256, prediction_set_sha256, completed_at,
+            failed_at, failure_message
+        ) VALUES (
+            %s, %s, 'preview', 'test-protocol', 'test-routing', 2026,
+            '2099-09-10', '2099-09-10T00:00:00Z',
+            '2099-09-11T00:00:00Z', %s,
+            'early-model', 'early-schema', %s, %s,
+            'mature-model', 'mature-schema', %s, %s,
+            %s, %s, %s, %s, %s, %s, %s, %s, %s
+        );
+        """,
+        (
+            uuid4(), "0" * 64, "1" * 64, "2" * 64, "4" * 64,
+            "8" * 64, "a" * 64,
+            terminal_values[0], terminal_values[1], status,
+            terminal_values[2], terminal_values[3], terminal_values[4],
+            terminal_values[5], terminal_values[6], terminal_values[7],
+        ),
+    )
 
 
 def _create_game(connection):
@@ -220,7 +447,11 @@ def _create_game(connection):
     return game_id, home_id, away_id
 
 
-def _create_run(connection, run_type, *, season=2026, target_count=1):
+def _create_run(
+    connection, run_type, *, season=2026, target_count=1,
+    slate_start=datetime(2099, 9, 10, tzinfo=timezone.utc),
+    slate_end=datetime(2099, 9, 11, tzinfo=timezone.utc),
+):
     with connection.cursor() as cursor:
         cursor.execute(
             """
@@ -235,14 +466,14 @@ def _create_run(connection, run_type, *, season=2026, target_count=1):
                 mature_model_fingerprint, target_count
             ) VALUES (
                 %s, %s, %s, 'test-protocol', 'test-routing', %s,
-                '2026-09-10', '2099-09-10T00:00:00Z',
-                '2099-09-11T00:00:00Z', %s,
+                '2099-09-10', %s, %s, %s,
                 'early-model', 'early-schema', %s, %s,
                 'mature-model', 'mature-schema', %s, %s, %s
             ) RETURNING nfl_moneyline_prediction_run_id;
             """,
             (
-                uuid4(), "0" * 64, run_type, season, "1" * 64,
+                uuid4(), "0" * 64, run_type, season,
+                slate_start, slate_end, "1" * 64,
                 "2" * 64, "4" * 64, "8" * 64, "a" * 64, target_count,
             ),
         )
@@ -255,6 +486,7 @@ def _insert_prediction(
     connection, run_id, game_id, home_id, away_id, run_type,
     *, route="early", home_count=0, away_count=0,
     model_fingerprint="4" * 64, kickoff=None,
+    source_data_as_of=None, probability=Decimal("0.6000000000000000"),
 ):
     kickoff = kickoff or datetime(2099, 9, 10, 20, tzinfo=timezone.utc)
     if route == "early":
@@ -263,7 +495,17 @@ def _insert_prediction(
         model, schema, specification = "mature-model", "mature-schema", "8" * 64
         if model_fingerprint == "4" * 64:
             model_fingerprint = "a" * 64
+    predicted_side = (
+        "home" if probability >= Decimal("0.5000000000000000") else "away"
+    )
     with connection.cursor() as cursor:
+        cursor.execute("SELECT transaction_timestamp();")
+        transaction_time = cursor.fetchone()[0]
+        source_time = (
+            transaction_time
+            if source_data_as_of is None
+            else source_data_as_of
+        )
         cursor.execute(
             """
             INSERT INTO nfl_moneyline_game_predictions (
@@ -281,21 +523,23 @@ def _insert_prediction(
                 classification_threshold, predicted_side
             ) VALUES (
                 %s, %s, 'test-protocol', %s, 2026, %s, %s, %s, FALSE,
-                %s, clock_timestamp(), %s, %s, %s, 'test-routing',
-                %s, %s, %s, %s, %s, %s, %s, %s, NULL, 0.6, 0.55, 0.5,
-                'home'
+                %s, %s, %s, %s, %s, 'test-routing',
+                %s, %s, %s, %s, %s, %s, %s, %s, NULL, %s, 0.55, 0.5,
+                %s
             ) RETURNING nfl_moneyline_game_prediction_id;
             """,
             (
                 run_id, run_type, game_id, kickoff, home_id, away_id, kickoff,
-                home_count, away_count, route, model, schema, specification,
+                source_time, home_count, away_count, route,
+                model, schema, specification,
                 model_fingerprint,
                 Json({
                     "feature_schema_version": "early-schema",
                     "ordered_feature_names": ["x"],
                     "ordered_feature_values": [1.0],
                 }),
-                "3" * 64, Json({"channels": []}), "5" * 64,
+                "3" * 64, Json({"channels": []}), "5" * 64, probability,
+                predicted_side,
             ),
         )
         return cursor.fetchone()[0]

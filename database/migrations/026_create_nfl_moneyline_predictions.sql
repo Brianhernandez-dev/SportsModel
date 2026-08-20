@@ -48,9 +48,30 @@ CREATE TABLE nfl_moneyline_prediction_runs (
     CONSTRAINT chk_nfl_moneyline_runs_counts
         CHECK (
             target_count >= 0
+            AND (run_type <> 'official' OR target_count >= 1)
             AND prediction_count >= 0
             AND prediction_count <= target_count
         ),
+    CONSTRAINT chk_nfl_moneyline_runs_current_protocol_identity CHECK (
+        evaluation_protocol_version <> 'nfl_moneyline_forward_0.1.0'
+        OR (
+            routing_contract_version = 'nfl_moneyline_routing_0.1.0'
+            AND early_model_specification_version
+                = 'nfl_moneyline_early_frozen_0.1.0'
+            AND early_feature_schema_version = 'nfl_moneyline_early_0.1.0'
+            AND early_specification_fingerprint
+                = '109d8bf693f67836d0acd39a631a50dccfdfaea61284aa9ef09349f2b71b9675'
+            AND early_model_fingerprint
+                = 'ea7a9e90c59e4cdd87a2115895dddbfe117feb8b5f53a593eb6c3007fe0c1fd8'
+            AND mature_model_specification_version
+                = 'nfl_moneyline_frozen_0.1.0'
+            AND mature_feature_schema_version = 'nfl_moneyline_0.2.0'
+            AND mature_specification_fingerprint
+                = '49cbdb4ccc03b2a876aa4ba2bce2232da62c2eb5a09a9a2884d776b4ea684f38'
+            AND mature_model_fingerprint
+                = 'cb7b1d0dde2272ed49317f25441a32dc6518b25950266e577374bf13b28b20ac'
+        )
+    ),
     CONSTRAINT chk_nfl_moneyline_runs_completion CHECK (
         (
             status = 'running'
@@ -218,15 +239,80 @@ CREATE FUNCTION protect_nfl_moneyline_prediction_run_transition()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
 DECLARE
     actual_prediction_count BIGINT;
+    mismatched_source_count BIGINT;
 BEGIN
+    IF TG_OP = 'INSERT' THEN
+        IF NEW.status <> 'running' OR NEW.prediction_count <> 0 THEN
+            RAISE EXCEPTION 'new NFL prediction runs must begin running and empty';
+        END IF;
+        RETURN NEW;
+    END IF;
+
     IF OLD.status IN ('completed', 'failed') THEN
         RAISE EXCEPTION 'terminal NFL prediction runs are immutable';
+    END IF;
+    IF ROW(
+        NEW.nfl_moneyline_prediction_run_id,
+        NEW.run_key,
+        NEW.request_sha256,
+        NEW.run_type,
+        NEW.evaluation_protocol_version,
+        NEW.routing_contract_version,
+        NEW.season,
+        NEW.target_date,
+        NEW.slate_start_time,
+        NEW.slate_end_time,
+        NEW.slate_fingerprint,
+        NEW.early_model_specification_version,
+        NEW.early_feature_schema_version,
+        NEW.early_specification_fingerprint,
+        NEW.early_model_fingerprint,
+        NEW.mature_model_specification_version,
+        NEW.mature_feature_schema_version,
+        NEW.mature_specification_fingerprint,
+        NEW.mature_model_fingerprint,
+        NEW.target_count,
+        NEW.started_at,
+        NEW.created_at
+    ) IS DISTINCT FROM ROW(
+        OLD.nfl_moneyline_prediction_run_id,
+        OLD.run_key,
+        OLD.request_sha256,
+        OLD.run_type,
+        OLD.evaluation_protocol_version,
+        OLD.routing_contract_version,
+        OLD.season,
+        OLD.target_date,
+        OLD.slate_start_time,
+        OLD.slate_end_time,
+        OLD.slate_fingerprint,
+        OLD.early_model_specification_version,
+        OLD.early_feature_schema_version,
+        OLD.early_specification_fingerprint,
+        OLD.early_model_fingerprint,
+        OLD.mature_model_specification_version,
+        OLD.mature_feature_schema_version,
+        OLD.mature_specification_fingerprint,
+        OLD.mature_model_fingerprint,
+        OLD.target_count,
+        OLD.started_at,
+        OLD.created_at
+    ) THEN
+        RAISE EXCEPTION 'NFL prediction run identity is immutable';
     END IF;
     IF OLD.status = 'running' AND NEW.status NOT IN ('running', 'completed', 'failed') THEN
         RAISE EXCEPTION 'invalid NFL prediction run status transition';
     END IF;
+    IF NEW.status = 'running' AND NEW.prediction_count <> 0 THEN
+        RAISE EXCEPTION 'running NFL prediction run count must remain zero';
+    END IF;
     IF NEW.status IN ('completed', 'failed') THEN
-        SELECT COUNT(*) INTO actual_prediction_count
+        SELECT
+            COUNT(*),
+            COUNT(*) FILTER (
+                WHERE source_data_as_of IS DISTINCT FROM NEW.source_data_as_of
+            )
+        INTO actual_prediction_count, mismatched_source_count
         FROM nfl_moneyline_game_predictions
         WHERE nfl_moneyline_prediction_run_id = OLD.nfl_moneyline_prediction_run_id;
     END IF;
@@ -235,16 +321,23 @@ BEGIN
            OR actual_prediction_count <> NEW.target_count THEN
             RAISE EXCEPTION 'completed NFL prediction run count does not match children';
         END IF;
+        IF mismatched_source_count <> 0 THEN
+            RAISE EXCEPTION 'completed NFL prediction run source timestamp does not match children';
+        END IF;
+        NEW.completed_at := clock_timestamp();
     END IF;
     IF NEW.status = 'failed' AND actual_prediction_count <> 0 THEN
         RAISE EXCEPTION 'failed NFL prediction run cannot retain child predictions';
+    END IF;
+    IF NEW.status = 'failed' THEN
+        NEW.failed_at := clock_timestamp();
     END IF;
     RETURN NEW;
 END;
 $$;
 
 CREATE TRIGGER trg_nfl_moneyline_run_transition
-BEFORE UPDATE ON nfl_moneyline_prediction_runs
+BEFORE INSERT OR UPDATE ON nfl_moneyline_prediction_runs
 FOR EACH ROW EXECUTE FUNCTION protect_nfl_moneyline_prediction_run_transition();
 
 CREATE FUNCTION prevent_nfl_moneyline_prediction_run_delete()
@@ -267,7 +360,9 @@ BEGIN
     NEW.prediction_created_at := clock_timestamp();
     NEW.created_at := NEW.prediction_created_at;
 
-    SELECT status, routing_contract_version,
+    SELECT status, run_type, evaluation_protocol_version,
+           routing_contract_version, season, slate_start_time, slate_end_time,
+           target_count,
            early_model_specification_version,
            early_feature_schema_version,
            early_specification_fingerprint,
@@ -279,12 +374,25 @@ BEGIN
     INTO parent_run
     FROM nfl_moneyline_prediction_runs
     WHERE nfl_moneyline_prediction_run_id = NEW.nfl_moneyline_prediction_run_id
-    FOR KEY SHARE;
+    FOR UPDATE;
     IF parent_run.status IS DISTINCT FROM 'running' THEN
         RAISE EXCEPTION 'NFL prediction parent run must be running';
     END IF;
-    IF NEW.routing_contract_version <> parent_run.routing_contract_version THEN
-        RAISE EXCEPTION 'NFL prediction routing contract identity mismatch';
+    IF NEW.run_type <> parent_run.run_type
+       OR NEW.evaluation_protocol_version
+            <> parent_run.evaluation_protocol_version
+       OR NEW.routing_contract_version <> parent_run.routing_contract_version THEN
+        RAISE EXCEPTION 'NFL prediction parent identity mismatch';
+    END IF;
+    IF NEW.season <> parent_run.season THEN
+        RAISE EXCEPTION 'NFL prediction season does not match parent run';
+    END IF;
+    IF NEW.target_kickoff < parent_run.slate_start_time
+       OR NEW.target_kickoff >= parent_run.slate_end_time THEN
+        RAISE EXCEPTION 'NFL prediction target is outside parent slate window';
+    END IF;
+    IF NEW.source_data_as_of IS DISTINCT FROM transaction_timestamp() THEN
+        RAISE EXCEPTION 'NFL prediction source timestamp must identify its transaction snapshot';
     END IF;
     IF NEW.selected_route = 'early' AND (
         NEW.selected_model_specification_version
@@ -308,6 +416,14 @@ BEGIN
     ) THEN
         RAISE EXCEPTION 'NFL prediction mature artifact identity mismatch';
     END IF;
+    IF (
+        SELECT COUNT(*)
+        FROM nfl_moneyline_game_predictions
+        WHERE nfl_moneyline_prediction_run_id
+            = NEW.nfl_moneyline_prediction_run_id
+    ) >= parent_run.target_count THEN
+        RAISE EXCEPTION 'NFL prediction run already contains its target count';
+    END IF;
 
     SELECT
         nfl.season,
@@ -320,7 +436,7 @@ BEGIN
     FROM nfl_games AS nfl
     JOIN games AS game ON game.game_id = nfl.game_id
     WHERE nfl.game_id = NEW.game_id
-    FOR KEY SHARE OF nfl, game;
+    FOR SHARE OF nfl, game;
 
     IF NOT FOUND THEN
         RAISE EXCEPTION 'canonical NFL target game does not exist';
