@@ -2,17 +2,22 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from enum import StrEnum
-
 from sportsmodel.nfl.features import (
     HistoricalNflTeamGame,
     NFLFeatureDataProvider,
+)
+from sportsmodel.nfl.moneyline_routing import (
+    NFL_MONEYLINE_MATURE_PRIOR_GAME_THRESHOLD,
+    NFLMoneylineRoute,
+    select_nfl_moneyline_route,
 )
 from sportsmodel.nfl.models import NflGame, NflSeasonType
 
 
 NFL_EARLY_MONEYLINE_FEATURE_SCHEMA_VERSION = "nfl_moneyline_early_0.1.0"
-NFL_EARLY_ROUTE_CURRENT_GAME_THRESHOLD = 3
+NFL_EARLY_ROUTE_CURRENT_GAME_THRESHOLD = (
+    NFL_MONEYLINE_MATURE_PRIOR_GAME_THRESHOLD
+)
 
 NFL_EARLY_MONEYLINE_FEATURE_NAMES = (
     "prior_season_games_played_difference",
@@ -27,25 +32,6 @@ NFL_EARLY_MONEYLINE_FEATURE_NAMES = (
     "minimum_current_season_prior_games",
     "neutral_site",
 )
-
-
-class NFLMoneylineRoute(StrEnum):
-    EARLY = "early"
-    MATURE = "mature"
-
-
-def select_nfl_moneyline_route(
-    home_current_prior_games: int,
-    away_current_prior_games: int,
-) -> NFLMoneylineRoute:
-    if home_current_prior_games < 0 or away_current_prior_games < 0:
-        raise ValueError("current-season prior-game counts cannot be negative")
-    if (
-        home_current_prior_games >= NFL_EARLY_ROUTE_CURRENT_GAME_THRESHOLD
-        and away_current_prior_games >= NFL_EARLY_ROUTE_CURRENT_GAME_THRESHOLD
-    ):
-        return NFLMoneylineRoute.MATURE
-    return NFLMoneylineRoute.EARLY
 
 
 @dataclass(frozen=True)
