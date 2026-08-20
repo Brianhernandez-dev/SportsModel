@@ -203,6 +203,14 @@ def evaluate_moneyline_model_value(
         disqualification_reasons=(
             disqualification_reasons
         ),
+        starter_match_status=prediction.starter_match_status,
+        starter_mismatch_reason=prediction.starter_mismatch_reason,
+        current_home_starting_pitcher_mlb_id=(
+            prediction.current_home_starting_pitcher_mlb_id
+        ),
+        current_away_starting_pitcher_mlb_id=(
+            prediction.current_away_starting_pitcher_mlb_id
+        ),
     )
 
 
@@ -242,6 +250,12 @@ def _build_disqualification_reasons(
     policy: MoneylineMarketEvaluationPolicy,
 ) -> tuple[str, ...]:
     reasons: list[str] = []
+
+    if prediction.starter_match_status != "matched":
+        reasons.append(
+            prediction.starter_mismatch_reason
+            or "starter_status_unavailable"
+        )
 
     if (
         model_expected_value

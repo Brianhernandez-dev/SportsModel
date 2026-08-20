@@ -9,6 +9,12 @@ VALID_STARTER_COVERAGE = {
     "none",
 }
 
+VALID_STARTER_MATCH_STATUSES = {
+    "matched",
+    "changed",
+    "unavailable",
+}
+
 
 @dataclass(frozen=True)
 class MoneylineMarketEvaluationPolicy:
@@ -82,6 +88,14 @@ class MoneylinePredictionMarketContext:
 
     away_starter_features_available: bool
 
+    starter_match_status: str = "matched"
+
+    starter_mismatch_reason: str | None = None
+
+    current_home_starting_pitcher_mlb_id: int | None = None
+
+    current_away_starting_pitcher_mlb_id: int | None = None
+
     def __post_init__(self) -> None:
         if self.game_id <= 0:
             raise ValueError(
@@ -110,6 +124,12 @@ class MoneylinePredictionMarketContext:
             raise ValueError(
                 "Starter coverage must be both, "
                 "partial, or none."
+            )
+
+        if self.starter_match_status not in VALID_STARTER_MATCH_STATUSES:
+            raise ValueError(
+                "Starter match status must be matched, changed, "
+                "or unavailable."
             )
 
 
@@ -156,3 +176,22 @@ class MoneylineModelMarketEvaluation:
     qualifies_as_paper_candidate: bool
 
     disqualification_reasons: tuple[str, ...]
+
+    starter_match_status: str = "matched"
+
+    starter_mismatch_reason: str | None = None
+
+    current_home_starting_pitcher_mlb_id: int | None = None
+
+    current_away_starting_pitcher_mlb_id: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.starter_match_status not in VALID_STARTER_MATCH_STATUSES:
+            raise ValueError("Invalid starter match status.")
+        if (
+            self.qualifies_as_paper_candidate
+            and self.starter_match_status != "matched"
+        ):
+            raise ValueError(
+                "A paper candidate requires an exact starter match."
+            )

@@ -1,6 +1,6 @@
 ﻿from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -13,6 +13,9 @@ from sportsmodel.analysis.market_builder import (
 from sportsmodel.analysis.moneyline_model_value import (
     DEFAULT_MONEYLINE_MARKET_EVALUATION_POLICY,
     evaluate_moneyline_model_value,
+)
+from sportsmodel.analysis.moneyline_starter_match import (
+    classify_starter_match,
 )
 from sportsmodel.analysis.no_vig import (
     calculate_no_vig_markets,
@@ -33,9 +36,15 @@ from sportsmodel.models.moneyline_market_evaluation import (
 from sportsmodel.models.snapshot import (
     MarketSnapshot,
 )
+from sportsmodel.predictions.moneyline_service import (
+    load_current_probable_starters,
+)
 
 
 ConnectionFactory = Callable[[], Any]
+CurrentStarterLoader = Callable[
+    [date], dict[int, tuple[int | None, int | None]]
+]
 
 
 @dataclass(frozen=True)
@@ -47,6 +56,10 @@ class StoredMoneylinePrediction:
     moneyline_game_prediction_id: int
 
     game_id: int
+
+    mlb_game_id: int | None
+
+    target_date: date
 
     prediction_time: datetime
 
@@ -65,6 +78,10 @@ class StoredMoneylinePrediction:
     home_starter_features_available: bool
 
     away_starter_features_available: bool
+
+    home_starting_pitcher_mlb_id: int | None
+
+    away_starting_pitcher_mlb_id: int | None
 
 
 @dataclass(frozen=True)
@@ -109,6 +126,14 @@ class MoneylineMarketEvaluationResult:
 
     disqualification_reasons: tuple[str, ...]
 
+    starter_match_status: str
+
+    starter_mismatch_reason: str | None
+
+    current_home_starting_pitcher_mlb_id: int | None
+
+    current_away_starting_pitcher_mlb_id: int | None
+
 
 @dataclass(frozen=True)
 class MoneylineMarketEvaluationRunResult:
@@ -147,6 +172,7 @@ def evaluate_moneyline_prediction_run(
         get_connection
     ),
     require_complete_market_coverage: bool = True,
+    current_starter_loader: CurrentStarterLoader | None = None,
 ) -> MoneylineMarketEvaluationRunResult:
     """
     Evaluate and persist one prediction run against one odds run.
@@ -235,6 +261,25 @@ def evaluate_moneyline_prediction_run(
             )
         )
 
+        current_starters_by_mlb_game: dict[
+            int, tuple[int | None, int | None]
+        ] = {}
+        resolved_starter_loader = current_starter_loader
+        for target_date in {
+            prediction.target_date
+            for prediction in predictions
+        }:
+            if resolved_starter_loader is None:
+                try:
+                    current = load_current_probable_starters(target_date)
+                except Exception:
+                    # A source outage is safely represented as unavailable;
+                    # it must never preserve or create qualification.
+                    current = {}
+            else:
+                current = resolved_starter_loader(target_date)
+            current_starters_by_mlb_game.update(current)
+
         evaluated_rows: list[
             tuple[
                 StoredMoneylinePrediction,
@@ -271,24 +316,10 @@ def evaluate_moneyline_prediction_run(
             )
 
             context = (
-                MoneylinePredictionMarketContext(
-                    game_id=prediction.game_id,
-                    selection_name=(
-                        prediction.selection_name
-                    ),
-                    model_probability=(
-                        prediction.model_probability
-                    ),
-                    starter_coverage=(
-                        prediction.starter_coverage
-                    ),
-                    home_starter_features_available=(
-                        prediction
-                        .home_starter_features_available
-                    ),
-                    away_starter_features_available=(
-                        prediction
-                        .away_starter_features_available
+                _build_prediction_market_context(
+                    prediction=prediction,
+                    current_starters_by_mlb_game=(
+                        current_starters_by_mlb_game
                     ),
                 )
             )
@@ -325,32 +356,19 @@ def evaluate_moneyline_prediction_run(
         ] = []
 
         with connection.cursor() as cursor:
-            for (
-                prediction,
-                evaluation,
-            ) in evaluated_rows:
-                evaluation_id = (
-                    upsert_moneyline_market_evaluation(
-                        cursor,
-                        moneyline_game_prediction_id=(
-                            prediction
-                            .moneyline_game_prediction_id
-                        ),
-                        odds_ingestion_run_id=(
-                            odds_ingestion_run_id
-                        ),
-                        evaluation=evaluation,
-                    )
+            for prediction, evaluation in evaluated_rows:
+                evaluation_id = upsert_moneyline_market_evaluation(
+                    cursor,
+                    moneyline_game_prediction_id=(
+                        prediction.moneyline_game_prediction_id
+                    ),
+                    odds_ingestion_run_id=odds_ingestion_run_id,
+                    evaluation=evaluation,
                 )
 
-                sportsbook_name = (
-                    sportsbook_names.get(
-                        evaluation.sportsbook_id,
-                        (
-                            "Sportsbook "
-                            f"{evaluation.sportsbook_id}"
-                        ),
-                    )
+                sportsbook_name = sportsbook_names.get(
+                    evaluation.sportsbook_id,
+                    f"Sportsbook {evaluation.sportsbook_id}",
                 )
 
                 results.append(
@@ -359,57 +377,41 @@ def evaluate_moneyline_prediction_run(
                             evaluation_id
                         ),
                         moneyline_game_prediction_id=(
-                            prediction
-                            .moneyline_game_prediction_id
+                            prediction.moneyline_game_prediction_id
                         ),
-                        game_id=(
-                            prediction.game_id
-                        ),
-                        away_team_name=(
-                            prediction.away_team_name
-                        ),
-                        home_team_name=(
-                            prediction.home_team_name
-                        ),
-                        selection_name=(
-                            evaluation.selection_name
-                        ),
-                        sportsbook_name=(
-                            sportsbook_name
-                        ),
+                        game_id=prediction.game_id,
+                        away_team_name=prediction.away_team_name,
+                        home_team_name=prediction.home_team_name,
+                        selection_name=evaluation.selection_name,
+                        sportsbook_name=sportsbook_name,
                         price=evaluation.price,
-                        snapshot_time=(
-                            evaluation.snapshot_time
-                        ),
-                        model_probability=(
-                            evaluation.model_probability
-                        ),
+                        snapshot_time=evaluation.snapshot_time,
+                        model_probability=evaluation.model_probability,
                         market_no_vig_probability=(
-                            evaluation
-                            .market_no_vig_probability
+                            evaluation.market_no_vig_probability
                         ),
-                        model_market_edge=(
-                            evaluation.model_market_edge
-                        ),
-                        implied_probability=(
-                            evaluation.implied_probability
-                        ),
-                        model_price_edge=(
-                            evaluation.model_price_edge
-                        ),
-                        model_expected_value=(
-                            evaluation.model_expected_value
-                        ),
-                        sportsbook_count=(
-                            evaluation.sportsbook_count
-                        ),
+                        model_market_edge=evaluation.model_market_edge,
+                        implied_probability=evaluation.implied_probability,
+                        model_price_edge=evaluation.model_price_edge,
+                        model_expected_value=evaluation.model_expected_value,
+                        sportsbook_count=evaluation.sportsbook_count,
                         qualifies_as_paper_candidate=(
-                            evaluation
-                            .qualifies_as_paper_candidate
+                            evaluation.qualifies_as_paper_candidate
                         ),
                         disqualification_reasons=(
-                            evaluation
-                            .disqualification_reasons
+                            evaluation.disqualification_reasons
+                        ),
+                        starter_match_status=(
+                            evaluation.starter_match_status
+                        ),
+                        starter_mismatch_reason=(
+                            evaluation.starter_mismatch_reason
+                        ),
+                        current_home_starting_pitcher_mlb_id=(
+                            evaluation.current_home_starting_pitcher_mlb_id
+                        ),
+                        current_away_starting_pitcher_mlb_id=(
+                            evaluation.current_away_starting_pitcher_mlb_id
                         ),
                     )
                 )
@@ -420,31 +422,18 @@ def evaluate_moneyline_prediction_run(
             result.qualifies_as_paper_candidate
             for result in results
         )
-
         results.sort(
-            key=lambda result: (
-                result.model_expected_value
-            ),
+            key=lambda result: result.model_expected_value,
             reverse=True,
         )
 
         return MoneylineMarketEvaluationRunResult(
             prediction_run_id=prediction_run_id,
-            odds_ingestion_run_id=(
-                odds_ingestion_run_id
-            ),
-            policy_version=(
-                policy.policy_version
-            ),
-            predictions_loaded=len(
-                predictions
-            ),
-            evaluations_saved=len(
-                results
-            ),
-            paper_candidates=(
-                paper_candidates
-            ),
+            odds_ingestion_run_id=odds_ingestion_run_id,
+            policy_version=policy.policy_version,
+            predictions_loaded=len(predictions),
+            evaluations_saved=len(results),
+            paper_candidates=paper_candidates,
             evaluations=tuple(results),
             skipped_missing_market_game_ids=tuple(
                 skipped_missing_market_game_ids
@@ -457,6 +446,48 @@ def evaluate_moneyline_prediction_run(
 
     finally:
         connection.close()
+
+
+def _build_prediction_market_context(
+    *,
+    prediction: StoredMoneylinePrediction,
+    current_starters_by_mlb_game: dict[
+        int, tuple[int | None, int | None]
+    ],
+) -> MoneylinePredictionMarketContext:
+    current = (
+        current_starters_by_mlb_game.get(prediction.mlb_game_id)
+        if prediction.mlb_game_id is not None
+        else None
+    )
+    current_home, current_away = current or (None, None)
+    match = classify_starter_match(
+        predicted_home_mlb_id=prediction.home_starting_pitcher_mlb_id,
+        predicted_away_mlb_id=prediction.away_starting_pitcher_mlb_id,
+        current_home_mlb_id=current_home,
+        current_away_mlb_id=current_away,
+    )
+
+    return MoneylinePredictionMarketContext(
+        game_id=prediction.game_id,
+        selection_name=prediction.selection_name,
+        model_probability=prediction.model_probability,
+        starter_coverage=prediction.starter_coverage,
+        home_starter_features_available=(
+            prediction.home_starter_features_available
+        ),
+        away_starter_features_available=(
+            prediction.away_starter_features_available
+        ),
+        starter_match_status=match.status,
+        starter_mismatch_reason=match.reason,
+        current_home_starting_pitcher_mlb_id=(
+            match.current_home_mlb_id
+        ),
+        current_away_starting_pitcher_mlb_id=(
+            match.current_away_mlb_id
+        ),
+    )
 
 
 def _validate_completed_runs(
@@ -518,6 +549,8 @@ def _load_prediction_records(
         SELECT
             prediction.moneyline_game_prediction_id,
             prediction.game_id,
+            prediction.mlb_game_id,
+            prediction_run.target_date,
             prediction.prediction_time,
             prediction.game_start_time,
             away_team.team_name,
@@ -526,8 +559,13 @@ def _load_prediction_records(
             prediction.predicted_probability,
             prediction.starter_coverage,
             prediction.home_starter_features_available,
-            prediction.away_starter_features_available
+            prediction.away_starter_features_available,
+            prediction.home_starting_pitcher_mlb_id,
+            prediction.away_starting_pitcher_mlb_id
         FROM moneyline_game_predictions AS prediction
+        JOIN moneyline_prediction_runs AS prediction_run
+          ON prediction_run.moneyline_prediction_run_id =
+             prediction.moneyline_prediction_run_id
         JOIN teams AS away_team
           ON away_team.team_id =
              prediction.away_team_id
@@ -552,15 +590,19 @@ def _load_prediction_records(
         StoredMoneylinePrediction(
             moneyline_game_prediction_id=row[0],
             game_id=row[1],
-            prediction_time=row[2],
-            game_start_time=row[3],
-            away_team_name=row[4],
-            home_team_name=row[5],
-            selection_name=row[6],
-            model_probability=row[7],
-            starter_coverage=row[8],
-            home_starter_features_available=row[9],
-            away_starter_features_available=row[10],
+            mlb_game_id=row[2],
+            target_date=row[3],
+            prediction_time=row[4],
+            game_start_time=row[5],
+            away_team_name=row[6],
+            home_team_name=row[7],
+            selection_name=row[8],
+            model_probability=row[9],
+            starter_coverage=row[10],
+            home_starter_features_available=row[11],
+            away_starter_features_available=row[12],
+            home_starting_pitcher_mlb_id=row[13],
+            away_starting_pitcher_mlb_id=row[14],
         )
         for row in rows
     )

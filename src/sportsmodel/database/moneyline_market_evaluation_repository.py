@@ -55,13 +55,18 @@ def upsert_moneyline_market_evaluation(
                 away_starter_features_available,
                 policy_version,
                 qualifies_as_paper_candidate,
-                disqualification_reasons
+                disqualification_reasons,
+                starter_match_status,
+                starter_mismatch_reason,
+                current_home_starting_pitcher_mlb_id,
+                current_away_starting_pitcher_mlb_id
             )
         VALUES (
             %s, %s, %s, %s, %s,
             %s, %s, %s, %s, %s,
             %s, %s, %s, %s, %s,
-            %s, %s, %s, %s, %s
+            %s, %s, %s, %s, %s,
+            %s, %s, %s, %s
         )
         ON CONFLICT (
             moneyline_game_prediction_id,
@@ -103,6 +108,14 @@ def upsert_moneyline_market_evaluation(
                 EXCLUDED.qualifies_as_paper_candidate,
             disqualification_reasons =
                 EXCLUDED.disqualification_reasons,
+            starter_match_status =
+                EXCLUDED.starter_match_status,
+            starter_mismatch_reason =
+                EXCLUDED.starter_mismatch_reason,
+            current_home_starting_pitcher_mlb_id =
+                EXCLUDED.current_home_starting_pitcher_mlb_id,
+            current_away_starting_pitcher_mlb_id =
+                EXCLUDED.current_away_starting_pitcher_mlb_id,
             evaluated_at =
                 CURRENT_TIMESTAMP
         RETURNING
@@ -131,6 +144,10 @@ def upsert_moneyline_market_evaluation(
             list(
                 evaluation.disqualification_reasons
             ),
+            evaluation.starter_match_status,
+            evaluation.starter_mismatch_reason,
+            evaluation.current_home_starting_pitcher_mlb_id,
+            evaluation.current_away_starting_pitcher_mlb_id,
         ),
     )
 

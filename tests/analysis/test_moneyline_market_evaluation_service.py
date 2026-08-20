@@ -75,6 +75,15 @@ class FakeConnection:
         self.closed = True
 
 
+@pytest.fixture(autouse=True)
+def current_starters(monkeypatch) -> None:
+    monkeypatch.setattr(
+        service,
+        "load_current_probable_starters",
+        lambda target_date: {777001: (687473, 666200)},
+    )
+
+
 def test_evaluates_and_persists_prediction(
     monkeypatch,
 ) -> None:
@@ -375,6 +384,99 @@ def test_repeated_partial_evaluation_uses_same_upsert_key(
     assert persisted_keys == {(501, 181, "1.0.0")}
 
 
+@pytest.mark.parametrize(
+    ("current", "status", "reason"),
+    [
+        ((999999, 666200), "changed", "starter_changed_home"),
+        ((687473, 999999), "changed", "starter_changed_away"),
+        ((999998, 999999), "changed", "starter_changed_both"),
+        ((None, 666200), "unavailable", "starter_unavailable_home"),
+        ((687473, None), "unavailable", "starter_unavailable_away"),
+        ((None, None), "unavailable", "starter_unavailable_both"),
+    ],
+)
+def test_nonmatching_current_starters_cannot_qualify(
+    monkeypatch, current, status, reason
+) -> None:
+    connection = FakeConnection()
+    _patch_loaded_records(monkeypatch, snapshot_time=SNAPSHOT_TIME)
+    monkeypatch.setattr(
+        service,
+        "load_current_probable_starters",
+        lambda target_date: {777001: current},
+    )
+    persisted = []
+    monkeypatch.setattr(
+        service,
+        "upsert_moneyline_market_evaluation",
+        lambda cursor, **kwargs: persisted.append(kwargs) or 88,
+    )
+
+    result = service.evaluate_moneyline_prediction_run(
+        prediction_run_id=1,
+        odds_ingestion_run_id=181,
+        policy=MoneylineMarketEvaluationPolicy(
+            minimum_sportsbook_count=2,
+        ),
+        connection_factory=lambda: connection,
+    )
+
+    evaluation = result.evaluations[0]
+    stored = persisted[0]["evaluation"]
+    assert evaluation.qualifies_as_paper_candidate is False
+    assert evaluation.starter_match_status == status
+    assert evaluation.starter_mismatch_reason == reason
+    assert reason in evaluation.disqualification_reasons
+    assert stored.model_probability == Decimal("0.60")
+    assert _prediction().home_starting_pitcher_mlb_id == 687473
+    assert _prediction().away_starting_pitcher_mlb_id == 666200
+
+
+def test_missing_stored_starter_cannot_qualify(monkeypatch) -> None:
+    prediction = _prediction()
+    prediction = service.StoredMoneylinePrediction(
+        **{
+            **prediction.__dict__,
+            "home_starting_pitcher_mlb_id": None,
+            "starter_coverage": "partial",
+        }
+    )
+    match = service._build_prediction_market_context(
+        prediction=prediction,
+        current_starters_by_mlb_game={777001: (687473, 666200)},
+    )
+    assert match.starter_match_status == "unavailable"
+    assert match.starter_mismatch_reason == "starter_unavailable_home"
+
+
+def test_current_starter_source_failure_is_safely_unavailable(
+    monkeypatch,
+) -> None:
+    connection = FakeConnection()
+    _patch_loaded_records(monkeypatch, snapshot_time=SNAPSHOT_TIME)
+    monkeypatch.setattr(
+        service,
+        "load_current_probable_starters",
+        lambda target_date: (_ for _ in ()).throw(RuntimeError("offline")),
+    )
+    monkeypatch.setattr(
+        service,
+        "upsert_moneyline_market_evaluation",
+        lambda cursor, **kwargs: 88,
+    )
+
+    result = service.evaluate_moneyline_prediction_run(
+        prediction_run_id=1,
+        odds_ingestion_run_id=181,
+        connection_factory=lambda: connection,
+    )
+
+    evaluation = result.evaluations[0]
+    assert evaluation.qualifies_as_paper_candidate is False
+    assert evaluation.starter_match_status == "unavailable"
+    assert evaluation.starter_mismatch_reason == "starter_unavailable_both"
+
+
 def test_rejects_nonpositive_run_identifier() -> None:
     with pytest.raises(
         ValueError,
@@ -429,6 +531,8 @@ def _prediction(
     return service.StoredMoneylinePrediction(
         moneyline_game_prediction_id=501,
         game_id=game_id,
+        mlb_game_id=777001,
+        target_date=GAME_START_TIME.date(),
         prediction_time=PREDICTION_TIME,
         game_start_time=GAME_START_TIME,
         away_team_name="Kansas City Royals",
@@ -438,6 +542,8 @@ def _prediction(
         starter_coverage="both",
         home_starter_features_available=True,
         away_starter_features_available=True,
+        home_starting_pitcher_mlb_id=687473,
+        away_starting_pitcher_mlb_id=666200,
     )
 
 

@@ -190,6 +190,30 @@ def fetch_hydrated_schedule_for_date(
     return payload
 
 
+def load_current_probable_starters(
+    target_date: date,
+) -> dict[int, tuple[int | None, int | None]]:
+    """Load current MLB probable starters keyed by MLB game ID.
+
+    This is a point-in-time MLB Stats schedule read. Missing probable
+    pitchers are preserved as unavailable rather than inferred.
+    """
+
+    payload = fetch_hydrated_schedule_for_date(target_date)
+    starters: dict[int, tuple[int | None, int | None]] = {}
+
+    for raw_game in _extract_schedule_games(payload):
+        game = _parse_hydrated_schedule_game(raw_game)
+        if game is None:
+            continue
+        starters[game.mlb_game_id] = (
+            game.home_starting_pitcher_mlb_id,
+            game.away_starting_pitcher_mlb_id,
+        )
+
+    return starters
+
+
 def load_moneyline_model_package(
     model_directory: Path = DEFAULT_MODEL_DIRECTORY,
 ) -> LoadedMoneylineModelPackage:
