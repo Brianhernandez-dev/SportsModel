@@ -116,3 +116,5 @@ class NFLMoneylinePredictionExecutionResult:
     slate_fingerprint: str
     source_snapshot_sha256: str
     prediction_set_sha256: str
+    official_existing_game_ids: tuple[int, ...] = ()
+    team_abbreviations: tuple[tuple[int, str], ...] = ()

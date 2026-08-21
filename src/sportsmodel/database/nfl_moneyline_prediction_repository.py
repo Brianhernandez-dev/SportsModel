@@ -48,6 +48,23 @@ def database_clock(cursor: Any) -> datetime:
     return cursor.fetchone()[0]
 
 
+def list_nfl_team_abbreviations(
+    cursor: Any, *, team_ids: tuple[int, ...],
+) -> tuple[tuple[int, str], ...]:
+    if not team_ids:
+        return ()
+    cursor.execute(
+        """
+        SELECT team_id, current_abbreviation
+        FROM nfl_team_profiles
+        WHERE team_id = ANY(%s)
+        ORDER BY team_id;
+        """,
+        (list(team_ids),),
+    )
+    return tuple(cursor.fetchall())
+
+
 def create_nfl_prediction_run(
     cursor: Any,
     *,

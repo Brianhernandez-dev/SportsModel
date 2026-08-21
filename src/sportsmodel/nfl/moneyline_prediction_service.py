@@ -18,6 +18,7 @@ from sportsmodel.database.nfl_moneyline_prediction_repository import (
     insert_nfl_game_prediction,
     list_existing_official_nfl_game_ids,
     list_nfl_prediction_targets,
+    list_nfl_team_abbreviations,
     load_nfl_prediction_run_by_key,
     lock_nfl_prediction_run,
 )
@@ -497,11 +498,16 @@ def _execute_dry_run(
                     ),
                     game_ids=tuple(game.game_id for game in targets),
                 )
-                if official_ids:
-                    raise ValueError(
-                        "official NFL observations already exist for game IDs: "
-                        f"{official_ids}"
-                    )
+            else:
+                official_ids = ()
+            team_abbreviations = list_nfl_team_abbreviations(
+                cursor,
+                team_ids=tuple(sorted({
+                    team_id
+                    for game in targets
+                    for team_id in (game.home_team_id, game.away_team_id)
+                })),
+            )
             inferences = _infer_targets(
                 cursor=cursor,
                 targets=targets,
@@ -522,6 +528,8 @@ def _execute_dry_run(
             slate_fingerprint=slate_sha,
             source_snapshot_sha256=source_sha,
             prediction_set_sha256=prediction_sha,
+            official_existing_game_ids=official_ids,
+            team_abbreviations=team_abbreviations,
         )
     finally:
         connection.close()

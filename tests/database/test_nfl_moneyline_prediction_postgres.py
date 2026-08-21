@@ -10,6 +10,9 @@ from psycopg2.extras import Json
 import pytest
 
 import sportsmodel.nfl.moneyline_prediction_service as prediction_service
+from sportsmodel.nfl.moneyline_forward_evaluation import (
+    evaluate_nfl_moneyline_forward,
+)
 from sportsmodel.nfl.moneyline_prediction import (
     NFLMoneylinePredictionRunType,
     canonical_nfl_moneyline_probability_text,
@@ -174,6 +177,85 @@ def test_nfl_forward_prediction_constraints_and_append_only_evidence(
                     (official_run,),
                 )
         connection.rollback()
+
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT source_data_as_of FROM "
+                "nfl_moneyline_game_predictions WHERE "
+                "nfl_moneyline_prediction_run_id = %s;",
+                (preview_one,),
+            )
+            preview_source_time = cursor.fetchone()[0]
+            cursor.execute(
+                "UPDATE nfl_moneyline_prediction_runs SET "
+                "prediction_count = 1, source_data_as_of = %s, "
+                "source_snapshot_sha256 = %s, prediction_set_sha256 = %s, "
+                "status = 'completed' WHERE "
+                "nfl_moneyline_prediction_run_id = %s;",
+                (
+                    preview_source_time,
+                    "6" * 64,
+                    "7" * 64,
+                    preview_one,
+                ),
+            )
+            cursor.execute(
+                "SELECT nfl_moneyline_game_prediction_id, "
+                "model_home_win_probability, prediction_created_at "
+                "FROM nfl_moneyline_game_predictions ORDER BY "
+                "nfl_moneyline_game_prediction_id;"
+            )
+            prediction_evidence_before = cursor.fetchall()
+        connection.commit()
+
+        pending_report = evaluate_nfl_moneyline_forward(
+            season=2026,
+            protocol_version="test-protocol",
+            connection_factory=lambda: psycopg2.connect(
+                initialized_nfl_test_database
+            ),
+        )
+        assert (
+            pending_report.overall.total,
+            pending_report.overall.resolved,
+            pending_report.overall.pending,
+        ) == (1, 0, 1)
+
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE nfl_games SET status = 'final', home_score = 24, "
+                "away_score = 17, overtime = FALSE WHERE game_id = %s;",
+                (game_id,),
+            )
+        connection.commit()
+        official_report = evaluate_nfl_moneyline_forward(
+            season=2026,
+            protocol_version="test-protocol",
+            connection_factory=lambda: psycopg2.connect(
+                initialized_nfl_test_database
+            ),
+        )
+        preview_report = evaluate_nfl_moneyline_forward(
+            season=2026,
+            protocol_version="test-protocol",
+            run_type="preview",
+            connection_factory=lambda: psycopg2.connect(
+                initialized_nfl_test_database
+            ),
+        )
+        assert official_report.overall.total == 1
+        assert official_report.overall.resolved == 1
+        assert official_report.overall.model.accuracy == 1.0
+        assert official_report.overall.model.mean_home_win_probability == 0.6
+        assert preview_report.overall.total == 1
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT nfl_moneyline_game_prediction_id, "
+                "model_home_win_probability, prediction_created_at "
+                "FROM nfl_moneyline_game_predictions ORDER BY "
+                "nfl_moneyline_game_prediction_id;"
+            )
+            assert cursor.fetchall() == prediction_evidence_before
     finally:
         connection.close()
 
@@ -382,6 +464,19 @@ def test_concurrent_identical_run_key_returns_one_completed_evidence_set(
     assert results[0].run is not None
     assert results[1].run is not None
     assert results[0].run.prediction_run_id == results[1].run.prediction_run_id
+    blocked_preflight = _execute_nfl_moneyline_prediction_run(
+        season=2026,
+        target_date=date(2099, 9, 10),
+        slate_start_time=datetime(2099, 9, 10, tzinfo=timezone.utc),
+        slate_end_time=datetime(2099, 9, 11, tzinfo=timezone.utc),
+        run_type=NFLMoneylinePredictionRunType.OFFICIAL,
+        run_key=None,
+        dry_run=True,
+        connection_factory=lambda: psycopg2.connect(
+            initialized_nfl_test_database
+        ),
+    )
+    assert blocked_preflight.official_existing_game_ids == (game_id,)
     verification = psycopg2.connect(initialized_nfl_test_database)
     try:
         with verification.cursor() as cursor:

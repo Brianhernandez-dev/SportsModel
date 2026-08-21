@@ -86,6 +86,7 @@ def test_dry_run_infers_and_performs_zero_writes(monkeypatch) -> None:
     monkeypatch.setattr(service, "list_nfl_prediction_targets", lambda *a, **k: (_game(1),))
     monkeypatch.setattr(service, "database_clock", lambda cursor: START - timedelta(days=1))
     monkeypatch.setattr(service, "list_existing_official_nfl_game_ids", lambda *a, **k: ())
+    monkeypatch.setattr(service, "list_nfl_team_abbreviations", lambda *a, **k: ())
     monkeypatch.setattr(
         service, "create_nfl_prediction_run",
         lambda *a, **k: pytest.fail("dry-run created a run"),
