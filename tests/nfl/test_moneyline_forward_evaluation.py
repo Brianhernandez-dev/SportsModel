@@ -185,6 +185,11 @@ def test_route_and_early_history_breakouts(monkeypatch) -> None:
     assert [(item.label, item.total) for item in report.routes] == [
         ("early", 2), ("mature", 1)
     ]
+    assert report.route_distribution.total == 3
+    assert report.route_distribution.early_count == 2
+    assert report.route_distribution.mature_count == 1
+    assert report.route_distribution.early_percentage == pytest.approx(200 / 3)
+    assert report.route_distribution.mature_percentage == pytest.approx(100 / 3)
     assert [item.total for item in report.early_history_groups] == [1, 1, 0]
 
 
@@ -213,6 +218,13 @@ def test_report_output_is_deterministic_and_labels_preview(monkeypatch) -> None:
         prediction_set_sha256s=("a" * 64,),
         model_specification_versions=("model-v1",),
         model_fingerprints=("b" * 64,),
+        route_distribution=evaluation.NFLForwardRouteDistribution(
+            total=3,
+            early_count=2,
+            mature_count=1,
+            early_percentage=200 / 3,
+            mature_percentage=100 / 3,
+        ),
         overall=evaluation._evaluate_group("combined", ()),
         routes=(),
         early_history_groups=(),
@@ -229,6 +241,20 @@ def test_report_output_is_deterministic_and_labels_preview(monkeypatch) -> None:
     assert first == second
     assert "run_type=preview" in first
     assert "READ ONLY" in first
+    assert (
+        "routing_distribution total=3 early=2 early_pct=66.666667 "
+        "mature=1 mature_pct=33.333333"
+    ) in first
+
+
+def test_empty_route_distribution_uses_na_percentages() -> None:
+    distribution = evaluation._route_distribution(())
+
+    assert distribution.total == 0
+    assert distribution.early_count == 0
+    assert distribution.mature_count == 0
+    assert distribution.early_percentage is None
+    assert distribution.mature_percentage is None
 
 
 def _evidence(

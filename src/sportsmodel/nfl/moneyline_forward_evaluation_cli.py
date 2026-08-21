@@ -64,6 +64,12 @@ def format_nfl_moneyline_forward_report(
         "model_versions="
         f"{','.join(report.model_specification_versions) or 'none'}",
         f"model_fingerprints={','.join(report.model_fingerprints) or 'none'}",
+        "routing_distribution "
+        f"total={report.route_distribution.total} "
+        f"early={report.route_distribution.early_count} "
+        f"early_pct={_number(report.route_distribution.early_percentage)} "
+        f"mature={report.route_distribution.mature_count} "
+        f"mature_pct={_number(report.route_distribution.mature_percentage)}",
         _format_group(report.overall),
     ]
     lines.extend(_format_group(group) for group in report.routes)

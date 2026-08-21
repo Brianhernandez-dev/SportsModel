@@ -79,6 +79,15 @@ class NFLForwardEvaluationGroup:
 
 
 @dataclass(frozen=True)
+class NFLForwardRouteDistribution:
+    total: int
+    early_count: int
+    mature_count: int
+    early_percentage: float | None
+    mature_percentage: float | None
+
+
+@dataclass(frozen=True)
 class NFLMoneylineForwardEvaluationReport:
     season: int
     protocol_version: str
@@ -90,6 +99,7 @@ class NFLMoneylineForwardEvaluationReport:
     prediction_set_sha256s: tuple[str, ...]
     model_specification_versions: tuple[str, ...]
     model_fingerprints: tuple[str, ...]
+    route_distribution: NFLForwardRouteDistribution
     overall: NFLForwardEvaluationGroup
     routes: tuple[NFLForwardEvaluationGroup, ...]
     early_history_groups: tuple[NFLForwardEvaluationGroup, ...]
@@ -168,9 +178,25 @@ def evaluate_nfl_moneyline_forward(
         model_fingerprints=tuple(sorted({
             item.model_fingerprint for item in evidence
         })),
+        route_distribution=_route_distribution(evidence),
         overall=_evaluate_group("combined", evidence),
         routes=routes,
         early_history_groups=early_history_groups,
+    )
+
+
+def _route_distribution(
+    evidence: tuple[NFLMoneylineForwardEvidence, ...],
+) -> NFLForwardRouteDistribution:
+    total = len(evidence)
+    early_count = sum(item.route == "early" for item in evidence)
+    mature_count = sum(item.route == "mature" for item in evidence)
+    return NFLForwardRouteDistribution(
+        total=total,
+        early_count=early_count,
+        mature_count=mature_count,
+        early_percentage=(100 * early_count / total if total else None),
+        mature_percentage=(100 * mature_count / total if total else None),
     )
 
 

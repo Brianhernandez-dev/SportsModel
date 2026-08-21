@@ -43,6 +43,7 @@ MATURE_ARTIFACT = load_frozen_nfl_mature_artifact()
 class FakeCursor:
     def __init__(self):
         self.row = None
+        self.queries = []
 
     def __enter__(self):
         return self
@@ -51,11 +52,15 @@ class FakeCursor:
         return False
 
     def execute(self, query, parameters=None):
+        self.queries.append((query, parameters))
         if "transaction_timestamp" in query:
             self.row = (START - timedelta(hours=1),)
 
     def fetchone(self):
         return self.row
+
+    def fetchall(self):
+        return []
 
 
 class FakeConnection:
@@ -64,9 +69,12 @@ class FakeConnection:
         self.rollbacks = 0
         self.closed = False
         self.sessions = []
+        self.cursors = []
 
     def cursor(self):
-        return FakeCursor()
+        cursor = FakeCursor()
+        self.cursors.append(cursor)
+        return cursor
 
     def set_session(self, **values):
         self.sessions.append(values)
@@ -178,6 +186,69 @@ def test_write_run_uses_repeatable_read_and_persists_atomically(
     assert connections[0].commits == 1  # durable running audit row
     assert connections[1].commits == 1  # atomic children + completion
     assert connections[1].sessions == [{"isolation_level": "REPEATABLE READ"}]
+
+
+def test_target_routing_and_feature_pit_reads_share_repeatable_read_snapshot(
+    monkeypatch,
+) -> None:
+    connections = []
+    target_cursors = []
+    inference_cursors = []
+    running = _run()
+    completed = _run(
+        status=NFLMoneylinePredictionRunStatus.COMPLETED,
+        prediction_count=1,
+        source_snapshot_sha256="a" * 64,
+        prediction_set_sha256="b" * 64,
+    )
+
+    def targets(cursor, **kwargs):
+        target_cursors.append(cursor)
+        return (_game(1),)
+
+    def infer_with_production_provider(game, *, provider, **kwargs):
+        inference_cursors.append(provider._repository._cursor)
+        return service.infer_nfl_moneyline(
+            game,
+            provider=provider,
+            early_artifact_loader=kwargs["early_artifact_loader"],
+            mature_artifact_loader=kwargs["mature_artifact_loader"],
+        )
+
+    monkeypatch.setattr(service, "list_nfl_prediction_targets", targets)
+    monkeypatch.setattr(service, "load_nfl_prediction_run_by_key", lambda *a, **k: None)
+    monkeypatch.setattr(service, "create_nfl_prediction_run", lambda *a, **k: running)
+    monkeypatch.setattr(service, "lock_nfl_prediction_run", lambda *a, **k: running)
+    monkeypatch.setattr(service, "database_clock", lambda cursor: START - timedelta(days=1))
+    monkeypatch.setattr(service, "list_existing_official_nfl_game_ids", lambda *a, **k: ())
+    monkeypatch.setattr(
+        service,
+        "insert_nfl_game_prediction",
+        lambda *a, **k: (91, START - timedelta(hours=1)),
+    )
+    monkeypatch.setattr(service, "complete_nfl_prediction_run", lambda *a, **k: completed)
+
+    service._execute_nfl_moneyline_prediction_run(
+        season=2026,
+        target_date=date(2026, 9, 10),
+        slate_start_time=START,
+        slate_end_time=END,
+        run_type=NFLMoneylinePredictionRunType.OFFICIAL,
+        run_key=RUN_KEY,
+        dry_run=False,
+        connection_factory=lambda: _connection(connections),
+        inference_runner=infer_with_production_provider,
+    )
+
+    write_cursor = connections[1].cursors[0]
+    assert connections[1].sessions == [{"isolation_level": "REPEATABLE READ"}]
+    assert target_cursors == [connections[0].cursors[0], write_cursor]
+    assert inference_cursors == [write_cursor]
+    history_queries = [
+        query for query, _ in write_cursor.queries
+        if "FROM nfl_team_game_statistics stats" in query
+    ]
+    assert len(history_queries) == 4
 
 
 def test_partial_slate_failure_rolls_back_children_and_retains_failed_run(
