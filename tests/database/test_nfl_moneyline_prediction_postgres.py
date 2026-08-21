@@ -9,9 +9,14 @@ import psycopg2
 from psycopg2.extras import Json
 import pytest
 
-from sportsmodel.nfl.moneyline_prediction import NFLMoneylinePredictionRunType
+import sportsmodel.nfl.moneyline_prediction_service as prediction_service
+from sportsmodel.nfl.moneyline_prediction import (
+    NFLMoneylinePredictionRunType,
+    canonical_nfl_moneyline_probability_text,
+)
 from sportsmodel.nfl.moneyline_prediction_service import (
     _execute_nfl_moneyline_prediction_run,
+    _prediction_set_fingerprint_from_records,
 )
 
 
@@ -25,6 +30,34 @@ def test_nfl_forward_prediction_constraints_and_append_only_evidence(
     connection = psycopg2.connect(initialized_nfl_test_database)
     try:
         game_id, home_id, away_id = _create_game(connection)
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT (SELECT COUNT(*) FROM nfl_moneyline_prediction_runs), "
+                "(SELECT COUNT(*) FROM nfl_moneyline_game_predictions);"
+            )
+            before_dry_run = cursor.fetchone()
+        dry_run = _execute_nfl_moneyline_prediction_run(
+            season=2026,
+            target_date=date(2099, 9, 10),
+            slate_start_time=datetime(2099, 9, 10, tzinfo=timezone.utc),
+            slate_end_time=datetime(2099, 9, 11, tzinfo=timezone.utc),
+            run_type=NFLMoneylinePredictionRunType.OFFICIAL,
+            run_key=None,
+            dry_run=True,
+            connection_factory=lambda: psycopg2.connect(
+                initialized_nfl_test_database
+            ),
+        )
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT (SELECT COUNT(*) FROM nfl_moneyline_prediction_runs), "
+                "(SELECT COUNT(*) FROM nfl_moneyline_game_predictions);"
+            )
+            after_dry_run = cursor.fetchone()
+        assert dry_run.dry_run
+        assert len(dry_run.inference_results) == 1
+        assert before_dry_run == after_dry_run == (0, 0)
+
         official_run = _create_run(connection, "official")
         prediction_id = _insert_prediction(
             connection, official_run, game_id, home_id, away_id, "official"
@@ -93,6 +126,29 @@ def test_nfl_forward_prediction_constraints_and_append_only_evidence(
                 (game_id,),
             )
             assert cursor.fetchone()[0] == 2
+
+        threshold_run = _create_run(connection, "preview")
+        threshold_prediction = _insert_prediction(
+            connection,
+            threshold_run,
+            game_id,
+            home_id,
+            away_id,
+            "preview",
+            probability=Decimal("0.4999999999999999"),
+        )
+        connection.commit()
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT model_home_win_probability, predicted_side "
+                "FROM nfl_moneyline_game_predictions WHERE "
+                "nfl_moneyline_game_prediction_id = %s;",
+                (threshold_prediction,),
+            )
+            assert cursor.fetchone() == (
+                Decimal("0.4999999999999999"),
+                "away",
+            )
 
         with pytest.raises(psycopg2.errors.RaiseException):
             with connection.cursor() as cursor:
@@ -165,13 +221,59 @@ def test_nfl_forward_prediction_rejects_time_route_identity_and_run_drift(
                 (kickoff, game_id),
             )
         connection.commit()
-        run_id = _create_run(connection, "preview")
+        run_id = _create_run(
+            connection,
+            "preview",
+            slate_start=kickoff - timedelta(days=1),
+            slate_end=kickoff + timedelta(days=1),
+        )
         with pytest.raises(psycopg2.errors.RaiseException, match="strictly before"):
             _insert_prediction(
                 connection, run_id, game_id, home_id, away_id, "preview",
                 kickoff=kickoff,
             )
         connection.rollback()
+
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE nfl_games SET scheduled_start_time = "
+                "clock_timestamp() - INTERVAL '1 second' "
+                "WHERE game_id = %s RETURNING scheduled_start_time;",
+                (game_id,),
+            )
+            post_kickoff = cursor.fetchone()[0]
+            cursor.execute(
+                "UPDATE games SET game_date = %s WHERE game_id = %s;",
+                (post_kickoff, game_id),
+            )
+        connection.commit()
+        run_id = _create_run(
+            connection,
+            "preview",
+            slate_start=post_kickoff - timedelta(days=1),
+            slate_end=post_kickoff + timedelta(days=1),
+        )
+        with pytest.raises(psycopg2.errors.RaiseException, match="strictly before"):
+            _insert_prediction(
+                connection, run_id, game_id, home_id, away_id, "preview",
+                kickoff=post_kickoff,
+            )
+        connection.rollback()
+
+        canonical_kickoff = datetime(
+            2099, 9, 10, 20, tzinfo=timezone.utc
+        )
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "UPDATE nfl_games SET scheduled_start_time = %s "
+                "WHERE game_id = %s;",
+                (canonical_kickoff, game_id),
+            )
+            cursor.execute(
+                "UPDATE games SET game_date = %s WHERE game_id = %s;",
+                (canonical_kickoff, game_id),
+            )
+        connection.commit()
 
         run_id = _create_run(connection, "preview", target_count=1)
         with pytest.raises(psycopg2.errors.RaiseException, match="count"):
@@ -224,7 +326,21 @@ def test_nfl_prediction_locks_canonical_target_against_concurrent_mutation(
                     (game_id,),
                 )
         second.rollback()
-        first.rollback()
+        first.commit()
+
+        with second.cursor() as cursor:
+            cursor.execute(
+                "SELECT prediction.target_kickoff = nfl.scheduled_start_time, "
+                "prediction.home_team_id = game.home_team_id, "
+                "prediction.away_team_id = game.away_team_id, nfl.status "
+                "FROM nfl_moneyline_game_predictions AS prediction "
+                "JOIN nfl_games AS nfl ON nfl.game_id = prediction.game_id "
+                "JOIN games AS game ON game.game_id = prediction.game_id "
+                "WHERE prediction.nfl_moneyline_prediction_run_id = %s;",
+                (run_id,),
+            )
+            assert cursor.fetchone() == (True, True, True, "unplayed")
+        second.rollback()
     finally:
         first.close()
         second.close()
@@ -270,17 +386,121 @@ def test_concurrent_identical_run_key_returns_one_completed_evidence_set(
     try:
         with verification.cursor() as cursor:
             cursor.execute(
-                "SELECT status, target_count, prediction_count FROM "
-                "nfl_moneyline_prediction_runs WHERE run_key = %s;",
+                "SELECT run.status, run.target_count, run.prediction_count, "
+                "run.prediction_set_sha256, prediction.game_id, "
+                "prediction.selected_route, "
+                "prediction.selected_model_specification_version, "
+                "prediction.feature_vector_sha256, "
+                "prediction.source_trace_sha256, "
+                "prediction.model_home_win_probability, "
+                "prediction.classification_threshold, "
+                "prediction.predicted_side FROM "
+                "nfl_moneyline_prediction_runs AS run JOIN "
+                "nfl_moneyline_game_predictions AS prediction ON "
+                "prediction.nfl_moneyline_prediction_run_id = "
+                "run.nfl_moneyline_prediction_run_id WHERE run.run_key = %s;",
                 (run_key,),
             )
-            assert cursor.fetchone() == ("completed", 1, 1)
+            persisted = cursor.fetchone()
+            assert persisted[:3] == ("completed", 1, 1)
+            probability = persisted[9]
+            threshold = persisted[10]
+            assert persisted[11] == (
+                "home" if probability >= threshold else "away"
+            )
+            reconstructed_hash = _prediction_set_fingerprint_from_records(({
+                "game_id": persisted[4],
+                "selected_route": persisted[5],
+                "model_specification_version": persisted[6],
+                "feature_vector_sha256": persisted[7],
+                "source_trace_sha256": persisted[8],
+                "model_home_win_probability": (
+                    canonical_nfl_moneyline_probability_text(probability)
+                ),
+                "classification_threshold": (
+                    canonical_nfl_moneyline_probability_text(threshold)
+                ),
+                "predicted_side": persisted[11],
+            },))
+            assert reconstructed_hash == persisted[3]
             cursor.execute(
                 "SELECT COUNT(*) FROM nfl_moneyline_game_predictions "
                 "WHERE game_id = %s;",
                 (game_id,),
             )
             assert cursor.fetchone()[0] == 1
+    finally:
+        verification.close()
+
+
+@pytest.mark.skipif(
+    not os.getenv("SPORTSMODEL_TEST_DATABASE_URL"),
+    reason="requires disposable SPORTSMODEL_TEST_DATABASE_URL",
+)
+def test_partial_official_transaction_rolls_back_all_children(
+    initialized_nfl_test_database,
+    monkeypatch,
+) -> None:
+    setup = psycopg2.connect(initialized_nfl_test_database)
+    try:
+        _create_game(setup)
+        _create_game(setup)
+    finally:
+        setup.close()
+
+    original_insert = prediction_service.insert_nfl_game_prediction
+    insert_calls = 0
+
+    def fail_second_insert(*args, **kwargs):
+        nonlocal insert_calls
+        insert_calls += 1
+        if insert_calls == 2:
+            raise RuntimeError("forced second prediction failure")
+        return original_insert(*args, **kwargs)
+
+    monkeypatch.setattr(
+        prediction_service,
+        "insert_nfl_game_prediction",
+        fail_second_insert,
+    )
+    run_key = uuid4()
+
+    with pytest.raises(RuntimeError, match="forced second prediction failure"):
+        _execute_nfl_moneyline_prediction_run(
+            season=2026,
+            target_date=date(2099, 9, 10),
+            slate_start_time=datetime(2099, 9, 10, tzinfo=timezone.utc),
+            slate_end_time=datetime(2099, 9, 11, tzinfo=timezone.utc),
+            run_type=NFLMoneylinePredictionRunType.OFFICIAL,
+            run_key=run_key,
+            dry_run=False,
+            connection_factory=lambda: psycopg2.connect(
+                initialized_nfl_test_database
+            ),
+        )
+
+    assert insert_calls == 2
+    verification = psycopg2.connect(initialized_nfl_test_database)
+    try:
+        with verification.cursor() as cursor:
+            cursor.execute(
+                "SELECT nfl_moneyline_prediction_run_id, status, "
+                "target_count, prediction_count FROM "
+                "nfl_moneyline_prediction_runs WHERE run_key = %s;",
+                (run_key,),
+            )
+            run_id, status, target_count, prediction_count = cursor.fetchone()
+            assert (status, target_count, prediction_count) == (
+                "failed",
+                2,
+                0,
+            )
+            cursor.execute(
+                "SELECT COUNT(*) FROM nfl_moneyline_game_predictions "
+                "WHERE nfl_moneyline_prediction_run_id = %s;",
+                (run_id,),
+            )
+            assert cursor.fetchone()[0] == 0
     finally:
         verification.close()
 

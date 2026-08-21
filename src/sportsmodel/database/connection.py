@@ -1,7 +1,12 @@
 import os
 
 import psycopg2
+from psycopg2.extras import register_uuid
 from dotenv import load_dotenv
+
+
+register_uuid()
+
 
 def load_database_environment() -> None:
     """

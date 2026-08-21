@@ -115,7 +115,7 @@ def test_dry_run_infers_and_performs_zero_writes(monkeypatch) -> None:
     assert connections[0].commits == 0
     assert connections[0].rollbacks == 1
     assert connections[0].sessions == [{
-        "isolation_level": "REPEATABLE READ", "read_only": True
+        "isolation_level": "REPEATABLE READ", "readonly": True
     }]
 
 

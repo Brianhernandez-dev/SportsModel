@@ -475,7 +475,7 @@ def _execute_dry_run(
     connection = connection_factory()
     try:
         connection.set_session(
-            isolation_level="REPEATABLE READ", read_only=True
+            isolation_level="REPEATABLE READ", readonly=True
         )
         with connection.cursor() as cursor:
             targets = list_nfl_prediction_targets(
