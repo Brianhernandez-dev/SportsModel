@@ -110,6 +110,7 @@ def test_event_observation_exact_replay_is_idempotent() -> None:
                 EVENT.home_team,
                 EVENT.away_team,
                 OBSERVED_AT,
+                None,
             ),
         ]
     )
@@ -135,6 +136,7 @@ def test_event_observation_conflicting_replay_fails_closed() -> None:
                 "Different Home",
                 EVENT.away_team,
                 OBSERVED_AT,
+                None,
             ),
         ]
     )

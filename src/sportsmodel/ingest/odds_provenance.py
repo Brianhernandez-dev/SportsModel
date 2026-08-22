@@ -159,6 +159,7 @@ def create_provider_event_observation(
     provider_name: str,
     event: OddsApiEvent,
     observed_at: datetime,
+    nfl_provider_event_mapping_id: int | None = None,
 ) -> int:
     """
     Persist one provider event as observed in one response/run.
@@ -177,9 +178,10 @@ def create_provider_event_observation(
             provider_commence_time,
             provider_home_team_name,
             provider_away_team_name,
-            observed_at
+            observed_at,
+            nfl_odds_provider_event_mapping_id
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (
             odds_ingestion_run_id,
             external_event_id
@@ -195,6 +197,7 @@ def create_provider_event_observation(
             event.home_team,
             event.away_team,
             observed_at,
+            nfl_provider_event_mapping_id,
         ),
     )
     inserted = cursor.fetchone()
@@ -210,7 +213,8 @@ def create_provider_event_observation(
             provider_commence_time,
             provider_home_team_name,
             provider_away_team_name,
-            observed_at
+            observed_at,
+            nfl_odds_provider_event_mapping_id
         FROM odds_provider_event_observations
         WHERE odds_ingestion_run_id = %s
           AND external_event_id = %s;
@@ -225,6 +229,7 @@ def create_provider_event_observation(
         event.home_team,
         event.away_team,
         observed_at,
+        nfl_provider_event_mapping_id,
     )
     if existing is None or tuple(existing[1:]) != expected:
         raise ProviderEventConflictError(

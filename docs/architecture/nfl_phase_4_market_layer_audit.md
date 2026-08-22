@@ -1,8 +1,9 @@
 # NFL Phase 4 — Market Layer and Paper Validation Architecture Audit
 
-Status: Phase 4A1 and Phase 4A2 implemented; Phase 4A remains incomplete
+Status: Phase 4A1, Phase 4A2, and Phase 4A3 implemented; Phase 4A remains incomplete
 
-Audit baseline: `main` at `bb77e61bb922264c689f360fb2de082e0d83e4f8`
+Audit baseline for Phase 4A3: `main` at
+`48c1ba2f7352aa36b390c6c9fbd4989f1701b9ea`
 
 ## 1. Scope and governing constraints
 
@@ -123,17 +124,83 @@ normalized facts and database relationships support attribution and mutation
 resistance, but do not prove provider authenticity or permit byte-for-byte raw
 response replay. No hash is claimed to provide such proof.
 
-Phase 4A3 owns canonical NFL identity. Phase 4A2 deliberately does not map an
+Phase 4A3 owns canonical NFL identity. Phase 4A2 deliberately did not map an
 Odds API NFL event to `nfl_games`, resolve NFL team names, add canonical NFL
 selection team IDs, determine pregame/official eligibility, or expose an NFL
-network/persistence command. Phase 4A3 must implement strict existing-only team
+network/persistence command. Phase 4A3 implements the strict existing-only team
 and game resolution, kickoff-drift handling, provider-event mapping policy, and
-database run/event/game/selection consistency before any live NFL request.
+database run/event/game/selection consistency described below.
 
 Remaining risks include historical MLB provenance gaps, mutable legacy quotes,
-the existing MLB create-on-miss canonical game behavior, free-text selections,
-no canonical NFL link, no database kickoff cutoff, and no immutable official NFL
-evaluation/paper evidence. Phase 4A therefore remains incomplete.
+the existing MLB create-on-miss canonical game behavior, quote-level canonical
+selection IDs, no database kickoff cutoff, and no immutable official NFL
+snapshot/evaluation/paper evidence. Phase 4A therefore remains incomplete.
+
+### Phase 4A3 implementation record — 2026-08-21
+
+The existing NFL identity architecture was extended rather than duplicated.
+`nfl_team_profiles` remains the canonical current-franchise identity,
+`nfl_team_seasons` remains the season display/abbreviation record, and
+`nfl_team_sources` remains the exact external-team mapping. Migration 029 adds
+one immutable `odds_api` source identity for each of the 32 active canonical
+teams. The Odds API's full current team name is both the exact external ID and
+retained provider name. Matching is case-sensitive and exact: there is no
+normalization, substring lookup, fuzzy matching, fallback abbreviation, or
+team creation. Missing, duplicate, inactive, or same-team resolutions fail
+closed.
+
+The canonical game resolver accepts only a parsed `americanfootball_nfl` H2H
+event. It resolves both provider team names first, verifies every included H2H
+market contains those two names exactly once regardless of outcome order, and
+queries only existing `nfl_games`. A match requires exact canonical home/away
+orientation, `unplayed` status, and a provider commence time within 15 minutes
+of `nfl_games.scheduled_start_time`. The 15-minute maximum is the established
+repository game-match boundary already used by the MLB canonical matcher; A3
+does not broaden it. Zero matches, more than one accepted match, reversed
+orientation, a final game, or drift greater than 900 seconds fails closed.
+The result exposes the signed drift and labels zero as `exact` and any accepted
+nonzero drift as `acceptable_drift`. It returns the current canonical kickoff
+and separately retains the provider commence time; provider data never updates
+the canonical schedule.
+
+Migration 029 adds `nfl_odds_provider_event_mappings` for the narrow immutable
+contract `(provider_name, provider_sport_key, external_event_id) -> nfl_game`.
+The row retains oriented canonical team IDs, exact provider names, canonical
+kickoff at first mapping, first provider commence time, and signed initial
+drift. Foreign keys prove the target is an NFL game and that its shared-game
+home/away IDs agree. The provider sport is fixed to `americanfootball_nfl`, and
+initial drift is constrained to 900 seconds. One provider event ID cannot move
+to a different game or team identity. Exact reprocessing is idempotent.
+Different provider event IDs may map to the same canonical NFL game so a
+provider reissue is retained as another immutable identity instead of
+overwriting or being forced through generic `game_sources`, whose one-source-ID
+per-game rule has different MLB-oriented cardinality.
+
+`odds_provider_event_observations` gains an optional mapping link. A composite
+foreign key requires the link's provider, sport, event ID, and provider
+home/away names to equal the observed event. The existing Phase 4A2 composite
+foreign key independently requires the observation sport/source/time to equal
+its ingestion run. Consequently an NFL event cannot attach to an MLB run, an
+NFL mapping cannot target a shared MLB-only game, and reversed or copied team
+IDs cannot be persisted. Existing observations remain null and are not
+rewritten; MLB creation and matching behavior is unchanged.
+
+Canonical selections are returned as a fixed home/away pair containing the
+exact provider selection name, canonical team ID, and side. Provider outcome
+ordering is irrelevant. A missing market, third or unknown outcome, duplicate
+home selection, or duplicate away selection is rejected. A3 deliberately does
+not persist quote-level canonical selection IDs yet because official evidence
+qualification and its immutable snapshot contract belong to Phase 4A4.
+
+Phase 4A3 remains fully offline: it adds no NFL transport, CLI, scheduler, live
+capture path, no-vig/EV calculation, candidate creation, or paper evidence.
+Validation with the guarded tests enabled against the disposable local
+PostgreSQL container completed with 1007 passed, 0 failed, and 0 skipped.
+Phase 4A4 must define and enforce the official pregame boundary using canonical
+kickoff and SportsModel observation/response time, with provider timestamps as
+provenance only. It must add immutable official snapshot evidence and reject
+equality with or observation after kickoff at both service and database
+boundaries. Phase 4A is not complete until that boundary exists.
 
 ## 2. Current-state repository audit
 
@@ -900,11 +967,11 @@ role timing, evaluation policy, paper tables, settlement, and orchestration are
 not safe to reuse directly for NFL.
 
 The shared odds schema is not yet ready for official NFL evidence. Phase 4A1
-removed the hard MLB/NFL scheduled-run collision and Phase 4A2 added stable
-provider identity, source/event attribution, database observation time, and
-immutability for new source rows. Free-text selection identity, strict
-existing-only NFL team/game mapping, kickoff drift, database pregame proof, and
-immutable official evaluation/paper relationships remain. Complete Phase 4A3
-canonical identity and timing protection before any live NFL odds request. Keep
-Phase 3 frozen and treat every partial 2026 outcome solely as prospective
-validation evidence.
+removed the hard MLB/NFL scheduled-run collision, Phase 4A2 added stable
+provider identity and immutable source attribution, and Phase 4A3 added exact
+existing-only NFL team/game/selection resolution plus immutable provider-event
+mapping. Database-enforced pregame qualification, quote-level canonical
+selection persistence, and immutable official evaluation/paper relationships
+remain. Complete Phase 4A4 timing and official snapshot protection before any
+live NFL odds request. Keep Phase 3 frozen and treat every partial 2026 outcome
+solely as prospective validation evidence.
