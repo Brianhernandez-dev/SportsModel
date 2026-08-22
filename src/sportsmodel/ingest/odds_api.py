@@ -14,6 +14,10 @@ from sportsmodel.ingest.odds_api_parser import (
     ODDS_API_MLB_SPORT_KEY,
     parse_odds_api_h2h_response,
 )
+from sportsmodel.ingest.odds_provenance import (
+    create_provider_event_observation,
+    resolve_provider_sportsbook,
+)
 from sportsmodel.ingest.team_identity import normalize_team_name
 
 
@@ -22,6 +26,7 @@ REGIONS = "us"
 MARKETS = "h2h"
 ODDS_FORMAT = "american"
 SOURCE_NAME = "odds_api"
+REQUEST_PATH = f"/v4/sports/{SPORT}/odds"
 SLATE_TIME_ZONE = ZoneInfo("America/Los_Angeles")
 
 LIVE_SNAPSHOT_ROLES = frozenset(
@@ -219,6 +224,22 @@ def create_ingestion_run(
 ):
     """Create and commit a new odds-ingestion audit record."""
 
+    target_window = (
+        build_target_date_window(target_date)
+        if target_date is not None
+        else None
+    )
+    request_commence_time_from = (
+        target_window[0]
+        if target_window is not None
+        else None
+    )
+    request_commence_time_to = (
+        target_window[1] - timedelta(seconds=1)
+        if target_window is not None
+        else None
+    )
+
     with connection.cursor() as cursor:
         cursor.execute(
             """
@@ -227,9 +248,21 @@ def create_ingestion_run(
                 source_name,
                 target_date,
                 snapshot_role,
+                request_path,
+                request_regions,
+                request_markets,
+                request_odds_format,
+                request_commence_time_from,
+                request_commence_time_to,
+                request_started_at,
                 status
             )
-            VALUES (%s, %s, %s, %s, 'running')
+            VALUES (
+                %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s,
+                clock_timestamp(),
+                'running'
+            )
             ON CONFLICT DO NOTHING
             RETURNING odds_ingestion_run_id;
             """,
@@ -238,6 +271,12 @@ def create_ingestion_run(
                 SOURCE_NAME,
                 target_date,
                 snapshot_role,
+                REQUEST_PATH,
+                REGIONS,
+                MARKETS,
+                ODDS_FORMAT,
+                request_commence_time_from,
+                request_commence_time_to,
             ),
         )
 
@@ -255,6 +294,47 @@ def create_ingestion_run(
     connection.commit()
 
     return ingestion_run_id
+
+
+def record_ingestion_response(
+    connection,
+    *,
+    ingestion_run_id: int,
+    status_code: int,
+    remaining_requests: int | None,
+    used_requests: int | None,
+) -> datetime:
+    """Persist response metadata once and return its database timestamp."""
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            UPDATE odds_ingestion_runs
+            SET response_received_at = clock_timestamp(),
+                status_code = %s,
+                remaining_requests = %s,
+                used_requests = %s
+            WHERE odds_ingestion_run_id = %s
+              AND status = 'running'
+              AND response_received_at IS NULL
+            RETURNING response_received_at;
+            """,
+            (
+                status_code,
+                remaining_requests,
+                used_requests,
+                ingestion_run_id,
+            ),
+        )
+        returned_row = cursor.fetchone()
+        if returned_row is None:
+            raise RuntimeError(
+                "Odds response provenance was already recorded or the "
+                "ingestion run is not running."
+            )
+
+    connection.commit()
+    return returned_row[0]
 
 
 def mark_ingestion_run_completed(
@@ -370,117 +450,21 @@ def get_team_id(cursor, team_name):
     return cursor.fetchone()[0]
 
 
-def get_sportsbook_id(cursor, sportsbook_name):
-    """Return a sportsbook ID, creating the sportsbook when necessary."""
-
-    cursor.execute(
-        """
-        INSERT INTO sportsbooks (name)
-        VALUES (%s)
-        ON CONFLICT (name) DO NOTHING;
-        """,
-        (sportsbook_name,),
-    )
-
-    cursor.execute(
-        """
-        SELECT sportsbook_id
-        FROM sportsbooks
-        WHERE name = %s;
-        """,
-        (sportsbook_name,),
-    )
-
-    return cursor.fetchone()[0]
-
-
-    """Return the canonical game ID for an Odds API event."""
-
-    cursor.execute(
-        """
-        SELECT game_id
-        FROM game_sources
-        WHERE source_name = %s
-          AND external_game_id = %s;
-        """,
-        (SOURCE_NAME, external_game_id),
-    )
-
-    existing_source = cursor.fetchone()
-
-    if existing_source:
-        return existing_source[0]
-
-    cursor.execute(
-        """
-        SELECT game_id
-        FROM games
-        WHERE game_date = %s
-          AND home_team_id = %s
-          AND away_team_id = %s
-        LIMIT 1;
-        """,
-        (
-            commence_time,
-            home_team_id,
-            away_team_id,
-        ),
-    )
-
-    existing_game = cursor.fetchone()
-
-    if existing_game:
-        game_id = existing_game[0]
-    else:
-        cursor.execute(
-            """
-            INSERT INTO games (
-                game_date,
-                home_team_id,
-                away_team_id
-            )
-            VALUES (%s, %s, %s)
-            RETURNING game_id;
-            """,
-            (
-                commence_time,
-                home_team_id,
-                away_team_id,
-            ),
-        )
-
-        game_id = cursor.fetchone()[0]
-
-    cursor.execute(
-        """
-        INSERT INTO game_sources (
-            game_id,
-            source_name,
-            external_game_id
-        )
-        VALUES (%s, %s, %s)
-        ON CONFLICT (source_name, external_game_id) DO NOTHING;
-        """,
-        (
-            game_id,
-            SOURCE_NAME,
-            external_game_id,
-        ),
-    )
-
-    return game_id
-
-
 def save_market_selection(
     cursor,
     ingestion_run_id,
+    event_observation_id,
     game_id,
+    sportsbook_provider_identity_id,
     sportsbook_id,
     market_type,
     selection_name,
     line_value,
     price,
     snapshot_time,
+    bookmaker_title,
+    bookmaker_updated_at,
+    market_updated_at,
 ):
     """Store one sportsbook market selection snapshot."""
 
@@ -488,20 +472,32 @@ def save_market_selection(
         """
         INSERT INTO odds_market_snapshots (
             odds_ingestion_run_id,
+            odds_provider_event_observation_id,
             game_id,
+            sportsbook_provider_identity_id,
             sportsbook_id,
             market_type,
             selection_name,
             line_value,
             price,
             snapshot_time,
-            source_name
+            source_name,
+            bookmaker_title_at_observation,
+            bookmaker_updated_at,
+            market_updated_at,
+            observed_at
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s);
+        VALUES (
+            %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s
+        );
         """,
         (
             ingestion_run_id,
+            event_observation_id,
             game_id,
+            sportsbook_provider_identity_id,
             sportsbook_id,
             market_type,
             selection_name,
@@ -509,6 +505,10 @@ def save_market_selection(
             price,
             snapshot_time,
             SOURCE_NAME,
+            bookmaker_title,
+            bookmaker_updated_at,
+            market_updated_at,
+            snapshot_time,
         ),
     )
 
@@ -595,6 +595,13 @@ def fetch_live_odds(
                 "x-requests-used"
             )
         )
+        snapshot_time = record_ingestion_response(
+            connection,
+            ingestion_run_id=ingestion_run_id,
+            status_code=status_code,
+            remaining_requests=remaining_requests,
+            used_requests=used_requests,
+        )
 
         print("Status Code:", status_code)
         print(
@@ -618,7 +625,6 @@ def fetch_live_odds(
             expected_sport_key=SPORT,
         )
         games_returned = len(raw_games)
-        snapshot_time = _current_snapshot_time()
 
         print(f"Games returned: {games_returned}")
 
@@ -647,15 +653,26 @@ def fetch_live_odds(
                     home_team_id=home_team_id,
                     away_team_id=away_team_id,
                 )
+                event_observation_id = (
+                    create_provider_event_observation(
+                        cursor,
+                        ingestion_run_id=ingestion_run_id,
+                        provider_name=SOURCE_NAME,
+                        event=game,
+                        observed_at=snapshot_time,
+                    )
+                )
 
                 games_processed += 1
 
                 for bookmaker in game.bookmakers:
-                    sportsbook_name = bookmaker.title
-
-                    sportsbook_id = get_sportsbook_id(
+                    sportsbook_identity = resolve_provider_sportsbook(
                         cursor,
-                        sportsbook_name,
+                        provider_name=SOURCE_NAME,
+                        provider_bookmaker_key=(
+                            bookmaker.bookmaker_key
+                        ),
+                        bookmaker_title=bookmaker.title,
                     )
 
                     for market in bookmaker.markets:
@@ -669,13 +686,27 @@ def fetch_live_odds(
                             save_market_selection(
                                 cursor=cursor,
                                 ingestion_run_id=ingestion_run_id,
+                                event_observation_id=(
+                                    event_observation_id
+                                ),
                                 game_id=game_id,
-                                sportsbook_id=sportsbook_id,
+                                sportsbook_provider_identity_id=(
+                                    sportsbook_identity
+                                    .sportsbook_provider_identity_id
+                                ),
+                                sportsbook_id=(
+                                    sportsbook_identity.sportsbook_id
+                                ),
                                 market_type=market_type,
                                 selection_name=selection_name,
                                 line_value=line_value,
                                 price=price,
                                 snapshot_time=snapshot_time,
+                                bookmaker_title=bookmaker.title,
+                                bookmaker_updated_at=(
+                                    bookmaker.last_update
+                                ),
+                                market_updated_at=market.last_update,
                             )
 
                             selections_inserted += 1

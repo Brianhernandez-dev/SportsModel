@@ -3,6 +3,9 @@ from datetime import date, datetime, timezone
 import pytest
 
 from sportsmodel.ingest import odds_api
+from sportsmodel.ingest.odds_provenance import (
+    ProviderSportsbookIdentity,
+)
 
 
 def test_evening_roles_are_live_scheduled_snapshots() -> None:
@@ -85,6 +88,26 @@ def test_create_ingestion_run_rejects_duplicate_snapshot(
                 odds_api.SOURCE_NAME,
                 date(2026, 8, 7),
                 "morning",
+                odds_api.REQUEST_PATH,
+                odds_api.REGIONS,
+                odds_api.MARKETS,
+                odds_api.ODDS_FORMAT,
+                datetime(
+                    2026,
+                    8,
+                    7,
+                    7,
+                    tzinfo=timezone.utc,
+                ),
+                datetime(
+                    2026,
+                    8,
+                    8,
+                    6,
+                    59,
+                    59,
+                    tzinfo=timezone.utc,
+                ),
             )
 
         def fetchone(self):
@@ -181,6 +204,7 @@ def test_fetch_live_odds_returns_structured_result(
     connection = FakeConnection()
     create_arguments = {}
     completed_arguments = {}
+    response_arguments = {}
     request_arguments = {}
 
     monkeypatch.setenv(
@@ -219,6 +243,27 @@ def test_fetch_live_odds_returns_structured_result(
         odds_api.requests,
         "get",
         fake_request,
+    )
+
+    observed_at = datetime(
+        2026,
+        8,
+        1,
+        18,
+        tzinfo=timezone.utc,
+    )
+
+    def fake_record_response(
+        unused_connection,
+        **arguments,
+    ) -> datetime:
+        response_arguments.update(arguments)
+        return observed_at
+
+    monkeypatch.setattr(
+        odds_api,
+        "record_ingestion_response",
+        fake_record_response,
     )
 
     def fake_mark_completed(
@@ -273,6 +318,12 @@ def test_fetch_live_odds_returns_structured_result(
     assert completed_arguments["status_code"] == 200
     assert completed_arguments["remaining_requests"] == 487
     assert completed_arguments["used_requests"] == 13
+    assert response_arguments == {
+        "ingestion_run_id": 182,
+        "status_code": 200,
+        "remaining_requests": 487,
+        "used_requests": 13,
+    }
 
     assert connection.commits == 1
     assert connection.rollbacks == 0
@@ -407,6 +458,210 @@ def test_parse_quota_header_returns_none_for_invalid_value(
 
 def test_parse_quota_header_returns_integer() -> None:
     assert odds_api._parse_quota_header("487") == 487
+
+
+def test_records_response_metadata_once_with_database_time() -> None:
+    observed_at = datetime(
+        2026,
+        8,
+        2,
+        12,
+        tzinfo=timezone.utc,
+    )
+
+    class ResponseCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *unused_arguments) -> bool:
+            return False
+
+        def execute(self, query, parameters) -> None:
+            assert "response_received_at = clock_timestamp()" in query
+            assert "response_received_at IS NULL" in query
+            assert parameters == (200, 487, 13, 182)
+
+        def fetchone(self):
+            return (observed_at,)
+
+    class ResponseConnection:
+        def __init__(self) -> None:
+            self.commits = 0
+
+        def cursor(self):
+            return ResponseCursor()
+
+        def commit(self) -> None:
+            self.commits += 1
+
+    connection = ResponseConnection()
+    assert odds_api.record_ingestion_response(
+        connection,
+        ingestion_run_id=182,
+        status_code=200,
+        remaining_requests=487,
+        used_requests=13,
+    ) == observed_at
+    assert connection.commits == 1
+
+
+def test_mlb_adapter_passes_exact_provider_provenance(
+    monkeypatch,
+) -> None:
+    event_time = datetime(
+        2026,
+        8,
+        21,
+        23,
+        10,
+        tzinfo=timezone.utc,
+    )
+    observed_at = datetime(
+        2026,
+        8,
+        21,
+        18,
+        1,
+        tzinfo=timezone.utc,
+    )
+    payload = [
+        {
+            "id": "mlb-provider-event",
+            "sport_key": "baseball_mlb",
+            "commence_time": event_time.isoformat(),
+            "home_team": "Seattle Mariners",
+            "away_team": "New York Yankees",
+            "bookmakers": [
+                {
+                    "key": "fanduel",
+                    "title": "FanDuel",
+                    "last_update": "2026-08-21T18:00:01Z",
+                    "markets": [
+                        {
+                            "key": "h2h",
+                            "last_update": "2026-08-21T18:00:00Z",
+                            "outcomes": [
+                                {
+                                    "name": "Seattle Mariners",
+                                    "price": -112,
+                                },
+                                {
+                                    "name": "New York Yankees",
+                                    "price": 102,
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ],
+        }
+    ]
+
+    class PayloadResponse(FakeResponse):
+        def json(self):
+            return payload
+
+    connection = FakeConnection()
+    event_calls = []
+    sportsbook_calls = []
+    saved_quotes = []
+    monkeypatch.setenv("ODDS_API_KEY", "test-key")
+    monkeypatch.setattr(odds_api, "get_connection", lambda: connection)
+    monkeypatch.setattr(
+        odds_api,
+        "create_ingestion_run",
+        lambda *unused_args, **unused_kwargs: 182,
+    )
+    monkeypatch.setattr(
+        odds_api.requests,
+        "get",
+        lambda *unused_args, **unused_kwargs: PayloadResponse(),
+    )
+    monkeypatch.setattr(
+        odds_api,
+        "record_ingestion_response",
+        lambda *unused_args, **unused_kwargs: observed_at,
+    )
+    monkeypatch.setattr(odds_api, "get_team_id", lambda *args: 10)
+    monkeypatch.setattr(
+        odds_api,
+        "get_or_create_canonical_game",
+        lambda *unused_args, **unused_kwargs: 77,
+    )
+
+    def fake_event_observation(*unused_args, **arguments) -> int:
+        event_calls.append(arguments)
+        return 91
+
+    monkeypatch.setattr(
+        odds_api,
+        "create_provider_event_observation",
+        fake_event_observation,
+    )
+
+    def fake_sportsbook(*unused_args, **arguments):
+        sportsbook_calls.append(arguments)
+        return ProviderSportsbookIdentity(41, 7)
+
+    monkeypatch.setattr(
+        odds_api,
+        "resolve_provider_sportsbook",
+        fake_sportsbook,
+    )
+    monkeypatch.setattr(
+        odds_api,
+        "save_market_selection",
+        lambda **arguments: saved_quotes.append(arguments),
+    )
+    monkeypatch.setattr(
+        odds_api,
+        "mark_ingestion_run_completed",
+        lambda **unused_arguments: None,
+    )
+
+    result = odds_api.fetch_live_odds(
+        target_date=date(2026, 8, 21),
+        snapshot_role="manual",
+    )
+
+    assert result.games_processed == 1
+    assert result.selections_inserted == 2
+    assert event_calls[0]["provider_name"] == "odds_api"
+    assert event_calls[0]["event"].event_id == "mlb-provider-event"
+    assert event_calls[0]["event"].sport_key == "baseball_mlb"
+    assert event_calls[0]["observed_at"] == observed_at
+    assert sportsbook_calls == [
+        {
+            "provider_name": "odds_api",
+            "provider_bookmaker_key": "fanduel",
+            "bookmaker_title": "FanDuel",
+        }
+    ]
+    assert {
+        quote["selection_name"] for quote in saved_quotes
+    } == {"Seattle Mariners", "New York Yankees"}
+    for quote in saved_quotes:
+        assert quote["event_observation_id"] == 91
+        assert quote["sportsbook_provider_identity_id"] == 41
+        assert quote["sportsbook_id"] == 7
+        assert quote["bookmaker_title"] == "FanDuel"
+        assert quote["bookmaker_updated_at"] == datetime(
+            2026,
+            8,
+            21,
+            18,
+            0,
+            1,
+            tzinfo=timezone.utc,
+        )
+        assert quote["market_updated_at"] == datetime(
+            2026,
+            8,
+            21,
+            18,
+            tzinfo=timezone.utc,
+        )
+        assert quote["snapshot_time"] == observed_at
 
 @pytest.fixture(autouse=True)
 def freeze_odds_snapshot_time(

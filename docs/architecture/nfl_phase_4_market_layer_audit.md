@@ -1,6 +1,6 @@
 # NFL Phase 4 — Market Layer and Paper Validation Architecture Audit
 
-Status: Phase 4A1 implemented; Phase 4A remains incomplete
+Status: Phase 4A1 and Phase 4A2 implemented; Phase 4A remains incomplete
 
 Audit baseline: `main` at `bb77e61bb922264c689f360fb2de082e0d83e4f8`
 
@@ -49,8 +49,8 @@ NFL persistence path:
 - the existing MLB HTTP path consumes the parsed DTOs for valid provider
   responses, while no NFL request, canonical mapping, or persistence command is
   exposed; and
-- the complete repository suite passes with disposable PostgreSQL integration
-  enabled: 956 passed, 0 failed, 0 skipped.
+- final Phase 4A1 validation on committed main passed with disposable PostgreSQL
+  integration enabled: 963 passed, 0 failed, 0 skipped.
 
 The following intentionally unscoped paths were found and deferred because they
 select already-linked rows by exact IDs rather than discovering scheduled runs
@@ -60,9 +60,80 @@ also unchanged. Cross-sport run/game consistency, direct-ID sport validation,
 and sport-safe derived-analysis boundaries belong to the next provenance and
 identity hardening slice; they must be resolved before official NFL evidence.
 
-Phase 4A is not complete. Strong immutable source provenance, stable sportsbook
-identity, normalized NFL selection identity, strict canonical NFL event/game
-matching, and database-level kickoff/pregame protection remain open.
+At the close of Phase 4A1, strong source provenance, stable sportsbook identity,
+normalized NFL selection identity, strict canonical NFL event/game matching, and
+database-level kickoff/pregame protection remained open. Phase 4A2 addresses the
+first two for new observations; the NFL identity and timing boundaries remain.
+
+### Phase 4A2 implementation record — 2026-08-21
+
+Phase 4A2 hardens the shared odds source graph offline. Migration 028 is
+additive and does not backfill or rewrite historical evidence.
+
+Before Phase 4A2, a stored quote could identify its ingestion run, the run's
+declared sport/source/role/date and lifecycle/quota metadata, a canonical shared
+game, a sportsbook display-name row, the market/selection/price/line, and one
+application capture time. It could not recover the Odds API bookmaker key,
+provider sport/event identity on the observation, provider commence/team facts,
+provider book/market update times, exact secret-free request context, or a
+database response-receipt time. Display title was sportsbook identity, and the
+source graph had no protection against later updates.
+
+For new provenance-bearing captures, Phase 4A2 now guarantees:
+
+- `odds_ingestion_runs` retains the provider source and sport plus the
+  secret-free request path, regions, markets, odds format, optional commence
+  window, a database `request_started_at`, the existing HTTP/quota metadata,
+  and a database `response_received_at`. The API key and full query string are
+  never persisted.
+- `sportsbook_provider_identities` immutably maps
+  `(provider_name, provider_bookmaker_key)` to one existing shared
+  `sportsbooks` row. The Odds API bookmaker key is identity; title is not. A
+  later title/branding observation returns the same identity and does not rename
+  or duplicate the sportsbook. One sportsbook cannot acquire two keys from the
+  same provider, and one provider key cannot point to two sportsbooks.
+- `odds_provider_event_observations` immutably retains one provider event per
+  ingestion run: provider source, provider sport key, external event ID,
+  commence time, provider home/away names, and the exact response observation
+  time. Its composite foreign key requires source, sport, and observation time
+  to equal the parent run.
+- New `odds_market_snapshots` link to the exact run/event observation and
+  provider sportsbook identity. They retain bookmaker title at observation,
+  optional bookmaker and market update timestamps, and SportsModel
+  `observed_at`. Composite foreign keys prove the event belongs to the same run
+  and the provider identity belongs to the same sportsbook/source.
+- A partial unique quote contract permits only one selection for the same
+  run/event/provider-book/market/selection tuple. An exact event replay in one
+  run is accepted only when all retained facts match; conflicting replays fail
+  closed.
+- Provider identity and event rows are immutable. Provenance-bearing quote rows
+  cannot be updated, deleted, or retrofitted onto historical rows. Request
+  identity is immutable once a new run is reserved; response metadata is set
+  once; and a terminal provenance-bearing run cannot be changed or deleted.
+
+Existing MLB rows remain valid with all Phase 4A2 columns null. Their unknown
+provider event IDs, bookmaker keys, provider update timestamps, request context,
+and response receipt times remain honestly unknown. When a future valid MLB
+capture first observes a provider key with an exact existing sportsbook title,
+the immutable mapping attaches to that existing sportsbook ID without changing
+historical snapshot references. No retroactive provenance is synthesized.
+
+No raw response body or payload hash is retained in Phase 4A2. The retained
+normalized facts and database relationships support attribution and mutation
+resistance, but do not prove provider authenticity or permit byte-for-byte raw
+response replay. No hash is claimed to provide such proof.
+
+Phase 4A3 owns canonical NFL identity. Phase 4A2 deliberately does not map an
+Odds API NFL event to `nfl_games`, resolve NFL team names, add canonical NFL
+selection team IDs, determine pregame/official eligibility, or expose an NFL
+network/persistence command. Phase 4A3 must implement strict existing-only team
+and game resolution, kickoff-drift handling, provider-event mapping policy, and
+database run/event/game/selection consistency before any live NFL request.
+
+Remaining risks include historical MLB provenance gaps, mutable legacy quotes,
+the existing MLB create-on-miss canonical game behavior, free-text selections,
+no canonical NFL link, no database kickoff cutoff, and no immutable official NFL
+evaluation/paper evidence. Phase 4A therefore remains incomplete.
 
 ## 2. Current-state repository audit
 
@@ -274,15 +345,18 @@ starter-aware evaluation and qualification objects/tables, `historical_games`
 settlement, early-entry/cohort logic, dashboard/audit queries, and MLB daily
 orchestration.
 
-**D. Cross-sport collision risks:** scheduled run identity, unscoped role
-lookups, generic provider source namespace, team creation, title-only sportsbook
-identity, run/game sport mismatch, free-text selections, and global derived
-analysis.
+**D. Cross-sport collision risks:** Phase 4A1 resolved scheduled-run identity and
+MLB role lookups; Phase 4A2 resolved provider event/run sport coherence and
+title-only sportsbook identity for new observations. Team creation, canonical
+run/game sport mismatch, free-text selections, legacy evidence, and global
+derived analysis remain.
 
-**E. Blocking database constraints:** the scheduled-run partial unique index
-omits sport; the snapshot-role check has no NFL semantics; and the one-event-per
-game/source `game_sources` index may reject a replacement NFL provider event.
-Other current constraints permit storage but do not make coexistence safe.
+**E. Blocking database constraints:** migration 027 repaired the scheduled-run
+index and migration 028 added source/event/provider coherence without changing
+NFL roles. The snapshot-role check still has no official NFL semantics, and the
+one-event-per-game/source `game_sources` index may reject a replacement NFL
+provider event. Other current constraints permit storage but do not make
+canonical NFL coexistence safe.
 
 **F. Post-kickoff entry points:** the full list is in section 5.2. The central
 gaps are provider-time trust in ingestion, no database cutoff on raw snapshots,
@@ -293,10 +367,12 @@ and mutable evaluation/qualification persistence.
 franchises, then require one existing canonical NFL game with exact orientation
 and compatible kickoff. Never create a team/game on an odds miss. See section 6.
 
-**H. Provenance sufficiency:** current odds storage is useful operationally but
-insufficient for official NFL evidence because it lacks stable provider entity
-keys, raw request/response hashes, provider timestamps, canonical selection
-identity, source-row coherence, and immutability. See section 5.3.
+**H. Provenance sufficiency:** Phase 4A2 provides stable provider/bookmaker keys,
+secret-free request context, database request/response times, provider event and
+update timestamps, cross-row source coherence, and conditional immutability for
+new evidence. Official NFL evidence is still blocked by canonical selection/game
+identity, kickoff enforcement, and the future evaluation source graph. Raw bytes
+and authenticity proof are deliberately not claimed. See section 5.3.
 
 **I. EV semantics:** generic `calculate_expected_value_markets` is
 market-relative leave-one-out consensus EV. NFL official model EV is the frozen
@@ -318,8 +394,8 @@ section 7.
 | Pure line movement and CLV comparison | Reuse unchanged with guarded inputs | Derive timelines only after sport and cutoff filtering; never let the pure function choose eligibility. |
 | `analysis.expected_value` | Reuse unchanged for market-relative analysis only | Label output `market_relative_expected_value`; never substitute it for frozen-model EV. |
 | Model-at-price EV formula and best-price ordering | Reuse calculation, not MLB object/service | Extract/use sport-neutral pure logic with explicit frozen NFL probability; leave starter policy behind. |
-| Shared `odds_ingestion_runs` and `odds_market_snapshots` | Reuse after sport-safe generalization and hardening | Repair uniqueness, provenance, immutability, selection identity, and run/game consistency. |
-| Shared `sportsbooks` | Reuse after identity generalization | Add provider-key mapping; do not key ingestion only by title. |
+| Shared `odds_ingestion_runs` and `odds_market_snapshots` | Partially hardened in Phase 4A1/4A2 | Sport-safe uniqueness, source provenance, event/run coherence, and conditional immutability are implemented; canonical selection/game identity and kickoff enforcement remain. |
+| Shared `sportsbooks` | Reused through Phase 4A2 provider mapping | Provider/bookmaker key is stable identity; display title is retained per observation and does not drive later resolution. |
 | Odds API HTTP/request handling | Reuse after generalization | Separate request/response DTO parsing from sport-specific canonical resolution and persistence; inject sport key and time window. |
 | Generic `game_sources` | Conditional | Use a sport-qualified provider source only if reissued-event cardinality is resolved; otherwise add a narrow odds-event mapping. |
 | MLB team normalization and create-on-miss game matching | MLB-specific; do not reuse | NFL resolver must find existing NFL teams/games and fail closed on zero/multiple matches. |
@@ -332,29 +408,29 @@ section 7.
 
 ### 5.1 Cross-sport collisions and blocking constraints
 
-1. **Scheduled run collision:**
-   `uq_odds_ingestion_runs_active_scheduled_snapshot` omits `sport`. It will
-   block MLB and NFL running/completed captures with the same date/role. Its
-   replacement must include sport while preserving existing MLB uniqueness.
+1. **Scheduled run collision — resolved in migration 027:**
+   `uq_odds_ingestion_runs_active_scheduled_snapshot` now includes `sport` and
+   preserves same-sport MLB uniqueness while allowing an NFL run for the same
+   date/role.
 2. **Role constraint:** the role check prevents any new NFL-specific official
    capture semantics. Adding roles must not reinterpret existing MLB roles.
-3. **Unscoped role lookup:** MLB early-entry, preview, movement, and related
-   queries select runs by date/role/status without sport. Once the uniqueness
-   key is repaired, they could choose an NFL run unless first pinned to
+3. **Unscoped role lookup — resolved for MLB in Phase 4A1:** MLB early-entry,
+   preview, movement, and related date/role queries are pinned to
    `baseball_mlb`.
-4. **Provider event namespace:** `game_sources` keys an external ID by generic
-   `source_name`. Using `odds_api` for both sports assumes provider event IDs are
-   globally collision-free. Use a sport-qualified source identity or an
-   explicit provider/sport/event key.
+4. **Provider event namespace — resolved before canonical mapping:** Phase 4A2
+   retains a per-run `(source, provider_sport_key, external_event_id)` event
+   observation and proves source/sport equality with the run. `game_sources`
+   remains unsuitable for NFL canonical mapping and is deferred to Phase 4A3.
 5. **One source event per game:** `idx_game_sources_game_id_source_name` prevents
    mapping a replacement Odds API event ID to the same game. NFL reschedules or
    provider event reissues need a deliberate rule, not duplicate games.
 6. **Team creation:** the MLB adapter inserts teams by normalized display name.
    An NFL spelling or relocation alias can create a duplicate shared entity
    outside `nfl_team_profiles`.
-7. **Sportsbook identity:** unique display title is not stable provider identity.
-   A rename/case change can split one book; coincident titles can merge distinct
-   operators. The provider bookmaker key is currently discarded.
+7. **Sportsbook identity — resolved for new observations:** immutable
+   `(provider_name, provider_bookmaker_key)` mapping is shared across sports.
+   Display title is retained on each quote and is no longer identity. Historical
+   rows remain unknown until an exact existing title is legitimately attached.
 8. **Run/game mismatch:** a snapshot references both a run and a shared game,
    but no database rule proves the run sport matches the canonical game's sport.
 9. **Selection identity:** a selection is free text. Nothing proves an NFL
@@ -365,22 +441,22 @@ section 7.
     official evidence boundary.
 
 No migration-026 constraint prevents NFL odds from referencing the shared
-`games` row; that is the desired bridge. The material blockers are the
-scheduled-run unique index, role check, and potentially `game_sources`
-cardinality. The remaining issues permit coexistence syntactically but make it
-unsafe or unauditable.
+`games` row; that remains the desired bridge. Phase 4A1/4A2 removed the raw
+sport-coexistence and source-attribution blockers. The material remaining
+blockers are official NFL role/canonical mapping semantics, `game_sources`
+cardinality policy, canonical selection identity, and kickoff enforcement.
 
 ### 5.2 Every identified route for post-kickoff odds to enter pregame analysis
 
-1. The live adapter compares its locally assigned `snapshot_time` only with
-   the provider `commence_time`; a stale/later provider time can admit a quote
-   after the canonical kickoff.
+1. The MLB adapter now uses database `response_received_at` as the observation
+   time, but still compares only with provider `commence_time`; a stale/later
+   provider time can admit a quote after the canonical kickoff.
 2. `save_market_selection` and `odds_market_snapshots` allow direct inserts at
    or after game time. There is no trigger using either `games.game_date` or
    `nfl_moneyline_game_predictions.target_kickoff`.
 3. Run completion does not validate every child quote against canonical game
-   time, and completed odds runs/snapshots are not protected from update or
-   delete.
+   time. Phase 4A2 protects new provenance-bearing terminal runs/snapshots from
+   update/delete, but legacy rows retain their established mutability.
 4. `analysis.market.analyze_markets` reads every snapshot with no pregame
    filter.
 5. `get_market_snapshots(include_live=True)` intentionally returns live rows;
@@ -411,20 +487,23 @@ and when sealing a run. Reporting queries should still filter defensively.
 
 ### 5.3 Current odds provenance verdict
 
-The current tables preserve useful operational provenance: ingestion-run ID,
-declared sport/source/role/date, lifecycle and quota metadata, canonical game,
-sportsbook display identity, exact stored price/line/selection, one application
-capture timestamp, and a stable snapshot primary key.
+For new Phase 4A2 observations, the current tables preserve ingestion-run ID,
+declared provider source/sport/role/date, secret-free request context, database
+request and response timestamps, lifecycle/quota metadata, immutable provider
+event/sport identity and provider team/commence facts, immutable provider
+bookmaker key mapping, title at observation, bookmaker/market update times,
+SportsModel observation time, exact price/line/selection, and a stable quote ID.
+Composite foreign keys prove run/event/source/sport/time and
+quote/book/source relationships. Conditional triggers protect this new source
+graph without retrofitting old MLB rows.
 
-They are **not sufficient for official NFL paper evidence**. Missing evidence
-includes request identity and parameters, request/response timestamps from a
-database clock, raw response or per-event payload and hash, provider sport and
-event key on the observation, bookmaker key and provider update time, canonical
-selection team ID, and proof that copied evaluation facts match their source
-row. Runs and snapshots are mutable and cascade-deletable. `snapshot_time` is
-assigned by the application after response parsing rather than tied to a sealed
-raw observation. These gaps prevent exact replay and make the claimed
-point-in-time state weaker than Phase 3 evidence.
+This is **still not sufficient for official NFL paper evidence**. Missing
+evidence includes strict existing-only canonical NFL team/game mapping,
+canonical selection team ID, kickoff-drift and pregame database enforcement,
+and immutable evaluation/qualification/paper source relationships. Historical
+MLB rows cannot recover fields discarded before Phase 4A2. No full raw payload
+or payload hash is stored, so the system retains normalized attribution facts
+but cannot reproduce provider response bytes or prove authenticity.
 
 ## 6. Canonical NFL event and team mapping
 
@@ -820,10 +899,12 @@ largely reusable. The current MLB HTTP/persistence service, identity creation,
 role timing, evaluation policy, paper tables, settlement, and orchestration are
 not safe to reuse directly for NFL.
 
-The shared odds schema is not yet ready for official NFL evidence. It has one
-hard MLB/NFL coexistence collision, insufficient provider/source provenance,
-mutable source and decision rows, free-text selection identity, and no database
-proof of strict pre-kickoff eligibility. Repair sport isolation first, then add
-strict existing-only NFL mapping and immutable provenance before any live NFL
-odds request. Keep Phase 3 frozen and treat every partial 2026 outcome solely as
-prospective validation evidence.
+The shared odds schema is not yet ready for official NFL evidence. Phase 4A1
+removed the hard MLB/NFL scheduled-run collision and Phase 4A2 added stable
+provider identity, source/event attribution, database observation time, and
+immutability for new source rows. Free-text selection identity, strict
+existing-only NFL team/game mapping, kickoff drift, database pregame proof, and
+immutable official evaluation/paper relationships remain. Complete Phase 4A3
+canonical identity and timing protection before any live NFL odds request. Keep
+Phase 3 frozen and treat every partial 2026 outcome solely as prospective
+validation evidence.
