@@ -1,9 +1,9 @@
 # NFL Phase 4 — Market Layer and Paper Validation Architecture Audit
 
-Status: Phase 4A1, Phase 4A2, and Phase 4A3 implemented; Phase 4A remains incomplete
+Status: Phase 4A1 through Phase 4A4 implemented; Phase 4A remains incomplete
 
-Audit baseline for Phase 4A3: `main` at
-`48c1ba2f7352aa36b390c6c9fbd4989f1701b9ea`
+Audit baseline for Phase 4A4: `main` at
+`a20255a6e684e3e1b5aa4c31a5ac78176f1bde06`
 
 ## 1. Scope and governing constraints
 
@@ -201,6 +201,86 @@ kickoff and SportsModel observation/response time, with provider timestamps as
 provenance only. It must add immutable official snapshot evidence and reject
 equality with or observation after kickoff at both service and database
 boundaries. Phase 4A is not complete until that boundary exists.
+
+### Phase 4A4 implementation record — 2026-08-21
+
+Migration 030 and the official-pregame evidence service establish the first
+explicit official NFL quote boundary. Raw odds observations remain raw by
+default. A caller must deliberately qualify one exact provenance-bearing quote
+snapshot; qualifying a newer quote creates a new row and never changes an
+earlier decision.
+
+The timestamp meanings are intentionally distinct:
+
+1. `odds_ingestion_runs.request_started_at` is the database clock recorded when
+   SportsModel reserves and begins the provider request.
+2. `odds_ingestion_runs.response_received_at` is the database clock recorded
+   when SportsModel receives the provider response. This is the trusted
+   possession and observation time.
+3. `odds_provider_event_observations.observed_at`,
+   `odds_market_snapshots.observed_at`, and the provenance-bearing snapshot's
+   `snapshot_time` are constrained to that same response-receipt time.
+4. `provider_commence_time` is the provider's event time and remains provenance.
+5. `bookmaker_updated_at` is the bookmaker-level provider update time and
+   remains provenance.
+6. `market_updated_at` is the market-level provider update time and remains
+   provenance.
+7. `nfl_games.scheduled_start_time` is the current canonical NFL kickoff and is
+   authoritative for pregame eligibility.
+
+The exact official rule is:
+
+```text
+trusted SportsModel observed_at < current canonical NFL kickoff
+```
+
+Equality is live, not pregame, and is rejected. Any later observation is also
+rejected. An earlier provider bookmaker or market update, or a later provider
+commence time, cannot make a late SportsModel observation eligible. Provider
+timestamps never override either the trusted observation clock or canonical
+kickoff.
+
+`nfl_official_pregame_evidence` references one exact raw snapshot, its event
+observation, immutable Phase 4A3 mapping, ingestion run, sportsbook provider
+identity, existing NFL game, and canonical selection team. The insert trigger
+requires a completed Odds API NFL provenance run, exact response/event/snapshot
+observation-time equality, exact game linkage, current canonical home/away
+orientation, an H2H provider selection matching one mapped team, and the
+strictly pre-kickoff observation. It copies the American price, optional line,
+provider selection text, trusted observation time, provider commence/book/market
+timestamps, and current canonical kickoff used for qualification. The canonical
+team ID, not provider text, is authoritative downstream.
+
+Official evidence rows reject update and delete. Their referenced Phase 4A2 and
+Phase 4A3 source rows are already immutable and all evidence foreign keys use
+`ON DELETE RESTRICT`. Reprocessing the same snapshot and selection is
+idempotent; attempting to bind that snapshot to another canonical selection
+fails closed. A different later pregame snapshot produces a distinct evidence
+row.
+
+Eligibility is evaluated against the current `nfl_games` kickoff while the
+canonical row is locked against concurrent schedule updates. The kickoff used
+for that decision is copied to
+`canonical_kickoff_at_qualification`. If the canonical schedule changes before
+qualification, the new kickoff controls. If it changes afterward, the immutable
+historical evidence and its retained qualification kickoff are not silently
+reclassified or rewritten. Provider odds data never changes `nfl_games`.
+
+Service and database boundaries reject missing raw provenance, missing event
+mapping, MLB or other sport/source identity, incomplete runs, incompatible
+run/event/book/game links, unknown or third selections, selection/team mismatch,
+naive timestamps, and observations at or after kickoff. No probability,
+no-vig, edge, EV, evaluation, paper bet, settlement, or CLV is created.
+
+Final validation with guarded tests enabled against the disposable local
+PostgreSQL container completed with 1037 passed, 0 failed, and 0 skipped.
+
+Phase 4A5 owns the first controlled live NFL capture. Before it runs, the
+operator must use an explicitly approved nonproduction rehearsal, verify the
+request window and API quota, confirm the intended canonical games and mappings,
+exercise duplicate-request protection, and prove that returned raw quotes can
+be qualified only through this strict boundary. Phase 4A remains incomplete
+until that controlled live path and its evidence audit are validated.
 
 ## 2. Current-state repository audit
 
@@ -966,12 +1046,13 @@ largely reusable. The current MLB HTTP/persistence service, identity creation,
 role timing, evaluation policy, paper tables, settlement, and orchestration are
 not safe to reuse directly for NFL.
 
-The shared odds schema is not yet ready for official NFL evidence. Phase 4A1
+The shared odds schema is not yet ready for a controlled live NFL capture. Phase 4A1
 removed the hard MLB/NFL scheduled-run collision, Phase 4A2 added stable
 provider identity and immutable source attribution, and Phase 4A3 added exact
 existing-only NFL team/game/selection resolution plus immutable provider-event
-mapping. Database-enforced pregame qualification, quote-level canonical
-selection persistence, and immutable official evaluation/paper relationships
-remain. Complete Phase 4A4 timing and official snapshot protection before any
-live NFL odds request. Keep Phase 3 frozen and treat every partial 2026 outcome
-solely as prospective validation evidence.
+mapping. Phase 4A4 adds database-enforced, strictly pregame qualification,
+canonical selection persistence, and immutable point-in-time official quote
+evidence. The first controlled live capture, raw capture operational controls,
+and its post-capture evidence audit remain for Phase 4A5; immutable market
+evaluation and paper relationships remain later work. Keep Phase 3 frozen and
+treat every partial 2026 outcome solely as prospective validation evidence.
