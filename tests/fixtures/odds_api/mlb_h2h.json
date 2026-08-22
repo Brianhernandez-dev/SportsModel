@@ -1,0 +1,42 @@
+[
+  {
+    "id": "mlb-event-2026-08-21-001",
+    "sport_key": "baseball_mlb",
+    "sport_title": "MLB",
+    "commence_time": "2026-08-21T23:10:00Z",
+    "home_team": "Seattle Mariners",
+    "away_team": "New York Yankees",
+    "bookmakers": [
+      {
+        "key": "fanduel",
+        "title": "FanDuel",
+        "last_update": "2026-08-21T18:00:01Z",
+        "markets": [
+          {
+            "key": "h2h",
+            "last_update": "2026-08-21T14:00:00-04:00",
+            "outcomes": [
+              {"name": "Seattle Mariners", "price": -112},
+              {"name": "New York Yankees", "price": 102}
+            ]
+          }
+        ]
+      },
+      {
+        "key": "draftkings",
+        "title": "DraftKings",
+        "last_update": "2026-08-21T18:00:03Z",
+        "markets": [
+          {
+            "key": "h2h",
+            "last_update": "2026-08-21T18:00:02Z",
+            "outcomes": [
+              {"name": "Seattle Mariners", "price": -110},
+              {"name": "New York Yankees", "price": 100}
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]

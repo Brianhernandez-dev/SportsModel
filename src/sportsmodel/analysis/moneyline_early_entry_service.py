@@ -8,6 +8,9 @@ from sportsmodel.analysis.moneyline_market_evaluation_service import (
     evaluate_moneyline_prediction_run,
 )
 from sportsmodel.database.connection import get_connection
+from sportsmodel.ingest.odds_api_parser import (
+    ODDS_API_MLB_SPORT_KEY,
+)
 
 
 ConnectionFactory = Callable[[], Any]
@@ -109,10 +112,11 @@ def _load_late_night_odds_run_id(
             target_date = %s
             AND snapshot_role = 'late_night'
             AND status = 'completed'
+            AND sport = %s
         ORDER BY odds_ingestion_run_id DESC
         LIMIT 1;
         """,
-        (target_date,),
+        (target_date, ODDS_API_MLB_SPORT_KEY),
     )
     row = cursor.fetchone()
 

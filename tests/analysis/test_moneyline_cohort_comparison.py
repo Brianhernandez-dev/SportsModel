@@ -142,9 +142,15 @@ def test_keeps_cohorts_isolated_and_compares_stored_prices() -> None:
     assert rows[12].status == OFFICIAL_ONLY
 
     cohort_query, parameters = connection.cursor_instance.queries[1]
-    assert parameters == (TARGET_DATE, TARGET_DATE, TARGET_DATE)
+    assert parameters == (
+        TARGET_DATE,
+        TARGET_DATE,
+        "baseball_mlb",
+        TARGET_DATE,
+    )
     assert "prediction_run.run_type = 'preview'" in cohort_query
     assert "odds_run.snapshot_role = 'late_night'" in cohort_query
+    assert "odds_run.sport = %s" in cohort_query
     assert "workflow.moneyline_prediction_run_id" in cohort_query
     assert "prediction_run.run_type = 'official'" in cohort_query
     assert "ORDER BY" in cohort_query

@@ -645,3 +645,4 @@ def test_evening_loader_returns_role_when_requested() -> None:
         "evening",
         "late_night",
     ]
+    assert cursor.parameters[2] == "baseball_mlb"

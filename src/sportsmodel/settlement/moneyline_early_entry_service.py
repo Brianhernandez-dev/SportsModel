@@ -5,6 +5,9 @@ from decimal import Decimal
 from typing import Any
 
 from sportsmodel.database.connection import get_connection
+from sportsmodel.ingest.odds_api_parser import (
+    ODDS_API_MLB_SPORT_KEY,
+)
 from sportsmodel.settlement.moneyline_paper_service import (
     MoneylinePaperSettlementRunResult,
     settle_moneyline_paper_candidate_run,
@@ -144,6 +147,7 @@ def load_moneyline_early_entry_performance(
                 WHERE
                     prediction_run.run_type = 'preview'
                     AND odds_run.snapshot_role = 'late_night'
+                    AND odds_run.sport = %s
                     AND evaluation.qualifies_as_paper_candidate
                         IS TRUE
                     AND (
@@ -151,7 +155,11 @@ def load_moneyline_early_entry_performance(
                         OR prediction_run.target_date = %s
                     );
                 """,
-                (target_date, target_date),
+                (
+                    ODDS_API_MLB_SPORT_KEY,
+                    target_date,
+                    target_date,
+                ),
             )
             row = cursor.fetchone()
     finally:
@@ -215,13 +223,18 @@ def _load_early_entry_cohort_ids(
                     AND prediction_run.run_type = 'preview'
                     AND odds_run.target_date = %s
                     AND odds_run.snapshot_role = 'late_night'
+                    AND odds_run.sport = %s
                     AND evaluation.qualifies_as_paper_candidate
                         IS TRUE
                 ORDER BY
                     prediction_run.moneyline_prediction_run_id,
                     odds_run.odds_ingestion_run_id;
                 """,
-                (target_date, target_date),
+                (
+                    target_date,
+                    target_date,
+                    ODDS_API_MLB_SPORT_KEY,
+                ),
             )
             rows = cursor.fetchall()
     finally:

@@ -20,6 +20,9 @@ from sportsmodel.analysis.no_vig import (
 from sportsmodel.database.connection import (
     get_connection,
 )
+from sportsmodel.ingest.odds_api_parser import (
+    ODDS_API_MLB_SPORT_KEY,
+)
 from sportsmodel.models.consensus_market import (
     ConsensusMarket,
 )
@@ -654,6 +657,7 @@ def _load_latest_opening_run(
             target_date = %s
             AND status = 'completed'
             AND snapshot_role = ANY(%s)
+            AND sport = %s
         ORDER BY
             CASE snapshot_role
                 WHEN 'late_night' THEN 1
@@ -667,6 +671,7 @@ def _load_latest_opening_run(
         (
             target_date,
             list(roles),
+            ODDS_API_MLB_SPORT_KEY,
         ),
     )
 

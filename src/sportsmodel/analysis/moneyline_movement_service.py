@@ -21,6 +21,9 @@ from sportsmodel.analysis.probability import (
     american_to_implied_probability,
 )
 from sportsmodel.database.connection import get_connection
+from sportsmodel.ingest.odds_api_parser import (
+    ODDS_API_MLB_SPORT_KEY,
+)
 from sportsmodel.models.closing_line_value import (
     ClosingLineValueMarket,
 )
@@ -207,6 +210,7 @@ def _load_completed_snapshot_runs(
             WHERE target_date = %s
               AND status = 'completed'
               AND snapshot_role = ANY(%s)
+              AND sport = %s
             ORDER BY
                 snapshot_role,
                 odds_ingestion_run_id DESC
@@ -231,6 +235,7 @@ def _load_completed_snapshot_runs(
             list(
                 MONEYLINE_MOVEMENT_SNAPSHOT_ROLES
             ),
+            ODDS_API_MLB_SPORT_KEY,
         ),
     )
 

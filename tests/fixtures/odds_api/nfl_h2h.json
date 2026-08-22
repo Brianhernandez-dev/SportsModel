@@ -1,0 +1,27 @@
+[
+  {
+    "id": "nfl-event-2026-week-01-001",
+    "sport_key": "americanfootball_nfl",
+    "sport_title": "NFL",
+    "commence_time": "2026-09-10T20:20:00-04:00",
+    "home_team": "Kansas City Chiefs",
+    "away_team": "Denver Broncos",
+    "bookmakers": [
+      {
+        "key": "betmgm",
+        "title": "BetMGM",
+        "last_update": "2026-09-10T22:00:01Z",
+        "markets": [
+          {
+            "key": "h2h",
+            "last_update": "2026-09-10T22:00:00Z",
+            "outcomes": [
+              {"name": "Kansas City Chiefs", "price": -145},
+              {"name": "Denver Broncos", "price": 125}
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]

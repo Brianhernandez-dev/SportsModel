@@ -163,6 +163,12 @@ def test_performance_isolated_to_preview_late_night() -> None:
 
     assert "prediction_run.run_type = 'preview'" in query
     assert "odds_run.snapshot_role = 'late_night'" in query
+    assert "odds_run.sport = %s" in query
+    assert connection.cursor_instance.parameters == (
+        "baseball_mlb",
+        TARGET_DATE,
+        TARGET_DATE,
+    )
     assert "candidate_run" not in query
     assert report.total_qualified_bets == 3
     assert report.settled_bets == 2
@@ -333,6 +339,12 @@ def test_newer_preview_does_not_replace_persisted_cohort() -> None:
 
     assert "moneyline_prediction_market_evaluations" in query
     assert "evaluation.qualifies_as_paper_candidate" in query
+    assert "odds_run.sport = %s" in query
+    assert discovery_connection.cursor_instance.parameters == (
+        TARGET_DATE,
+        TARGET_DATE,
+        "baseball_mlb",
+    )
     assert "completed_at" not in query
     assert "LIMIT 1" not in query
 

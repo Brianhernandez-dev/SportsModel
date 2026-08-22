@@ -16,6 +16,7 @@ class FakeCursor:
         self.preview_run_id = preview_run_id
         self.odds_run_id = odds_run_id
         self.row = None
+        self.queries = []
 
     def __enter__(self):
         return self
@@ -24,6 +25,7 @@ class FakeCursor:
         return False
 
     def execute(self, query, parameters) -> None:
+        self.queries.append((query, parameters))
         if "FROM moneyline_prediction_runs" in query:
             self.row = (
                 None
@@ -84,6 +86,9 @@ def test_captures_preview_against_late_night_odds() -> None:
             "require_complete_market_coverage": False,
         }
     ]
+    odds_query, odds_parameters = connection.cursor_instance.queries[1]
+    assert "sport = %s" in odds_query
+    assert odds_parameters == (TARGET_DATE, "baseball_mlb")
     assert connection.closed is True
 
 

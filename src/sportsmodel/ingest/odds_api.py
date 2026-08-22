@@ -10,10 +10,14 @@ from sportsmodel.database.connection import get_connection
 from sportsmodel.ingest.game_matching import (
     get_or_create_canonical_game,
 )
+from sportsmodel.ingest.odds_api_parser import (
+    ODDS_API_MLB_SPORT_KEY,
+    parse_odds_api_h2h_response,
+)
 from sportsmodel.ingest.team_identity import normalize_team_name
 
 
-SPORT = "baseball_mlb"
+SPORT = ODDS_API_MLB_SPORT_KEY
 REGIONS = "us"
 MARKETS = "h2h"
 ODDS_FORMAT = "american"
@@ -608,32 +612,22 @@ def fetch_live_odds(
                 f"{status_code}: {response.text}"
             )
 
-        games = response.json()
-        games_returned = len(games)
+        raw_games = response.json()
+        games = parse_odds_api_h2h_response(
+            raw_games,
+            expected_sport_key=SPORT,
+        )
+        games_returned = len(raw_games)
         snapshot_time = _current_snapshot_time()
 
         print(f"Games returned: {games_returned}")
 
         with connection.cursor() as cursor:
             for game in games:
-                external_game_id = game.get("id")
-                commence_time = game.get("commence_time")
-                home_team = game.get("home_team")
-                away_team = game.get("away_team")
-
-                if not all(
-                    [
-                        external_game_id,
-                        commence_time,
-                        home_team,
-                        away_team,
-                    ]
-                ):
-                    continue
-
-                commence_datetime = parse_commence_time(
-                    commence_time
-                )
+                external_game_id = game.event_id
+                commence_datetime = game.commence_time
+                home_team = game.home_team
+                away_team = game.away_team
 
                 if not _should_process_event(
                     commence_datetime,
@@ -656,31 +650,21 @@ def fetch_live_odds(
 
                 games_processed += 1
 
-                for bookmaker in game.get("bookmakers", []):
-                    sportsbook_name = bookmaker.get("title")
-
-                    if not sportsbook_name:
-                        continue
+                for bookmaker in game.bookmakers:
+                    sportsbook_name = bookmaker.title
 
                     sportsbook_id = get_sportsbook_id(
                         cursor,
                         sportsbook_name,
                     )
 
-                    for market in bookmaker.get("markets", []):
-                        market_type = market.get("key")
+                    for market in bookmaker.markets:
+                        market_type = market.market_key
 
-                        if market_type != "h2h":
-                            continue
-
-                        for outcome in market.get("outcomes", []):
-                            selection_name = outcome.get("name")
-                            price = outcome.get("price")
-                            line_value = outcome.get("point")
-
-                            if not selection_name or price is None:
-                                selections_skipped += 1
-                                continue
+                        for outcome in market.outcomes:
+                            selection_name = outcome.selection_name
+                            price = outcome.american_price
+                            line_value = outcome.line_value
 
                             save_market_selection(
                                 cursor=cursor,

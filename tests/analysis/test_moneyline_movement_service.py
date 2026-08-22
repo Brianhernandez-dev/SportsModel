@@ -210,6 +210,29 @@ def test_empty_target_date_returns_empty_report(
     assert connection.closed is True
 
 
+def test_snapshot_run_lookup_is_explicitly_mlb_scoped() -> None:
+    class Cursor:
+        def __init__(self) -> None:
+            self.query = None
+            self.parameters = None
+
+        def execute(self, query, parameters) -> None:
+            self.query = query
+            self.parameters = parameters
+
+        def fetchall(self):
+            return []
+
+    cursor = Cursor()
+
+    assert service._load_completed_snapshot_runs(
+        cursor,
+        target_date=TARGET_DATE,
+    ) == ()
+    assert "sport = %s" in cursor.query
+    assert cursor.parameters[2] == "baseball_mlb"
+
+
 def _snapshot_runs(
 ) -> tuple[service.MoneylineSnapshotRun, ...]:
     return (

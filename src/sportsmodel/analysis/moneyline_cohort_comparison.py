@@ -5,6 +5,9 @@ from decimal import Decimal
 from typing import Any
 
 from sportsmodel.database.connection import get_connection
+from sportsmodel.ingest.odds_api_parser import (
+    ODDS_API_MLB_SPORT_KEY,
+)
 
 
 ConnectionFactory = Callable[[], Any]
@@ -124,6 +127,7 @@ COHORT_BETS_QUERY = """
             AND prediction_run.run_type = 'preview'
             AND odds_run.target_date = %s
             AND odds_run.snapshot_role = 'late_night'
+            AND odds_run.sport = %s
             AND evaluation.qualifies_as_paper_candidate IS TRUE
     ),
     official AS (
@@ -193,7 +197,12 @@ def load_moneyline_cohort_comparison(
 
             cursor.execute(
                 COHORT_BETS_QUERY,
-                (target_date, target_date, target_date),
+                (
+                    target_date,
+                    target_date,
+                    ODDS_API_MLB_SPORT_KEY,
+                    target_date,
+                ),
             )
             bets = tuple(_build_bet(row) for row in cursor.fetchall())
     finally:
