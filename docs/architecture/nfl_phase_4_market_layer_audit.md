@@ -1,9 +1,10 @@
 # NFL Phase 4 — Market Layer and Paper Validation Architecture Audit
 
-Status: Phase 4A1 through Phase 4A4 implemented; Phase 4A remains incomplete
+Status: Phase 4A1 through Phase 4A5 implemented offline; the first live capture
+has not occurred and Phase 4A remains incomplete
 
-Audit baseline for Phase 4A4: `main` at
-`a20255a6e684e3e1b5aa4c31a5ac78176f1bde06`
+Audit baseline for Phase 4A5: `main` at
+`4d40cc4f45b32c9ef1308f881bcea2ec2ad120da`
 
 ## 1. Scope and governing constraints
 
@@ -281,6 +282,85 @@ request window and API quota, confirm the intended canonical games and mappings,
 exercise duplicate-request protection, and prove that returned raw quotes can
 be qualified only through this strict boundary. Phase 4A remains incomplete
 until that controlled live path and its evidence audit are validated.
+
+### Phase 4A5 implementation record — 2026-08-22
+
+Phase 4A5 adds a narrow manual NFL H2H capture boundary and rehearses it
+offline. It does not add a scheduler or generic multi-sport orchestration. The
+operator interface is `python -m sportsmodel.nfl.manual_odds_capture_cli`.
+With no mode flag it is a no-network, no-write dry run. Mock mode requires an
+explicit fixture, target UTC date, disposable test database URL, and destructive
+test-database guard. Live mode requires `--live`, `--confirm-one-request`, a
+target UTC date, `ODDS_API_KEY`, schema 030 or newer, a future unplayed canonical
+NFL schedule in the requested window, and successful run reservation. Sport,
+region, market, and odds format are fixed to `americanfootball_nfl`, `us`,
+`h2h`, and `american`; both reservation and transport reject any other request
+contract.
+
+The workflow reserves and commits an `entry` ingestion run before transport,
+then invokes the injected provider adapter once. HTTP redirects are disabled
+and there is no application retry loop. After receipt, the database records the
+trusted response timestamp, HTTP status, and valid nonnegative
+`x-requests-remaining` and `x-requests-used` values when supplied. Missing,
+malformed, or negative quota headers remain null; values are never invented.
+The response is parsed through the A1 offline parser, mapped only to existing
+A3 NFL identities and games, persisted through the immutable A2 event/book
+provenance graph, stored as raw H2H snapshots, and completed before A4 official
+qualification. No no-vig, consensus, model edge, EV, candidate, paper,
+settlement, or CLV path is called.
+
+The practical one-call guarantee is deliberately narrower than distributed
+exactly-once delivery: one successful reservation causes exactly one provider
+adapter invocation in that process. Parser, response-persistence, canonical
+mapping, raw-persistence, or qualification failures never invoke the adapter a
+second time. Redirects are not followed. A running or completed capture for
+the same sport, target date, and scheduled role blocks a duplicate before
+transport under migration 027. A failed run permits retry only through a new
+explicit operator command. A process or network failure can leave delivery
+ambiguous, so the system does not claim that the provider received exactly one
+HTTP transaction.
+
+Recovery depends on the failure boundary. Before response receipt, inspect the
+failed reservation and provider account evidence before deciding whether to
+issue another deliberate command. After response receipt but before raw commit,
+the failed run retains response/quota provenance and no automatic retry occurs;
+correct the local identity, schedule, or persistence issue and make a separate
+operator decision about a new request. If raw persistence completed but
+official qualification failed, retain the completed run and raw snapshots and
+retry qualification locally from those snapshots; never call the provider
+again. Strictly at- or post-kickoff observations are expected ineligible rows,
+not a reason to repeat capture.
+
+The realistic disposable-PostgreSQL rehearsal used two NFL events, two
+sportsbooks per event, and two selections per H2H market. One mocked request
+created one completed ingestion run, two immutable provider event mappings, two
+provider event observations, two sportsbook provider identities, eight raw
+snapshots with canonical home/away selections, and eight immutable official
+pregame evidence rows. Quota metadata retained the mocked values 487 remaining
+and 13 used. Separate rehearsals covered unknown teams, no canonical game,
+ambiguous games, kickoff drift beyond policy, cross-sport payload, wrong market,
+duplicate and third selections, observation exactly at and after kickoff,
+response receipt followed by local persistence failure, conflicting bookmaker
+identity, and a conflicting reused provider event ID. The focused result was 21
+unit tests passed and 11 PostgreSQL tests passed; all provider calls were
+injected mocks.
+
+The 2026-08-22 production audit was read only. Production was at migration 030,
+the official-evidence table and both immutability/qualification triggers were
+present, 32 active NFL canonical teams had 32 exact Odds API identities, and
+existing Phase 4 NFL odds/evidence counts remained zero. Production had zero
+future unplayed canonical NFL games, so there was no home/away/kickoff slate to
+map. Production is therefore **not ready** for the first live request.
+
+Before that request can be authorized, production must load the intended future
+canonical NFL schedule from its approved schedule source; verify all target
+games are unplayed with distinct canonical home/away teams and timezone-aware
+kickoffs; repeat the read-only migration, trigger, identity, schedule, duplicate
+reservation, and zero-evidence checks; select one target UTC date; confirm the
+provider credential and available quota out of band; and obtain explicit
+operator approval for one request attempt. The live command must not be run
+until every criterion passes. This implementation and rehearsal do not mark a
+live capture complete.
 
 ## 2. Current-state repository audit
 

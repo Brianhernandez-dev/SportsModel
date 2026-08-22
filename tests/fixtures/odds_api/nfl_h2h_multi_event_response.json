@@ -1,0 +1,89 @@
+{
+  "status_code": 200,
+  "headers": {
+    "x-requests-remaining": "487",
+    "x-requests-used": "13"
+  },
+  "body": [
+    {
+      "id": "nfl-2026-week-01-buf-mia",
+      "sport_key": "americanfootball_nfl",
+      "sport_title": "NFL",
+      "commence_time": "2026-09-13T17:00:00Z",
+      "home_team": "Miami Dolphins",
+      "away_team": "Buffalo Bills",
+      "bookmakers": [
+        {
+          "key": "betmgm",
+          "title": "BetMGM",
+          "last_update": "2026-09-13T15:00:01Z",
+          "markets": [
+            {
+              "key": "h2h",
+              "last_update": "2026-09-13T15:00:00Z",
+              "outcomes": [
+                {"name": "Miami Dolphins", "price": 115},
+                {"name": "Buffalo Bills", "price": -135}
+              ]
+            }
+          ]
+        },
+        {
+          "key": "fanduel",
+          "title": "FanDuel",
+          "last_update": "2026-09-13T15:01:01Z",
+          "markets": [
+            {
+              "key": "h2h",
+              "last_update": "2026-09-13T15:01:00Z",
+              "outcomes": [
+                {"name": "Buffalo Bills", "price": -130},
+                {"name": "Miami Dolphins", "price": 110}
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "nfl-2026-week-01-den-kc",
+      "sport_key": "americanfootball_nfl",
+      "sport_title": "NFL",
+      "commence_time": "2026-09-13T20:25:00Z",
+      "home_team": "Kansas City Chiefs",
+      "away_team": "Denver Broncos",
+      "bookmakers": [
+        {
+          "key": "betmgm",
+          "title": "BetMGM",
+          "last_update": "2026-09-13T18:00:01Z",
+          "markets": [
+            {
+              "key": "h2h",
+              "last_update": "2026-09-13T18:00:00Z",
+              "outcomes": [
+                {"name": "Kansas City Chiefs", "price": -145},
+                {"name": "Denver Broncos", "price": 125}
+              ]
+            }
+          ]
+        },
+        {
+          "key": "fanduel",
+          "title": "FanDuel",
+          "last_update": "2026-09-13T18:01:01Z",
+          "markets": [
+            {
+              "key": "h2h",
+              "last_update": "2026-09-13T18:01:00Z",
+              "outcomes": [
+                {"name": "Denver Broncos", "price": 130},
+                {"name": "Kansas City Chiefs", "price": -150}
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
