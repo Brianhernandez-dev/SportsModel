@@ -11,6 +11,12 @@ This decision does not select nflverse as the future live production provider.
 Live freshness, correction timing, operational support, and service guarantees
 require a separate decision.
 
+Phase 4A5-B later approved one manually acquired, timestamped, hash-pinned
+nflverse schedules snapshot for controlled 2026 canonical schedule readiness.
+That decision reuses this parsing and identity contract but does not approve an
+automated nflverse scheduler, claim live freshness guarantees, or replace the
+need for a future operational schedule-provider decision.
+
 `nflreadpy` is an access adapter, not a domain dependency. Its Polars
 DataFrames must be converted at the boundary into SportsModel-owned immutable
 records. Parser inputs in this slice are ordinary mappings so CSV readers,

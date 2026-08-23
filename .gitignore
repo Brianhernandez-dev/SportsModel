@@ -22,3 +22,6 @@ artifacts/nfl_2025_final_holdout.json
 
 # Superseded versioned walk-forward evaluation copies
 data/models/mlb_moneyline_walk_forward_report_v*.json
+
+# Generated independent-review export packages
+/audit_exports/

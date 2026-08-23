@@ -362,6 +362,72 @@ operator approval for one request attempt. The live command must not be run
 until every criterion passes. This implementation and rehearsal do not mark a
 live capture complete.
 
+### Phase 4A5-B production schedule readiness — 2026-08-22
+
+The `FUTURE_UNPLAYED = 0` blocker was an execution-scope gap, not missing
+canonical identity. Production contained the complete 2018–2025 nflverse
+historical contract (2,227 regular/postseason finals), ending with
+`2025_22_SEA_NE` on 2026-02-08, but its only schedule ingestion run was
+deliberately bounded through season 2025. It contained no 2026 game source IDs
+or observations.
+
+Phase 4A5-B uses the repository's existing nflverse schedule release and the
+existing `ingest_nflverse_games` canonical persistence service. It does not use
+Odds API market data to create games. The historical operator command could not
+be reused safely because it couples schedules to the approved 2018–2025
+completed-game statistics gate. A narrow `future_schedule_cli` wrapper now
+performs a production comparison before any write, requires explicit
+`--confirm-persist`, pins both source asset hashes, accepts only season 2026 or
+later, and sends only new or changed rows through the existing service. Exact
+rows are skipped without creating another ingestion run.
+
+The timestamped 2026 source snapshot contained 272 `REG` games, all unplayed,
+with 272 unique nflverse game IDs, all 32 known teams, no duplicate canonical
+identity, no missing kickoff, no invalid home/away orientation, and no parser
+rejection. It contained no preseason rows and no postseason placeholders. The
+adapter interprets nflverse `gameday` and `gametime` as America/New_York and
+persists timezone-aware timestamps. nflverse supplies current published
+schedule state, not original/reschedule history, a lifecycle status, or a
+row-level update timestamp; each manual snapshot therefore retains retrieval
+time, asset path, full asset SHA-256, and immutable raw observations. This is a
+controlled static-snapshot source decision, not approval of an automated live
+schedule feed or scheduler.
+
+The hash-pinned dry run proposed 272 inserts, zero updates, zero existing rows,
+and zero conflicts. Production ingestion run 10 completed with 272 processed,
+272 inserted, zero updated, and zero quarantined. A second read-only comparison
+reported zero new, zero updates, 272 exact existing rows, and zero conflicts.
+Post-ingestion production has 272 future unplayed regular-season games from
+2026-09-10 00:20 UTC through 2027-01-10 18:00 UTC, 272 nflverse source IDs, 272
+source observations, no duplicate source or canonical identities, and no
+incomplete orientation. The historical 2018–2025 count remains 2,227. NFL odds
+provider mappings, raw market snapshots, official pregame evidence, and paper
+evidence remain zero.
+
+Preseason policy is conservative and explicit:
+
+1. Preseason games are valid canonical `nfl_games` identities in the schema and
+   parser, but A5-B did not load any because the source snapshot had none and
+   the future wrapper accepts regular season only.
+2. The manual odds resolver and A4 evidence boundary could technically map and
+   retain a canonical preseason market observation. This first controlled live
+   capture is not authorized to do so.
+3. Preseason official market evidence may be considered later as market-pipeline
+   validation evidence, but only after an explicit operator policy and model
+   separation guard.
+4. Phase 3 predictions and Phase 4B model evaluation must exclude preseason.
+   The current Phase 3 target query does not filter `season_type`, so loading
+   preseason now could broaden model eligibility. No production preseason
+   schedule should be loaded until that exclusion is implemented and tested.
+
+The earliest multi-event UTC date supported by the existing whole-day manual
+capture contract is 2026-09-13. Its half-open UTC window contains 12 canonical
+regular-season games, all with complete nflverse identities and kickoffs. The
+earlier 2026-09-10 and 2026-09-11 windows each contain one game. Therefore
+2026-09-13 is the recommended first multi-event validation date; it is not an
+authorization to call the provider, and the live request itself remains
+incomplete.
+
 ## 2. Current-state repository audit
 
 ### 2.1 Schema through migration 026
