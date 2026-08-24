@@ -47,14 +47,25 @@ class ScriptedCursor:
         return self.rows.pop(0)
 
 
-def test_existing_provider_key_is_identity_when_title_changes() -> None:
+@pytest.mark.parametrize(
+    "observed_title",
+    (
+        "FanDuel",
+        "fanduel",
+        " FanDuel ",
+        "FanDuel Sportsbook",
+    ),
+)
+def test_existing_provider_key_is_identity_for_any_observed_title(
+    observed_title: str,
+) -> None:
     cursor = ScriptedCursor([(41, 7)])
 
     identity = resolve_provider_sportsbook(
         cursor,
         provider_name="odds_api",
         provider_bookmaker_key="fanduel",
-        bookmaker_title="FanDuel Sportsbook",
+        bookmaker_title=observed_title,
     )
 
     assert identity.sportsbook_provider_identity_id == 41

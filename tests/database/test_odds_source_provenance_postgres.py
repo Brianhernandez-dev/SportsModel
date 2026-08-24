@@ -282,51 +282,60 @@ def test_mlb_run_records_secret_free_request_and_response_context(
         connection.close()
 
 
-def test_provider_key_is_shared_across_sports_and_title_change_is_observed(
+@pytest.mark.parametrize(
+    ("first_sport", "second_sport"),
+    (
+        (ODDS_API_MLB_SPORT_KEY, ODDS_API_NFL_SPORT_KEY),
+        (ODDS_API_NFL_SPORT_KEY, ODDS_API_MLB_SPORT_KEY),
+    ),
+)
+def test_provider_key_is_shared_across_sports_in_either_observation_order(
     initialized_nfl_test_database,
+    first_sport: str,
+    second_sport: str,
 ) -> None:
     connection = psycopg2.connect(initialized_nfl_test_database)
     try:
         with connection.cursor() as cursor:
+            first_run = _insert_provenance_run(
+                cursor,
+                sport=first_sport,
+            )
+            create_provider_event_observation(
+                cursor,
+                ingestion_run_id=first_run,
+                provider_name="odds_api",
+                event=_event(
+                    sport=first_sport,
+                    event_id="first-event",
+                ),
+                observed_at=OBSERVED_AT,
+            )
             first = resolve_provider_sportsbook(
                 cursor,
                 provider_name="odds_api",
                 provider_bookmaker_key="fanduel",
                 bookmaker_title="FanDuel",
             )
+            second_run = _insert_provenance_run(
+                cursor,
+                sport=second_sport,
+            )
+            create_provider_event_observation(
+                cursor,
+                ingestion_run_id=second_run,
+                provider_name="odds_api",
+                event=_event(
+                    sport=second_sport,
+                    event_id="second-event",
+                ),
+                observed_at=OBSERVED_AT,
+            )
             renamed = resolve_provider_sportsbook(
                 cursor,
                 provider_name="odds_api",
                 provider_bookmaker_key="fanduel",
                 bookmaker_title="FanDuel Sportsbook",
-            )
-            mlb_run = _insert_provenance_run(
-                cursor,
-                sport=ODDS_API_MLB_SPORT_KEY,
-            )
-            nfl_run = _insert_provenance_run(
-                cursor,
-                sport=ODDS_API_NFL_SPORT_KEY,
-            )
-            create_provider_event_observation(
-                cursor,
-                ingestion_run_id=mlb_run,
-                provider_name="odds_api",
-                event=_event(
-                    sport=ODDS_API_MLB_SPORT_KEY,
-                    event_id="mlb-event",
-                ),
-                observed_at=OBSERVED_AT,
-            )
-            create_provider_event_observation(
-                cursor,
-                ingestion_run_id=nfl_run,
-                provider_name="odds_api",
-                event=_event(
-                    sport=ODDS_API_NFL_SPORT_KEY,
-                    event_id="nfl-event",
-                ),
-                observed_at=OBSERVED_AT,
             )
             cursor.execute(
                 "SELECT COUNT(*) FROM sportsbook_provider_identities "
@@ -342,6 +351,41 @@ def test_provider_key_is_shared_across_sports_and_title_change_is_observed(
         connection.commit()
 
         assert first == renamed
+    finally:
+        connection.close()
+
+
+def test_distinct_provider_keys_remain_distinct_provider_identities(
+    initialized_nfl_test_database,
+) -> None:
+    connection = psycopg2.connect(initialized_nfl_test_database)
+    try:
+        with connection.cursor() as cursor:
+            fanduel = resolve_provider_sportsbook(
+                cursor,
+                provider_name="odds_api",
+                provider_bookmaker_key="fanduel",
+                bookmaker_title="FanDuel",
+            )
+            draftkings = resolve_provider_sportsbook(
+                cursor,
+                provider_name="odds_api",
+                provider_bookmaker_key="draftkings",
+                bookmaker_title="DraftKings",
+            )
+            cursor.execute(
+                "SELECT COUNT(*) FROM sportsbook_provider_identities "
+                "WHERE provider_name = 'odds_api' "
+                "AND provider_bookmaker_key IN ('fanduel', 'draftkings');"
+            )
+            identity_count = cursor.fetchone()[0]
+        connection.commit()
+
+        assert fanduel.sportsbook_provider_identity_id != (
+            draftkings.sportsbook_provider_identity_id
+        )
+        assert fanduel.sportsbook_id != draftkings.sportsbook_id
+        assert identity_count == 2
     finally:
         connection.close()
 

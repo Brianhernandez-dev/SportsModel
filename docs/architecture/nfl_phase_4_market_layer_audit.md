@@ -1,7 +1,7 @@
 # NFL Phase 4 — Market Layer and Paper Validation Architecture Audit
 
-Status: Phase 4A1 through Phase 4A5 implemented offline; the first live capture
-has not occurred and Phase 4A remains incomplete
+Status: Phase 4A controlled manual foundation and first live evidence complete;
+Phase 4B has not begun
 
 Audit baseline for Phase 4A5: `main` at
 `4d40cc4f45b32c9ef1308f881bcea2ec2ad120da`
@@ -428,6 +428,68 @@ earlier 2026-09-10 and 2026-09-11 windows each contain one game. Therefore
 authorization to call the provider, and the live request itself remains
 incomplete.
 
+### Phase 4A independent-review closeout
+
+Provider-facing sportsbook identity is the immutable pair
+`(provider_name, provider_bookmaker_key)`, represented by
+`sportsbook_provider_identity_id`. Display title is observation metadata. After
+a mapping exists, the resolver returns it before inspecting the new title, so
+case, whitespace, or branding changes cannot create another identity for that
+provider key. Database uniqueness independently prevents one provider key from
+mapping to multiple shared sportsbooks and prevents one shared sportsbook from
+acquiring multiple keys from the same provider.
+
+The first mapping still uses an exact display-title match to attach to a
+pre-existing legacy `sportsbooks` row. A title variant can therefore create a
+new shared sportsbook row instead of attaching to logically related historical
+rows whose provider key is unknown. This is a longitudinal legacy/maintenance
+risk, not permission to normalize, fuzzy-match, or collapse historical rows.
+It does not give one provider key two identities in a provenance-bearing run.
+
+Phase 4B must count a contributing provider book by
+`sportsbook_provider_identity_id` (or its immutable provider/key pair), never by
+display title or legacy `sportsbook_id`. Consensus source evidence must reject a
+duplicate provider identity and retain the exact contributing snapshot IDs. The
+existing MLB `MarketSnapshot`/consensus path groups by `sportsbook_id`; it must
+not be reused as the Phase 4B identity boundary without a provider-identity-aware
+adapter or NFL-specific input contract.
+
+#### Concurrency-test disposition
+
+The current manual workflow relies on PostgreSQL uniqueness, transactional
+rollback, and fail-closed rereads for several concurrent-worker races. Missing
+genuine two-connection tests do not weaken the declared unique keys, but they
+are required before multiple workers or scheduled capture are authorized:
+
+- scheduled run reservation: partial unique index by sport/date/role;
+- provider sportsbook creation: unique provider/key and provider-per-book
+  constraints plus loser reread/conflict handling;
+- provider-event mapping: unique provider/sport/event identity with immutable
+  canonical mapping; and
+- official qualification: canonical-game row lock, database-clock cutoff,
+  unique quote qualification, and immutable evidence.
+
+No broader Phase 4A concurrent-worker test is a prerequisite for designing the
+manual Phase 4B evaluation boundary. Phase 4B's own evaluation-run uniqueness,
+atomic source graph, retry, and partial-rollback tests remain required before
+any Phase 4B evidence write. The Phase 4A races above remain automation-readiness
+work and must be completed before scheduled or multi-worker capture.
+
+#### Future independent-review package completeness
+
+Future NFL independent-review exports must include these repository contracts in
+addition to the previously exported files:
+
+- `src/sportsmodel/nfl/models.py`;
+- `src/sportsmodel/nfl/game_persistence.py`;
+- `src/sportsmodel/nfl/nflverse_parser.py`; and
+- `src/sportsmodel/database/connection.py`.
+
+They define canonical model records, game persistence behavior, the provider
+schedule/stat parsing boundary, and database connection/configuration semantics.
+The earlier review package remains valid evidence with this omission disclosed;
+it does not need regeneration solely for this documentation correction.
+
 ## 2. Current-state repository audit
 
 ### 2.1 Schema through migration 026
@@ -683,12 +745,12 @@ section 7.
 |---|---|---|
 | Phase 3 frozen artifacts/loaders, routing, inference, prediction service, migration 026 persistence | Reuse unchanged | Read completed official prediction evidence; do not add odds columns or modify lifecycle. |
 | Probability conversion and no-vig normalization | Reuse unchanged | Use `Decimal` paths as pure calculations. |
-| Complete-market, no-vig, consensus builders | Reuse unchanged with guarded inputs | Feed only one sport/run/game/capture instant, two canonical NFL team selections, and strictly pregame rows. |
+| Complete-market and no-vig builders; consensus math | Reuse pure calculations after an identity-aware boundary | Feed only one sport/run/game/capture instant, two canonical NFL team selections, and strictly pregame rows. Phase 4B consensus must key contributors by `sportsbook_provider_identity_id`; the existing MLB object path groups by legacy `sportsbook_id`. |
 | Pure line movement and CLV comparison | Reuse unchanged with guarded inputs | Derive timelines only after sport and cutoff filtering; never let the pure function choose eligibility. |
 | `analysis.expected_value` | Reuse unchanged for market-relative analysis only | Label output `market_relative_expected_value`; never substitute it for frozen-model EV. |
 | Model-at-price EV formula and best-price ordering | Reuse calculation, not MLB object/service | Extract/use sport-neutral pure logic with explicit frozen NFL probability; leave starter policy behind. |
 | Shared `odds_ingestion_runs` and `odds_market_snapshots` | Partially hardened in Phase 4A1/4A2 | Sport-safe uniqueness, source provenance, event/run coherence, and conditional immutability are implemented; canonical selection/game identity and kickoff enforcement remain. |
-| Shared `sportsbooks` | Reused through Phase 4A2 provider mapping | Provider/bookmaker key is stable identity; display title is retained per observation and does not drive later resolution. |
+| Shared `sportsbooks` | Reused through Phase 4A2 provider mapping | Provider/bookmaker key is stable identity; display title is retained per observation and does not drive later resolution. Exact-title first attachment may leave legacy longitudinal rows split, so Phase 4B must count provider identities rather than shared sportsbook rows. |
 | Odds API HTTP/request handling | Reuse after generalization | Separate request/response DTO parsing from sport-specific canonical resolution and persistence; inject sport key and time window. |
 | Generic `game_sources` | Conditional | Use a sport-qualified provider source only if reissued-event cardinality is resolved; otherwise add a narrow odds-event mapping. |
 | MLB team normalization and create-on-miss game matching | MLB-specific; do not reuse | NFL resolver must find existing NFL teams/games and fail closed on zero/multiple matches. |
