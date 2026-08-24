@@ -12,8 +12,8 @@ The authoritative selector is an explicit half-open UTC kickoff window:
 `slate_start <= scheduled_start_time < slate_end`. NFL week is descriptive and
 must never select the official slate.
 
-Production currently has no canonical 2026 schedule rows, so calendar examples
-must remain illustrative until schedule ingestion is complete. Once populated:
+Calendar examples remain illustrative. Before every operation, obtain the real
+UTC bounds from the current canonical schedule and verify its source provenance:
 
 1. Use the smallest non-overlapping UTC window that contains exactly the games
    intended for that official observation.
@@ -94,7 +94,8 @@ replace an official probability: official evidence is immutable and unique.
 ## Stuck `running` run recovery
 
 A hard process interruption can leave the durable parent run at `status =
-running`. Preserve that evidence and use this recovery procedure:
+running`. There is no automatic abandonment timeout or cleanup; recovery is a
+manual operator decision. Preserve that evidence and use this procedure:
 
 1. Do not automatically create a new official run key. Locate the existing row
    by the retained `run_key` and inspect its status, `target_count`, committed
@@ -134,8 +135,11 @@ $previewKey = [guid]::NewGuid().ToString()
   --run-key $previewKey
 ```
 
-Preview observations remain immutable. They are excluded from official forward
-metrics unless `--preview` is explicitly supplied to the evaluator.
+Preview observations remain immutable and exploratory. Repeating previews does
+not promote them or make them official evidence. They are excluded from official
+forward metrics unless `--preview` is explicitly supplied to produce a separate,
+non-official report. Only persisted `official` runs under the frozen forward
+protocol count as forward evidence.
 
 ## Read-only forward evaluation
 
@@ -161,21 +165,74 @@ mature counts and percentages. This is an operational sanity check for an
 obvious history-count or routing defect, not a gate: no historical-distribution
 threshold may block a valid schedule.
 
+### Frozen report contract
+
+The standard probability-forward report is frozen to include:
+
+- total, resolved, pending, and final-tie counts;
+- early and mature counts and percentages, plus route-specific groups;
+- model and frozen route-specific home-baseline accuracy, log loss, and Brier
+  score on the exact same resolved rows;
+- ROC-AUC only when both target classes occur;
+- predicted mean, actual home-win rate, calibration summary, and ECE when the
+  applicable first-look threshold below has been reached;
+- paired model-minus-baseline accuracy, log-loss, and Brier differences;
+- deterministic bootstrap confidence intervals when at least one resolved row
+  exists, with interpretation governed by the first-look thresholds; and
+- protocol, run, model, prediction-set, and filter identities.
+
+The evaluator validates prediction timing, canonical kickoff and team identity,
+predicted-side consistency, and final-score completeness before reporting. A
+standard successful report therefore has zero data-integrity exceptions. If any
+validation fails, the evaluator aborts instead of emitting metrics; retain and
+report the exception as a blocking data-integrity finding. Probability reports
+must not contain sportsbook ROI, edge, expected value, paper-candidate, or other
+market-profitability conclusions.
+
 ### Frozen first-look policy
 
 These thresholds govern evidence interpretation and model decisions. They do
 not restrict running or inspecting the read-only evaluator.
+
+They were selected without reference to 2026 outcomes. Historical routed volume
+over the exposed 2018-2025 seasons was 46-48 early targets and 219-237 mature
+targets per complete season. Under a conservative Bernoulli approximation, 50
+resolved rows still permit a worst-case standard error near 0.071, while 150
+permit one near 0.041; paired losses, calibration, and route-specific dependence
+can remain more uncertain. The thresholds below are minimum first looks, not
+guarantees of adequate power or stopping rules.
+
+- **Operational monitoring:** allowed continuously for run lifecycle, immutable
+  identities, pending/resolved counts, data-integrity validation, and routing
+  distribution. It may not trigger model or threshold changes.
+- **Descriptive interim reporting:** allowed below the thresholds when labeled
+  preliminary and non-inferential. Seasonal early-route summaries are expected
+  because accumulating 150 early rows likely spans multiple seasons.
+- **Inferential/model-value claims:** prohibited until the applicable fixed
+  route threshold is reached, and still require uncertainty and paired-baseline
+  reporting rather than a binary pass based on a point estimate.
 
 - **Mature route:** do not make a formal model-performance decision before 50
   resolved 2026 mature-route official predictions. At 50, produce the first
   formal forward report. Any earlier view is operational/descriptive only, and
   partial 2026 results must not change the frozen mature model.
 - **Early route:** report each season descriptively, but do not make strong
-  claims from one season. Roughly 150 resolved early-route official predictions
-  is the minimum evidence horizon for strong conclusions about calibration or
-  superiority to the route-specific home baseline. The small early-route sample
-  is expected to require multi-season patience; partial small samples must not
-  change the frozen early model.
+  claims from one season. The first formal early-route model-value look is fixed
+  at 150 resolved official predictions accumulated under this protocol. Before
+  then, calibration, ECE, and paired model-versus-baseline intervals are
+  descriptive only. The small early-route sample is expected to require
+  multi-season patience; partial small samples must not change the frozen early
+  model.
+
+### Routing-distribution monitoring
+
+Every unfiltered operational report records early count, mature count, and both
+percentages. The exposed 2018-2025 reference seasons contained 46-48 early and
+219-237 mature eligible non-tied targets. Those ranges are descriptive context
+for detecting obvious missing-history, schedule, or routing defects; calendar
+shape, ties, and incomplete evidence can legitimately move a forward season
+outside them. No range is an eligibility gate, and no observed distribution may
+be used to retune the min-3 boundary.
 
 ### Interpretation limitations frozen before 2026
 
@@ -194,6 +251,17 @@ Its prospective practical justification is that it is frozen, has a clear
 operational interpretation, and the mature route subsequently showed genuine
 predictive signal on the independent 2025 holdout. Do not retune the min-3
 threshold using 2026 results inside the active forward-validation window.
+
+### Historical evidence retirement
+
+All 2019-2025 NFL outcomes are retired for selection or tuning of the current
+frozen models and router. The early-route 2019-2024 comparisons are exposed
+development evidence, and the mature-route 2025 holdout has been exposed by its
+one-time evaluation. Ad hoc historical reruns may diagnose deterministic
+implementation or data quality, but they cannot promote, modify, recalibrate, or
+refit either current artifact or the min-3 routing threshold. Any future model
+generation requires a separately versioned development, freeze, and prospective
+evaluation cycle.
 
 ### Same-snapshot point-in-time invariant
 
@@ -229,8 +297,22 @@ and each forward prediction's source trace and fingerprints preserve what was
 used at prediction time. If canonical historical raw sources are corrected
 after model freeze, exact reconstruction of the old training-era source state
 may be limited unless that raw state was separately archived. This is not a
-forward-leakage issue. Deeper raw-source archival/versioning is safe to consider
-later and is not required for Phase 3 closeout.
+forward-leakage issue.
+
+The persisted target kickoff and canonical team orientation preserve the values
+used for each prediction. If the current canonical kickoff or orientation later
+differs, the read-only evaluator raises a data-integrity error rather than
+silently evaluating against the changed identity. Artifact, feature-vector,
+source-trace, source-snapshot, prediction-set, schema, router, and protocol
+fingerprints protect the persisted inference contract, but they do not fully
+archive the byte-exact historical raw source state or the meaning of every
+upstream statistic at model-freeze time.
+
+**Deferred hardening:** define versioned archival for raw historical source
+assets, correction lineage, and statistic semantic/schema changes before exact
+training-state reconstruction is claimed. This is a reproducibility limitation,
+not permission to rewrite historical predictions or frozen artifacts, and is
+not required for the current Phase 3 evidence boundary.
 
 Never change a frozen model, schema, fingerprint, routing contract, or protocol
 in place. A successor model requires new versioned identities and, when the
