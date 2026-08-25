@@ -135,7 +135,6 @@ def test_selecting_and_switching_uses_only_the_active_prediction(monkeypatch) ->
     )
 
     view._render_explanation_control(_game(502))
-    view._render_active_prediction_explanation((_game(502),))
 
     assert fake_st.session_state[view.ACTIVE_EXPLANATION_STATE_KEY] == 502
     assert loaded == [502]
@@ -147,11 +146,95 @@ def test_table_only_prediction_can_be_selected_on_demand(monkeypatch) -> None:
         clicked_keys={"moneyline_explanation_picker_select_official"},
         selected_option=503,
     )
+    loaded = []
     monkeypatch.setattr(view, "st", fake_st)
+    monkeypatch.setattr(
+        view,
+        "_try_load_prediction_explanation",
+        lambda prediction_id: (loaded.append(prediction_id) or object(), None),
+    )
+    monkeypatch.setattr(
+        view,
+        "_render_prediction_explanation_panel",
+        lambda explanation: None,
+    )
 
     view._render_explanation_selector((_game(503),), key_prefix="official")
 
     assert fake_st.session_state[view.ACTIVE_EXPLANATION_STATE_KEY] == 503
+    assert loaded == [503]
+
+
+def test_switching_cards_moves_the_only_active_explanation(monkeypatch) -> None:
+    fake_st = _FakeStreamlit()
+    fake_st.session_state[view.ACTIVE_EXPLANATION_STATE_KEY] = 501
+    loaded = []
+    monkeypatch.setattr(view, "st", fake_st)
+    monkeypatch.setattr(
+        view,
+        "_try_load_prediction_explanation",
+        lambda prediction_id: (loaded.append(prediction_id) or object(), None),
+    )
+    monkeypatch.setattr(
+        view,
+        "_render_prediction_explanation_panel",
+        lambda explanation: None,
+    )
+
+    view._render_explanation_control(_game(501))
+    view._render_explanation_control(_game(502))
+    assert loaded == [501]
+
+    view._activate_prediction_explanation(502)
+    loaded.clear()
+    view._render_explanation_control(_game(501))
+    view._render_explanation_control(_game(502))
+
+    assert loaded == [502]
+
+
+def test_close_clears_active_explanation(monkeypatch) -> None:
+    fake_st = _FakeStreamlit(
+        clicked_keys={"moneyline_explanation_close_501"}
+    )
+    fake_st.session_state[view.ACTIVE_EXPLANATION_STATE_KEY] = 501
+    monkeypatch.setattr(view, "st", fake_st)
+    monkeypatch.setattr(
+        view,
+        "_try_load_prediction_explanation",
+        lambda prediction_id: pytest.fail("closed explanation was loaded"),
+    )
+
+    view._render_explanation_control(_game(501))
+
+    assert view.ACTIVE_EXPLANATION_STATE_KEY not in fake_st.session_state
+
+
+def test_card_explanation_is_not_duplicated_by_selector_fallback(monkeypatch) -> None:
+    fake_st = _FakeStreamlit()
+    fake_st.session_state[view.ACTIVE_EXPLANATION_STATE_KEY] = 501
+    loaded = []
+    monkeypatch.setattr(view, "st", fake_st)
+    monkeypatch.setattr(
+        view,
+        "_try_load_prediction_explanation",
+        lambda prediction_id: (loaded.append(prediction_id) or object(), None),
+    )
+    monkeypatch.setattr(
+        view,
+        "_render_prediction_explanation_panel",
+        lambda explanation: None,
+    )
+
+    game = _game(501)
+    view._render_explanation_control(game)
+    view._render_explanation_selector(
+        (game,),
+        key_prefix="official",
+        rendered_card_prediction_ids={501},
+    )
+
+    assert loaded == [501]
 
 
 def test_explanation_failure_is_visible_and_does_not_escape(monkeypatch) -> None:

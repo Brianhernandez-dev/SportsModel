@@ -730,8 +730,11 @@ def _render_today(
     _render_explanation_selector(
         games,
         key_prefix="official",
+        rendered_card_prediction_ids={
+            game.moneyline_game_prediction_id
+            for game in candidates
+        },
     )
-    _render_active_prediction_explanation(games)
 
 
 
@@ -1225,8 +1228,15 @@ def _render_tomorrow(
     _render_explanation_selector(
         explanation_games,
         key_prefix="preview",
+        rendered_card_prediction_ids={
+            game.moneyline_game_prediction_id
+            for game in (
+                preview_passes
+                + blocked_value
+                + preview.unavailable_games
+            )
+        },
     )
-    _render_active_prediction_explanation(explanation_games)
 
 
 def _render_results() -> None:
@@ -1561,9 +1571,15 @@ def _render_explanation_control(game) -> None:
         args=(prediction_id,),
         width="stretch",
     )
+    _render_active_prediction_explanation((game,))
 
 
-def _render_explanation_selector(games, *, key_prefix: str) -> None:
+def _render_explanation_selector(
+    games,
+    *,
+    key_prefix: str,
+    rendered_card_prediction_ids=frozenset(),
+) -> None:
     if not games:
         return
 
@@ -1584,20 +1600,24 @@ def _render_explanation_selector(games, *, key_prefix: str) -> None:
         ),
         key=f"moneyline_explanation_picker_{key_prefix}",
     )
-    if selected_prediction_id is None:
-        return
+    if selected_prediction_id is not None:
+        selected_game = games_by_prediction_id[selected_prediction_id]
+        st.button(
+            (
+                f"Why {selected_game.predicted_team_name} "
+                f"{format_percent(selected_game.model_probability)}?"
+            ),
+            key=f"moneyline_explanation_picker_select_{key_prefix}",
+            on_click=_activate_prediction_explanation,
+            args=(selected_prediction_id,),
+            width="stretch",
+        )
 
-    selected_game = games_by_prediction_id[selected_prediction_id]
-    st.button(
-        (
-            f"Why {selected_game.predicted_team_name} "
-            f"{format_percent(selected_game.model_probability)}?"
-        ),
-        key=f"moneyline_explanation_picker_select_{key_prefix}",
-        on_click=_activate_prediction_explanation,
-        args=(selected_prediction_id,),
-        width="stretch",
+    active_prediction_id = st.session_state.get(
+        ACTIVE_EXPLANATION_STATE_KEY
     )
+    if active_prediction_id not in rendered_card_prediction_ids:
+        _render_active_prediction_explanation(games)
 
 
 def _render_active_prediction_explanation(games) -> None:
@@ -1609,11 +1629,13 @@ def _render_active_prediction_explanation(games) -> None:
     if prediction_id not in available_prediction_ids:
         return
 
-    st.button(
+    close_clicked = st.button(
         "Close explanation",
         key=f"moneyline_explanation_close_{prediction_id}",
         on_click=_close_prediction_explanation,
     )
+    if close_clicked:
+        return
 
     with st.spinner("Reconstructing historical prediction..."):
         explanation, error = _try_load_prediction_explanation(
