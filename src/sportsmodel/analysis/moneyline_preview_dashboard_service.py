@@ -253,6 +253,9 @@ def build_moneyline_preview_dashboard(
             if consensus_market is None:
                 unavailable_games.append(
                     MoneylinePreviewUnavailableGame(
+                        moneyline_game_prediction_id=(
+                            prediction.moneyline_game_prediction_id
+                        ),
                         game_id=prediction.game_id,
                         game_start_time=(
                             prediction.game_start_time
@@ -401,6 +404,9 @@ def build_moneyline_preview_dashboard(
 
             games.append(
                 MoneylinePreviewGame(
+                    moneyline_game_prediction_id=(
+                        prediction.moneyline_game_prediction_id
+                    ),
                     game_id=prediction.game_id,
                     game_start_time=(
                         prediction.game_start_time

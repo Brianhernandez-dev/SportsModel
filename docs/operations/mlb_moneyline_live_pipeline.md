@@ -100,6 +100,18 @@ Run from `D:\SportsModelDashboard`:
 
 The Moneyline Live page displays predictions, evaluations, paper candidates, settlements, record, profit, ROI, model EV, market edge, and drawdown.
 
+The Daily Card provides prediction explanations only after a user selects a
+specific prediction. Each explanation reconstructs the historical point-in-time
+feature state with read-only database queries and the prediction run's frozen
+model artifact. It does not call an external provider and is not a persisted
+snapshot of the original inference vector.
+
+Contribution rankings are shown only when the reconstructed probability and
+missing-value evidence satisfy the explanation service's authority checks.
+Non-authoritative reconstructions show the probability mismatch but withhold
+category and feature rankings. A later historical source correction or backfill
+can therefore make a previously reproducible prediction non-authoritative.
+
 ## First Forward Paper Slate
 
 - Target date: 2026-07-30

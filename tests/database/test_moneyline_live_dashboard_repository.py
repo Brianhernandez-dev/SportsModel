@@ -119,6 +119,7 @@ def test_loads_moneyline_live_games() -> None:
 
     game = games[0]
 
+    assert game.moneyline_game_prediction_id == 501
     assert game.away_team_name == (
         "Kansas City Royals"
     )
@@ -132,6 +133,9 @@ def test_loads_moneyline_live_games() -> None:
     assert game.sportsbook_name == "DraftKings"
     assert game.qualifies_as_paper_candidate is True
     assert game.outcome is None
+    assert "prediction.moneyline_game_prediction_id" in (
+        connection.cursor_instance.query
+    )
 
     assert (
         connection.cursor_instance.parameters
@@ -242,6 +246,7 @@ def _row(
     ),
 ):
     return (
+        501,
         game_id,
         GAME_TIME,
         "Kansas City Royals",

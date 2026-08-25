@@ -3,6 +3,9 @@ from zoneinfo import ZoneInfo
 
 import streamlit as st
 
+from sportsmodel.analysis.moneyline_prediction_explanation import (
+    explain_moneyline_prediction,
+)
 from sportsmodel.analysis.moneyline_cohort_comparison import (
     AWAITING_OFFICIAL,
     load_moneyline_cohort_comparison,
@@ -41,6 +44,10 @@ from sportsmodel.dashboard.moneyline_presenter import (
     format_units,
     get_candidate_games,
 )
+from sportsmodel.dashboard.moneyline_prediction_explanation_presenter import (
+    humanize_moneyline_feature_name,
+    present_moneyline_prediction_explanation,
+)
 from sportsmodel.database.moneyline_dashboard_status_repository import (
     get_moneyline_run_timing,
 )
@@ -53,6 +60,10 @@ from sportsmodel.database.moneyline_live_dashboard_repository import (
 
 PACIFIC_TIME_ZONE = ZoneInfo(
     "America/Los_Angeles"
+)
+
+ACTIVE_EXPLANATION_STATE_KEY = (
+    "moneyline_active_explanation_prediction_id"
 )
 
 
@@ -99,6 +110,32 @@ def _load_cohort_comparison(target_date: date):
     return load_moneyline_cohort_comparison(
         target_date=target_date,
     )
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _load_prediction_explanation(prediction_id: int):
+    if isinstance(prediction_id, bool) or prediction_id <= 0:
+        raise ValueError("Prediction ID must be greater than zero.")
+    return explain_moneyline_prediction(
+        prediction_id=prediction_id
+    )
+
+
+def _try_load_prediction_explanation(prediction_id: int):
+    try:
+        return _load_prediction_explanation(prediction_id), None
+    except Exception as error:
+        return None, error
+
+
+def _activate_prediction_explanation(prediction_id: int) -> None:
+    if isinstance(prediction_id, bool) or prediction_id <= 0:
+        raise ValueError("Prediction ID must be greater than zero.")
+    st.session_state[ACTIVE_EXPLANATION_STATE_KEY] = prediction_id
+
+
+def _close_prediction_explanation() -> None:
+    st.session_state.pop(ACTIVE_EXPLANATION_STATE_KEY, None)
 
 
 def render() -> None:
@@ -690,6 +727,12 @@ def _render_today(
             width="stretch",
         )
 
+    _render_explanation_selector(
+        games,
+        key_prefix="official",
+    )
+    _render_active_prediction_explanation(games)
+
 
 
 def _render_overnight_review(
@@ -1168,13 +1211,22 @@ def _render_tomorrow(
                     f"{format_percent(game.model_probability)} "
                     f"| Starters: "
                     f"{game.starter_coverage.title()} "
-                    f"| Missing values: "
+                    f"| Raw unavailable fields: "
                     f"{game.missing_raw_value_count}"
                 )
 
                 st.caption(
                     game.reason
                 )
+
+                _render_explanation_control(game)
+
+    explanation_games = preview.games + preview.unavailable_games
+    _render_explanation_selector(
+        explanation_games,
+        key_prefix="preview",
+    )
+    _render_active_prediction_explanation(explanation_games)
 
 
 def _render_results() -> None:
@@ -1369,9 +1421,11 @@ def _render_official_card(
             f"Best price: {game.sportsbook_name} | "
             f"Starters: "
             f"{game.starter_coverage.title()} | "
-            f"Missing values: "
+            f"Raw unavailable fields: "
             f"{game.missing_raw_value_count}"
         )
+
+        _render_explanation_control(game)
 
 
 def _render_preview_card(
@@ -1433,7 +1487,7 @@ def _render_preview_card(
             f"Books: {game.sportsbook_count} | "
             f"Starters: "
             f"{game.starter_coverage.title()} | "
-            f"Missing values: "
+            f"Raw unavailable fields: "
             f"{game.missing_raw_value_count}"
         )
 
@@ -1481,6 +1535,8 @@ def _render_preview_card(
                     f"| {current_result}"
                 )
 
+        _render_explanation_control(game)
+
         if (
             not game.preview_policy_pass
             and game.disqualification_reasons
@@ -1491,6 +1547,221 @@ def _render_preview_card(
                     game.disqualification_reasons
                 )
             )
+
+
+def _render_explanation_control(game) -> None:
+    prediction_id = game.moneyline_game_prediction_id
+    st.button(
+        (
+            f"Why {game.predicted_team_name} "
+            f"{format_percent(game.model_probability)}?"
+        ),
+        key=f"moneyline_explanation_select_{prediction_id}",
+        on_click=_activate_prediction_explanation,
+        args=(prediction_id,),
+        width="stretch",
+    )
+
+
+def _render_explanation_selector(games, *, key_prefix: str) -> None:
+    if not games:
+        return
+
+    games_by_prediction_id = {
+        game.moneyline_game_prediction_id: game for game in games
+    }
+    st.markdown("#### Explain any prediction")
+    selected_prediction_id = st.selectbox(
+        "Prediction",
+        options=tuple(games_by_prediction_id),
+        index=None,
+        placeholder="Choose a matchup",
+        format_func=lambda prediction_id: (
+            f"{games_by_prediction_id[prediction_id].predicted_team_name} "
+            f"{format_percent(games_by_prediction_id[prediction_id].model_probability)} "
+            f"— {games_by_prediction_id[prediction_id].away_team_name} at "
+            f"{games_by_prediction_id[prediction_id].home_team_name}"
+        ),
+        key=f"moneyline_explanation_picker_{key_prefix}",
+    )
+    if selected_prediction_id is None:
+        return
+
+    selected_game = games_by_prediction_id[selected_prediction_id]
+    st.button(
+        (
+            f"Why {selected_game.predicted_team_name} "
+            f"{format_percent(selected_game.model_probability)}?"
+        ),
+        key=f"moneyline_explanation_picker_select_{key_prefix}",
+        on_click=_activate_prediction_explanation,
+        args=(selected_prediction_id,),
+        width="stretch",
+    )
+
+
+def _render_active_prediction_explanation(games) -> None:
+    prediction_id = st.session_state.get(ACTIVE_EXPLANATION_STATE_KEY)
+    available_prediction_ids = {
+        game.moneyline_game_prediction_id for game in games
+    }
+
+    if prediction_id not in available_prediction_ids:
+        return
+
+    st.button(
+        "Close explanation",
+        key=f"moneyline_explanation_close_{prediction_id}",
+        on_click=_close_prediction_explanation,
+    )
+
+    with st.spinner("Reconstructing historical prediction..."):
+        explanation, error = _try_load_prediction_explanation(
+            prediction_id
+        )
+
+    if error is not None:
+        st.error(
+            "This prediction explanation is temporarily unavailable. "
+            "The rest of the dashboard is unaffected; try again later."
+        )
+        with st.expander("Technical details", expanded=False):
+            st.code(f"{type(error).__name__}: {error}")
+        return
+
+    _render_prediction_explanation_panel(explanation)
+
+
+def _render_prediction_explanation_panel(explanation) -> None:
+    presentation = present_moneyline_prediction_explanation(explanation)
+    prediction = explanation.prediction
+
+    with st.container(border=True):
+        st.markdown(f"### {presentation.title}")
+
+        if not presentation.authoritative:
+            st.warning(presentation.authority_message)
+            st.write(
+                "Stored home probability: "
+                f"**{float(prediction.stored_home_win_probability):.10%}**"
+            )
+            st.write(
+                "Reconstructed home probability: "
+                f"**{explanation.reconstructed_home_win_probability:.10%}**"
+            )
+            st.write(
+                f"Probability delta: **{explanation.probability_delta:+.12g}** "
+                f"| Required tolerance: "
+                f"**{explanation.reconstruction_tolerance:.1e}**"
+            )
+            return
+
+        st.success(f"✓ {presentation.authority_message}")
+        st.write(presentation.active_input_message)
+        if presentation.inactive_input_message is not None:
+            st.caption(presentation.inactive_input_message)
+
+        st.markdown("#### Category leans")
+        for lean in presentation.category_leans:
+            destination = lean.direction_team_name or "Neutral"
+            st.write(f"{lean.label} → **{destination}**")
+
+        _render_ranked_reasons(
+            title=f"Top reasons toward {presentation.selected_team_name}",
+            reasons=presentation.selected_team_reasons,
+        )
+        _render_ranked_reasons(
+            title=f"Top reasons toward {presentation.opponent_team_name}",
+            reasons=presentation.opponent_reasons,
+        )
+
+        with st.expander("Advanced details", expanded=False):
+            st.write(
+                f"Stored home probability: "
+                f"{float(prediction.stored_home_win_probability):.12f}"
+            )
+            st.write(
+                f"Reconstructed home probability: "
+                f"{explanation.reconstructed_home_win_probability:.12f}"
+            )
+            st.write(
+                f"Probability delta: {explanation.probability_delta:+.12g}"
+            )
+            st.write(
+                f"{presentation.intercept_label}: "
+                f"{explanation.model_intercept:+.12f}"
+            )
+            st.write(
+                f"Feature-logit total: "
+                f"{explanation.feature_logit_total:+.12f}"
+            )
+            st.write(f"Final logit: {explanation.final_logit:+.12f}")
+
+            st.markdown("**Category totals (logit contribution)**")
+            st.dataframe(
+                [
+                    {
+                        "Category": category.replace("_", " ").title(),
+                        "Logit contribution": total,
+                    }
+                    for category, total in explanation.category_totals
+                ],
+                hide_index=True,
+                width="stretch",
+            )
+
+            st.markdown("**Feature details**")
+            st.dataframe(
+                [
+                    {
+                        "Feature": reason.label,
+                        "Standardized value": reason.standardized_value,
+                        "Coefficient": reason.coefficient,
+                        "Logit contribution": reason.contribution,
+                    }
+                    for reason in presentation.advanced_feature_rows
+                ],
+                hide_index=True,
+                width="stretch",
+            )
+
+            _render_missing_feature_names(
+                "Raw missing fields",
+                explanation.raw_missing_feature_names,
+            )
+            _render_missing_feature_names(
+                "Transformed missing fields",
+                explanation.transformed_missing_feature_names,
+            )
+            _render_missing_feature_names(
+                "Active missing model inputs",
+                explanation.active_missing_feature_names,
+            )
+            _render_missing_feature_names(
+                "Inactive missing fields",
+                explanation.inactive_missing_feature_names,
+            )
+            st.caption(
+                f"Model {prediction.model_version} | "
+                f"Schema {prediction.feature_schema_version} | "
+                f"Artifact {prediction.model_artifact_sha256}"
+            )
+
+
+def _render_ranked_reasons(*, title: str, reasons) -> None:
+    st.markdown(f"#### {title}")
+    if not reasons:
+        st.caption("No directional feature contributions.")
+        return
+    for rank, reason in enumerate(reasons, start=1):
+        st.write(f"{rank}. {reason.label}")
+
+
+def _render_missing_feature_names(title: str, names: tuple[str, ...]) -> None:
+    readable_names = tuple(
+        humanize_moneyline_feature_name(name) for name in names
+    )
+    st.write(f"{title}: {', '.join(readable_names) if readable_names else 'None'}")
 
 
 def _render_result_card(

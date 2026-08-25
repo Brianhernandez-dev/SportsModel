@@ -147,6 +147,7 @@ def _game(
     reasons: tuple[str, ...] = (),
 ) -> MoneylineLiveGame:
     return MoneylineLiveGame(
+        moneyline_game_prediction_id=game_id + 500,
         game_id=game_id,
         game_start_time=GAME_TIME,
         away_team_name="Kansas City Royals",

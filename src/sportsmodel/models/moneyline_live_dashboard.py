@@ -30,6 +30,8 @@ class MoneylineLiveGame:
     Read-only dashboard row for one Moneyline prediction.
     """
 
+    moneyline_game_prediction_id: int
+
     game_id: int
 
     game_start_time: datetime

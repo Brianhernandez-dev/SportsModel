@@ -72,6 +72,10 @@ def test_missing_indicator_is_included_and_categorized() -> None:
     assert result.transformed_missing_feature_names == (
         "matchup_starting_pitcher_metric_difference",
     )
+    assert result.active_missing_feature_names == (
+        "matchup_starting_pitcher_metric_difference",
+    )
+    assert result.inactive_missing_feature_names == ()
     indicators = tuple(
         item for item in result.contributions if item.is_missing_indicator
     )
@@ -81,6 +85,23 @@ def test_missing_indicator_is_included_and_categorized() -> None:
     )
     assert indicators[0].imputed_value == 1.0
     assert indicators[0].category == "starting_pitcher"
+
+
+def test_inactive_schedule_missing_feature_is_not_an_active_model_input() -> None:
+    result = explanation.calculate_moneyline_contributions(
+        _model_with_inactive_schedule_feature(),
+        {
+            "home_schedule_days_since_previous_game": None,
+            "away_schedule_days_since_previous_game": None,
+            "home_batting_metric": 3.0,
+            "away_batting_metric": 1.0,
+        },
+    )
+
+    schedule_name = "matchup_schedule_days_since_previous_game_difference"
+    assert result.transformed_missing_feature_names == (schedule_name,)
+    assert result.active_missing_feature_names == ()
+    assert result.inactive_missing_feature_names == (schedule_name,)
 
 
 def test_direction_and_category_aggregation_cover_every_contribution() -> None:
@@ -147,6 +168,82 @@ def test_probability_mismatch_marks_reconstruction_non_authoritative(
     assert result.contributions
 
 
+def test_stored_prediction_exposes_selected_and_opponent_identity() -> None:
+    row = (
+        429,
+        42,
+        824072,
+        824072,
+        datetime(2026, 8, 21, 2, tzinfo=timezone.utc),
+        datetime(2026, 8, 21, 1, 45, tzinfo=timezone.utc),
+        10,
+        20,
+        "Home Club",
+        "Away Club",
+        20,
+        Decimal("0.53"),
+        730,
+        438,
+        702070,
+        675512,
+        "Home Pitcher",
+        "Away Pitcher",
+        2,
+        Decimal("0.47"),
+        "test-model",
+        "test-schema",
+        "a" * 64,
+        datetime(2026, 1, 1, tzinfo=timezone.utc),
+        "completed",
+        datetime(2026, 8, 21, 2, tzinfo=timezone.utc),
+        10,
+        20,
+    )
+
+    class Cursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *arguments):
+            return False
+
+        def execute(self, query, parameters):
+            self.query = query
+            self.parameters = parameters
+
+        def fetchone(self):
+            return row
+
+    class Connection:
+        def __init__(self):
+            self.cursor_instance = Cursor()
+            self.readonly = False
+            self.closed = False
+
+        def set_session(self, *, readonly):
+            self.readonly = readonly
+
+        def cursor(self):
+            return self.cursor_instance
+
+        def close(self):
+            self.closed = True
+
+    connection = Connection()
+    stored = explanation._load_stored_prediction(
+        prediction_id=429,
+        connection_factory=lambda: connection,
+    )
+
+    assert stored.predicted_team_id == 20
+    assert stored.predicted_team_name == "Away Club"
+    assert stored.opponent_team_id == 10
+    assert stored.opponent_team_name == "Home Club"
+    assert stored.stored_predicted_probability == Decimal("0.53")
+    assert connection.readonly is True
+    assert connection.closed is True
+
+
 def _model() -> TrainedMatchupMoneylineModel:
     transformer = MatchupFeatureTransformer.from_feature_names(RAW_FEATURE_NAMES)
     active_names = transformer.output_feature_names
@@ -189,6 +286,47 @@ def _model() -> TrainedMatchupMoneylineModel:
     )
 
 
+def _model_with_inactive_schedule_feature() -> TrainedMatchupMoneylineModel:
+    transformer = MatchupFeatureTransformer.from_feature_names(
+        (
+            "home_schedule_days_since_previous_game",
+            "away_schedule_days_since_previous_game",
+            "home_batting_metric",
+            "away_batting_metric",
+        )
+    )
+    active_names = ("matchup_batting_metric_difference",)
+    training_matrix = [[1.0], [-1.0], [0.5], [-0.5]]
+    pipeline = Pipeline(
+        steps=[
+            ("imputer", SimpleImputer(strategy="median", add_indicator=True)),
+            ("scaler", StandardScaler()),
+            (
+                "classifier",
+                LogisticRegression(solver="lbfgs", random_state=42),
+            ),
+        ]
+    )
+    pipeline.fit(training_matrix, [True, False, True, False])
+    baseline = TrainedMoneylineBaseline(
+        feature_schema_version="test-schema",
+        active_feature_names=active_names,
+        dropped_all_missing_features=(
+            "matchup_schedule_days_since_previous_game_difference",
+        ),
+        dropped_constant_features=(),
+        dropped_duplicate_features=(),
+        regularization_c=1.0,
+        training_rows=len(training_matrix),
+        training_end_time=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        pipeline=pipeline,
+    )
+    return TrainedMatchupMoneylineModel(
+        transformer=transformer,
+        model=baseline,
+    )
+
+
 def _raw_features() -> dict[str, float | None]:
     return {
         "home_batting_metric": 3.0,
@@ -218,6 +356,10 @@ def _stored_prediction(
         away_team_id=20,
         home_team_name="Home Club",
         away_team_name="Away Club",
+        predicted_team_id=10,
+        predicted_team_name="Home Club",
+        opponent_team_id=20,
+        opponent_team_name="Away Club",
         home_starting_pitcher_id=730,
         away_starting_pitcher_id=438,
         home_starting_pitcher_mlb_id=702070,
@@ -226,6 +368,7 @@ def _stored_prediction(
         away_starting_pitcher_name="Away Pitcher",
         persisted_missing_raw_value_count=1,
         stored_home_win_probability=stored_probability,
+        stored_predicted_probability=stored_probability,
         model_version="test-model",
         feature_schema_version="test-schema",
         model_artifact_sha256="a" * 64,

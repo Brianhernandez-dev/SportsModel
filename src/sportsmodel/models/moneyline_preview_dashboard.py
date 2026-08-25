@@ -9,6 +9,7 @@ class MoneylinePreviewGame:
     Read-only Tomorrow Preview value row.
     """
 
+    moneyline_game_prediction_id: int
     game_id: int
     game_start_time: datetime
     away_team_name: str
@@ -47,6 +48,7 @@ class MoneylinePreviewUnavailableGame:
     Preview game without sufficient opening-market consensus.
     """
 
+    moneyline_game_prediction_id: int
     game_id: int
     game_start_time: datetime
     away_team_name: str

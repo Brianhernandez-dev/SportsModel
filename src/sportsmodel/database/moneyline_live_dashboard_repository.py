@@ -45,6 +45,7 @@ LIST_MONEYLINE_LIVE_SLATES_QUERY = """
 
 GET_MONEYLINE_LIVE_GAMES_QUERY = """
     SELECT
+        prediction.moneyline_game_prediction_id,
         prediction.game_id,
         prediction.game_start_time,
         away_team.team_name,
@@ -176,27 +177,28 @@ def get_moneyline_live_games(
 
         return tuple(
             MoneylineLiveGame(
-                game_id=row[0],
-                game_start_time=row[1],
-                away_team_name=row[2],
-                home_team_name=row[3],
-                predicted_team_name=row[4],
-                model_probability=row[5],
-                starter_coverage=row[6],
-                missing_raw_value_count=row[7],
-                market_no_vig_probability=row[8],
-                model_market_edge=row[9],
-                price=row[10],
-                sportsbook_name=row[11],
-                model_expected_value=row[12],
-                qualifies_as_paper_candidate=row[13],
+                moneyline_game_prediction_id=row[0],
+                game_id=row[1],
+                game_start_time=row[2],
+                away_team_name=row[3],
+                home_team_name=row[4],
+                predicted_team_name=row[5],
+                model_probability=row[6],
+                starter_coverage=row[7],
+                missing_raw_value_count=row[8],
+                market_no_vig_probability=row[9],
+                model_market_edge=row[10],
+                price=row[11],
+                sportsbook_name=row[12],
+                model_expected_value=row[13],
+                qualifies_as_paper_candidate=row[14],
                 disqualification_reasons=tuple(
-                    row[14] or ()
+                    row[15] or ()
                 ),
-                outcome=row[15],
-                profit_units=row[16],
-                home_score=row[17],
-                away_score=row[18],
+                outcome=row[16],
+                profit_units=row[17],
+                home_score=row[18],
+                away_score=row[19],
             )
             for row in rows
         )

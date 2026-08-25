@@ -177,6 +177,7 @@ def test_builds_read_only_preview_value_card(
 
     game = result.games[0]
 
+    assert game.moneyline_game_prediction_id == 501
     assert game.predicted_team_name == "New York Mets"
     assert game.price == 120
     assert game.sportsbook_count == 5
@@ -301,6 +302,7 @@ def test_records_unavailable_market_without_failing_preview(
 
     unavailable = result.unavailable_games[0]
 
+    assert unavailable.moneyline_game_prediction_id == 601
     assert unavailable.game_id == 8215
     assert unavailable.predicted_team_name == "Boston Red Sox"
     assert unavailable.model_probability == Decimal("0.64")

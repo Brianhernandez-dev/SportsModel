@@ -60,6 +60,10 @@ class StoredMoneylinePredictionExplanationInput:
     away_team_id: int
     home_team_name: str
     away_team_name: str
+    predicted_team_id: int
+    predicted_team_name: str
+    opponent_team_id: int
+    opponent_team_name: str
     home_starting_pitcher_id: int | None
     away_starting_pitcher_id: int | None
     home_starting_pitcher_mlb_id: int | None
@@ -68,6 +72,7 @@ class StoredMoneylinePredictionExplanationInput:
     away_starting_pitcher_name: str | None
     persisted_missing_raw_value_count: int
     stored_home_win_probability: Decimal
+    stored_predicted_probability: Decimal
     model_version: str
     feature_schema_version: str
     model_artifact_sha256: str
@@ -92,6 +97,8 @@ class MoneylineContributionBreakdown:
     feature_logit_total: float
     final_logit: float
     transformed_missing_feature_names: tuple[str, ...]
+    active_missing_feature_names: tuple[str, ...]
+    inactive_missing_feature_names: tuple[str, ...]
     contributions: tuple[MoneylineFeatureContribution, ...]
     category_totals: tuple[tuple[str, float], ...]
 
@@ -105,6 +112,8 @@ class MoneylinePredictionExplanation:
     raw_feature_count: int
     raw_missing_feature_names: tuple[str, ...]
     transformed_missing_feature_names: tuple[str, ...]
+    active_missing_feature_names: tuple[str, ...]
+    inactive_missing_feature_names: tuple[str, ...]
     regenerated_missing_raw_value_count: int
     model_intercept: float
     feature_logit_total: float
@@ -231,6 +240,12 @@ def explain_moneyline_prediction(
         transformed_missing_feature_names=(
             breakdown.transformed_missing_feature_names
         ),
+        active_missing_feature_names=(
+            breakdown.active_missing_feature_names
+        ),
+        inactive_missing_feature_names=(
+            breakdown.inactive_missing_feature_names
+        ),
         regenerated_missing_raw_value_count=len(raw_missing),
         model_intercept=breakdown.model_intercept,
         feature_logit_total=breakdown.feature_logit_total,
@@ -273,6 +288,16 @@ def calculate_moneyline_contributions(
     )
 
     baseline = model.model
+    active_missing = tuple(
+        name
+        for name in transformed_missing
+        if name in baseline.active_feature_names
+    )
+    inactive_missing = tuple(
+        name
+        for name in transformed_missing
+        if name not in baseline.active_feature_names
+    )
     imputer, scaler, classifier = _validated_pipeline_components(
         baseline.pipeline
     )
@@ -342,6 +367,8 @@ def calculate_moneyline_contributions(
         feature_logit_total=feature_total,
         final_logit=final_logit,
         transformed_missing_feature_names=transformed_missing,
+        active_missing_feature_names=active_missing,
+        inactive_missing_feature_names=inactive_missing,
         contributions=contributions,
         category_totals=category_totals,
     )
@@ -407,6 +434,8 @@ def _load_stored_prediction(
                     prediction.away_team_id,
                     home_team.team_name,
                     away_team.team_name,
+                    prediction.predicted_team_id,
+                    prediction.predicted_probability,
                     prediction.home_starting_pitcher_id,
                     prediction.away_starting_pitcher_id,
                     prediction.home_starting_pitcher_mlb_id,
@@ -445,11 +474,23 @@ def _load_stored_prediction(
             row = cursor.fetchone()
         if row is None:
             raise LookupError(f"Moneyline prediction {prediction_id} was not found.")
-        if row[22] != "completed":
+        if row[24] != "completed":
             raise ValueError("Moneyline prediction run must be completed.")
-        if row[23] != row[4] or row[24] != row[6] or row[25] != row[7]:
+        if row[25] != row[4] or row[26] != row[6] or row[27] != row[7]:
             raise RuntimeError(
                 "Canonical game identity no longer matches the stored prediction."
+            )
+        if row[10] == row[6]:
+            predicted_team_name = row[8]
+            opponent_team_id = row[7]
+            opponent_team_name = row[9]
+        elif row[10] == row[7]:
+            predicted_team_name = row[9]
+            opponent_team_id = row[6]
+            opponent_team_name = row[8]
+        else:
+            raise RuntimeError(
+                "Stored predicted team is not part of the prediction matchup."
             )
         return StoredMoneylinePredictionExplanationInput(
             prediction_id=row[0],
@@ -462,18 +503,23 @@ def _load_stored_prediction(
             away_team_id=row[7],
             home_team_name=row[8],
             away_team_name=row[9],
-            home_starting_pitcher_id=row[10],
-            away_starting_pitcher_id=row[11],
-            home_starting_pitcher_mlb_id=row[12],
-            away_starting_pitcher_mlb_id=row[13],
-            home_starting_pitcher_name=row[14],
-            away_starting_pitcher_name=row[15],
-            persisted_missing_raw_value_count=row[16],
-            stored_home_win_probability=row[17],
-            model_version=row[18],
-            feature_schema_version=row[19],
-            model_artifact_sha256=row[20],
-            model_training_cutoff=row[21],
+            predicted_team_id=row[10],
+            predicted_team_name=predicted_team_name,
+            opponent_team_id=opponent_team_id,
+            opponent_team_name=opponent_team_name,
+            home_starting_pitcher_id=row[12],
+            away_starting_pitcher_id=row[13],
+            home_starting_pitcher_mlb_id=row[14],
+            away_starting_pitcher_mlb_id=row[15],
+            home_starting_pitcher_name=row[16],
+            away_starting_pitcher_name=row[17],
+            persisted_missing_raw_value_count=row[18],
+            stored_home_win_probability=row[19],
+            stored_predicted_probability=row[11],
+            model_version=row[20],
+            feature_schema_version=row[21],
+            model_artifact_sha256=row[22],
+            model_training_cutoff=row[23],
         )
     finally:
         connection.close()
