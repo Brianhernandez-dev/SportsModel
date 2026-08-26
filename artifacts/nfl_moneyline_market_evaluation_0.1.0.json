@@ -1,0 +1,145 @@
+{
+  "best_price": {
+    "eligible_set": "exact_consensus_contributor_set",
+    "preserve_offering_evidence_id": true,
+    "preserve_offering_provider_identity_id": true,
+    "selection": "maximum_decimal_return_for_predicted_side",
+    "tie_break": "lowest_sportsbook_provider_identity_id"
+  },
+  "classification": "prospective_official_entry_market_evaluation",
+  "consensus": {
+    "include_offering_book": true,
+    "minimum_complete_provider_books": 5,
+    "one_vote_per_sportsbook_provider_identity_id": true,
+    "official_method": "equal_weight_mean_of_per_book_no_vig_probabilities",
+    "one_book_is_mathematically_valid_but_not_official": true,
+    "secondary_leave_one_out_status": "non_official_diagnostic_only"
+  },
+  "contributor_selection": {
+    "allow_mixed_odds_runs": false,
+    "allow_mixed_trusted_observation_times": false,
+    "bookmaker_updated_at_rule": "provenance_only_and_not_future_when_present",
+    "complete_market": "exactly_one_canonical_home_and_one_canonical_away_h2h_row",
+    "duplicate_provider_or_selection_rule": "evaluation_impossible",
+    "incomplete_provider_market_rule": "exclude_provider",
+    "market_updated_at_required": true,
+    "maximum_market_update_lag_seconds": 300,
+    "missing_provider_rule": "absent_not_imputed",
+    "paired_rows_must_share_market_updated_at": true,
+    "provider_identity": "sportsbook_provider_identity_id",
+    "provider_market_update_must_not_be_future": true,
+    "stale_provider_market_rule": "exclude_provider"
+  },
+  "evaluation_unit": {
+    "evaluation_kind": "official_entry",
+    "identity_fields": [
+      "nfl_moneyline_game_prediction_id",
+      "market_evaluation_protocol_version",
+      "evaluation_kind"
+    ],
+    "one_official_entry_evaluation_per_prediction": true,
+    "overwrite_or_supersede": false,
+    "selected_team_source": "persisted_prediction_predicted_side"
+  },
+  "formulas": {
+    "market_edge": "model_probability-consensus_no_vig_probability",
+    "model_expected_value": "model_probability*decimal_offered_odds-1",
+    "no_vig": "side_implied_probability/sum_two_sided_implied_probabilities"
+  },
+  "future_persistence": {
+    "copy_and_reference": [
+      "prediction_id_and_prediction_run_id",
+      "prediction_protocol_and_route_model_identity",
+      "canonical_game_home_away_selected_team_and_kickoff",
+      "selected_model_probability",
+      "market_evaluation_protocol_version_and_fingerprint",
+      "odds_ingestion_run_id_and_trusted_observed_at",
+      "ordered_consensus_evidence_ids_and_provider_identity_ids",
+      "best_price_evidence_id_and_provider_identity_id",
+      "american_price_and_decimal_odds",
+      "consensus_probability_market_edge_and_model_expected_value",
+      "evaluation_created_at_and_canonical_kickoff_at_evaluation",
+      "excluded_provider_ids_and_reason_codes"
+    ],
+    "contributor_order": "sportsbook_provider_identity_id_then_evidence_id",
+    "source_graph_fingerprint_required": true
+  },
+  "idempotency": {
+    "different_evidence_same_identity": "reject_conflict",
+    "failed_evaluation_run_retry": "new_evaluation_run_uuid",
+    "failed_run_may_have_children": false,
+    "same_exact_evidence": "return_existing_immutable_evaluation",
+    "same_failed_run_uuid_reusable": false
+  },
+  "malformed_and_coverage": {
+    "ambiguous_duplicate_provider": "evaluation_impossible",
+    "cross_game_sport_run_or_time": "evaluation_impossible",
+    "degraded_but_at_least_minimum_books": "valid_with_immutable_exclusions",
+    "fewer_than_minimum_books": "evaluation_impossible",
+    "incomplete_or_stale_single_provider": "exclude_provider_with_reason",
+    "unknown_canonical_selection": "evaluation_impossible"
+  },
+  "numeric_contract": {
+    "derived_decimal_quantum": "0.0000000000000001",
+    "persisted_decimal_places": 16,
+    "rounding": "ROUND_HALF_EVEN",
+    "working_decimal_precision": 28
+  },
+  "operational_sequence": [
+    "completed_official_prediction",
+    "entry_market_capture",
+    "official_market_evaluation",
+    "later_paper_qualification",
+    "future_closing_capture_and_clv",
+    "future_settlement"
+  ],
+  "prediction_eligibility": {
+    "allowed_prediction_protocol_versions": [
+      "nfl_moneyline_forward_0.1.0"
+    ],
+    "allowed_routes": [
+      "early",
+      "mature"
+    ],
+    "allowed_run_status": "completed",
+    "allowed_run_type": "official",
+    "model_identity_must_match_persisted_parent": true,
+    "preview_debug_failed_partial_or_ad_hoc": "ineligible",
+    "selected_away_probability": "1.0000000000000000-model_home_win_probability",
+    "selected_home_probability": "model_home_win_probability",
+    "unknown_prediction_or_model_protocol": "reject"
+  },
+  "protocol_fingerprint": "383592d724a83c991877dc940dc0f5f386b2f522725def58fef06f1035fbca0e",
+  "protocol_version": "nfl_moneyline_market_evaluation_0.1.0",
+  "run_281_classification": {
+    "future_official_clv_or_paper_reference": false,
+    "market_only_capture_validation": true,
+    "official_evaluation_eligible": false,
+    "reason": "no_completed_official_prediction_existed_before_capture"
+  },
+  "snapshot_eligibility": {
+    "market_type": "h2h",
+    "odds_run_source_name": "odds_api",
+    "odds_run_status": "completed",
+    "snapshot_role": "entry",
+    "sport_key": "americanfootball_nfl",
+    "use_only_official_pregame_evidence": true
+  },
+  "timing": {
+    "canonical_game_must_be_unplayed_at_evaluation": true,
+    "canonical_kickoff_identity_must_match_prediction_evidence_and_current_game": true,
+    "evaluation_created_at_at_or_after_trusted_observation": true,
+    "evaluation_created_at_source": "database_clock",
+    "evaluation_created_at_strictly_before_kickoff": true,
+    "interpretation": "entry_decision_after_completed_official_prediction",
+    "maximum_market_observation_to_evaluation_seconds": 300,
+    "maximum_prediction_to_market_observation_seconds": 900,
+    "odds_request_must_start_at_or_after_prediction_run_completion": true,
+    "prediction_created_at_strictly_before_market_observation": true,
+    "prediction_created_at_strictly_before_kickoff": true,
+    "same_odds_ingestion_run_required": true,
+    "same_trusted_observed_at_required": true,
+    "trusted_observed_at_equals_odds_response_received_at": true,
+    "trusted_observed_at_strictly_before_kickoff": true
+  }
+}

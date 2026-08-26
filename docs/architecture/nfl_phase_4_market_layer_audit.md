@@ -1,7 +1,8 @@
 # NFL Phase 4 — Market Layer and Paper Validation Architecture Audit
 
 Status: Phase 4A controlled manual foundation and first live evidence complete;
-Phase 4B1 pure official market-evaluation math implemented without persistence
+Phase 4B2 prospective official-entry evaluation protocol frozen without
+persistence
 
 Audit baseline for Phase 4A5: `main` at
 `4d40cc4f45b32c9ef1308f881bcea2ec2ad120da`
@@ -525,6 +526,230 @@ Run 281 is genuine market evidence and may be used read-only to check this input
 shape and the market-only calculations. It must not be retroactively paired with
 fabricated model probabilities or described as official model edge, EV,
 qualification, or paper evidence.
+
+### Phase 4B2 prospective official-entry evaluation protocol
+
+The first official protocol is
+`nfl_moneyline_market_evaluation_0.1.0`, fingerprint
+`383592d724a83c991877dc940dc0f5f386b2f522725def58fef06f1035fbca0e`.
+Its canonical, versioned contract is
+`artifacts/nfl_moneyline_market_evaluation_0.1.0.json`. The fingerprint is the
+SHA-256 of canonical JSON with sorted keys and compact separators after removing
+the `protocol_fingerprint` field, matching the frozen-model artifact convention.
+This protocol is prospective only and was selected without betting results.
+
+#### Official evaluation unit and prediction eligibility
+
+One official evaluation represents one persisted official NFL prediction for one
+canonical game and its persisted predicted side, paired with one exact eligible
+entry market source graph. Its immutable identity is:
+
+`(nfl_moneyline_game_prediction_id, market_evaluation_protocol_version,
+evaluation_kind='official_entry')`.
+
+Evaluation time and odds-run ID are evidence, not identity dimensions. This
+prevents a later market capture from becoming a second hindsight-selected
+official entry evaluation for the same prediction and protocol.
+
+Only a child of a `completed` `official` NFL prediction run is eligible. The
+prediction must use the known `nfl_moneyline_forward_0.1.0` prediction protocol;
+its parent/child routing and selected model identity must agree with the frozen
+identity already enforced by migration 026. Both `early` and `mature` routes are
+eligible because the frozen routing contract, not an evaluator choice, selects
+the route. Preview/debug, failed, running, partial, dry-run, or manually supplied
+probabilities are ineligible. An unknown prediction protocol, route, model,
+specification, schema, or fingerprint fails closed.
+
+The evaluated canonical selection is the persisted `predicted_side`. For home,
+the model probability is the stored 16-place `model_home_win_probability`. For
+away, it is exactly `1.0000000000000000 - model_home_win_probability`. The
+evaluator does not choose a side after seeing prices.
+
+#### Prospective time ordering and snapshot role
+
+Protocol 0.1.0 is an **entry decision after a completed official prediction**,
+not an estimate of the market at the prediction instant. Its required order is:
+
+1. `prediction_created_at < target_kickoff`;
+2. the official prediction run reaches `completed` before or at the entry odds
+   run's database-recorded `request_started_at`;
+3. `prediction_created_at < trusted_observed_at`, and the gap from prediction to
+   trusted market receipt is at most 900 seconds;
+4. `request_started_at <= response_received_at = trusted_observed_at`;
+5. `trusted_observed_at <= evaluation_created_at`, with no more than 300 seconds
+   from trusted receipt to evaluation; and
+6. both `trusted_observed_at` and the database-clock `evaluation_created_at` are
+   strictly before canonical kickoff.
+
+Market evidence observed before its prediction is never eligible. The 15-minute
+limit constrains the prediction/capture pair to one operational entry sequence.
+The five-minute receipt/evaluation limit prevents a captured offer from being
+evaluated hours later; neither limit is the provider-update freshness rule. At
+evaluation, the persisted
+prediction kickoff, every source evidence row's copied qualification kickoff,
+and the current canonical kickoff must agree. The game must remain unplayed and
+its game/team/kickoff rows must be locked against concurrent changes through
+the future evaluation transaction.
+
+Only a completed `americanfootball_nfl` / `odds_api` run with snapshot role
+`entry` is eligible. Informational calculations may use other explicitly chosen
+evidence but are never official under this protocol. A future closing/CLV
+capture needs a separately declared role and protocol; `entry` is not silently
+reinterpreted as a close.
+
+#### Contributor selection and contemporaneity
+
+All official consensus contributors for a game must be immutable
+`nfl_official_pregame_evidence` rows from the same eligible
+`odds_ingestion_run_id`. They must share the exact same
+`trusted_observed_at`, which migration 030 ties to that run's
+`response_received_at`. Protocol 0.1.0 does not mix runs, roles, nearest
+timestamps, or bounded cross-run observations. Point-in-time consistency takes
+priority over adding books.
+
+Rows are grouped by `sportsbook_provider_identity_id`. One eligible provider
+book contributes exactly one canonical home row and one canonical away row from
+that run. The pair must share `market_updated_at`; that timestamp is required,
+must not be later than trusted receipt, and must be no more than 300 seconds old
+at receipt. `bookmaker_updated_at` is retained as provenance and, when present,
+must not be in the future, but it is not the freshness clock. Run 281's
+non-outcome evidence had complete provider timestamps and market-update lags of
+14–136 seconds, supporting a five-minute operational ceiling without using game
+or betting results.
+
+An incomplete, one-sided, malformed, or stale provider market is excluded as a
+whole and receives an immutable reason code. A missing book is absent, never
+imputed. Different books may have different qualifying provider-update times,
+but their trusted SportsModel observation remains identical. Multiple rows for
+one provider/side, multiple complete pairs for one provider, cross-run/time/game/
+sport rows, or an unknown canonical selection make the game evaluation
+impossible rather than invoking an arbitrary tie-break. A disappeared book is
+handled as ordinary missing coverage.
+
+#### Consensus, coverage, and best price
+
+Official consensus is the equal-weight mean of the selected per-book no-vig
+probabilities and includes every eligible contributor, including the book that
+offers the best price. This creates one stable game-level benchmark and avoids
+unstable provider-specific leave-one-out benchmarks at small book counts. A
+leave-one-out value may later be reported as an explicitly non-official
+diagnostic, but it is not the official edge in protocol 0.1.0.
+
+At least five complete eligible provider books are required. One book remains a
+valid Phase 4B1 mathematical consensus, and two through four can be useful
+diagnostically, but none is an official consensus. The threshold is prospective:
+run 281 supplied six or nine complete books per game, so five retains a
+multi-book benchmark while tolerating one unavailable book in its thinnest
+observed coverage. No betting outcomes informed this threshold.
+
+The best price must come from the exact official consensus contributor set; a
+stale, malformed, excluded, off-run, or otherwise off-protocol quote cannot be
+the offering price. Maximum decimal return wins, and equal prices choose the
+lowest `sportsbook_provider_identity_id`. The exact selected-side official
+evidence ID and offering provider identity must be retained.
+
+With at least five qualifying books, excluded providers create valid degraded
+coverage whose IDs and reason codes must be retained. With fewer than five, no
+official evaluation row exists; a future parent evaluation run must record the
+immutable exclusion/impossibility outcome rather than silently omitting the
+game or weakening the threshold.
+
+#### Numeric and immutable future persistence contract
+
+Phase 4B1 calculations retain working Decimal precision 28. Future persisted
+derived decimal values use 16 fractional places and `ROUND_HALF_EVEN`, matching
+the prediction evidence convention. The persistence slice must use fixed-width
+16-place strings in hashes for implied/no-vig probabilities, consensus, decimal
+odds, market edge, and model EV. Source American prices remain integers and are
+never rounded.
+
+Future persistence must have a parent evaluation run with a caller-retained UUID,
+request hash, prediction-run ID, odds-run ID, protocol version/fingerprint,
+status/counts, source-graph hash, and database timestamps. Each game evaluation
+must FK-reference its prediction, canonical game and selected team, exact best-
+price evidence, odds run, and protocol identity while also copying the immutable
+scalars needed to audit drift: prediction protocol/run type, route/model/schema/
+fingerprint identity, home/away/selected team IDs, model probability, kickoff,
+trusted receipt, offering provider/price/decimal odds, consensus probability,
+edge, EV, evaluation time, and kickoff observed at evaluation.
+
+An ordered contributor child graph must contain one row per provider identity,
+ordered by `(sportsbook_provider_identity_id, evidence_id)`, with both home and
+away official evidence IDs, source prices, implied and no-vig values, and the
+provider identity. Excluded provider/reason evidence must also be immutable.
+The future database must verify references and copied values against their
+sources during insertion, reject updates/deletes, use `ON DELETE RESTRICT`, and
+fingerprint the complete ordered source graph.
+
+#### Idempotency, run 281, and operational cadence
+
+The same prediction/protocol/kind and exact source graph returns the existing
+immutable evaluation. The same identity with different or newer evidence is a
+conflict, not a replacement or second official entry. A failed evaluation run
+has no children, is terminal, and requires a new UUID for retry; an identical
+successful retry converges on the existing game evaluation. One prediction has
+at most one official entry evaluation under this protocol.
+
+Run 281 is permanently ineligible for official evaluation because no completed
+official prediction existed before its request or trusted observation. It
+remains genuine immutable Phase 4A market-capture validation evidence and may be
+used for market-only analytics or implementation fixtures. It cannot become
+official model evaluation, paper, settlement, or official CLV evidence by
+pairing a later or fabricated probability.
+
+The intended manual sequence is:
+
+1. generate and complete an official frozen prediction run;
+2. begin the NFL `entry` capture immediately and within the 15-minute pairing
+   window;
+3. complete source persistence and official pregame qualification;
+4. create the official market evaluation before kickoff;
+5. apply a separately versioned future paper-qualification policy;
+6. capture a separately defined future closing observation for CLV; and
+7. settle later from canonical NFL result evidence.
+
+The current manual odds command does not require a prediction and therefore
+cannot be automated as this sequence without a future preflight/orchestration
+change. That later change must pin prediction and odds run IDs and enforce this
+order before spending a provider credit. No scheduler changes are part of 4B2.
+
+These rules are NFL-specific. Existing MLB snapshot timing, legacy
+`sportsbook_id` consensus, starter policy, mutable evaluation persistence, paper
+qualification, and settlement behavior remain unchanged.
+
+#### Persistence-slice proof plan
+
+Before any evaluation write, the next slice must prove:
+
+- only completed `official` predictions under the accepted frozen prediction
+  protocol enter; preview, failed, partial, ad hoc, and unknown-model inputs fail;
+- prediction-created, prediction-run-completed, request-started, trusted-received,
+  evaluation-created, and kickoff boundaries pass immediately inside their
+  allowed ranges and fail at every disallowed equality/limit;
+- the 900-second prediction/market, 300-second market/evaluation, and 300-second
+  provider-update boundaries are exact, database-clock based where applicable,
+  and timezone-aware;
+- contributors come from one completed NFL Odds API `entry` run and one exact
+  trusted receipt; cross-sport/run/role/time/game contamination fails;
+- one complete pair per provider is accepted; incomplete or stale books are
+  excluded; missing books are not imputed; ambiguous duplicate identities or
+  selections reject the game;
+- five complete books succeeds, four fails, and degraded coverage retains exact
+  exclusion reasons;
+- official consensus includes the offering book exactly once and matches the
+  Phase 4B1 equal-weight result; any leave-one-out diagnostic is distinctly
+  labeled and cannot populate official fields;
+- best price is limited to the contributor set, uses deterministic provider-ID
+  ties, and works identically for selected home and selected away;
+- database triggers rederive/cross-check copied prediction, game, kickoff,
+  evidence, provider, price, timing, protocol, and contributor facts;
+- identical evidence is idempotent, different evidence for the same identity
+  conflicts, failed runs retain no children, concurrency cannot create a second
+  evaluation, and partial writes roll back atomically;
+- ordered contributor and evaluation hashes reproduce from persisted rows;
+  updates, deletes, cascades, and source-graph mutation are rejected; and
+- existing MLB and full repository tests remain unchanged and green against the
+  disposable PostgreSQL environment.
 
 #### Concurrency-test disposition
 
