@@ -713,13 +713,94 @@ cannot be automated as this sequence without a future preflight/orchestration
 change. That later change must pin prediction and odds run IDs and enforce this
 order before spending a provider credit. No scheduler changes are part of 4B2.
 
+### Phase 4B3 immutable official evaluation persistence
+
+Migration 031, `031_create_nfl_official_market_evaluations.sql`, implements the
+frozen 0.1.0 policy without rewriting existing rows. It creates four NFL-only
+tables:
+
+- `nfl_moneyline_market_evaluation_runs` records a caller-retained UUID,
+  deterministic request hash, exact prediction/odds/protocol request, terminal
+  success or failure, and the resulting graph identity. A new attempt starts
+  `running`; completed and failed attempts are immutable and cannot be deleted.
+- `nfl_moneyline_market_evaluations` is the successful parent evidence. Its
+  unique identity is the frozen prediction/protocol/kind tuple. It references
+  the creation attempt, prediction and prediction run, canonical NFL game and
+  teams, odds run, best-price official evidence, and provider identity with
+  restrictive deletion. It also copies the frozen prediction/model/router
+  identity, selected-side probability, trusted timing, kickoff, and derived
+  values needed for an independent audit.
+- `nfl_moneyline_market_evaluation_contributors` retains one ordered home/away
+  official-evidence pair per provider identity, source American prices, raw and
+  no-vig probabilities, the common trusted receipt, and the provider market
+  update time.
+- `nfl_moneyline_market_evaluation_exclusions` retains only deterministic
+  `incomplete_market` and `stale_market` exclusions that occurred in a
+  successful evaluation. Fatal ambiguity creates no successful parent.
+
+Parent insertion re-reads and locks the persisted prediction, terminal
+prediction run, current canonical game, odds run, and evaluation attempt. The
+database derives `evaluation_created_at` from `clock_timestamp()` and verifies
+the copied prediction, game, team, kickoff, odds-run, receipt, route/model, and
+protocol fields. Contributor triggers verify each copied pair against the exact
+migration-030 evidence rows. An exclusion trigger verifies that each reason code
+matches the requested run/game/provider source evidence. Deferred graph
+validation verifies the minimum and copied contributor counts, stable provider
+ordering, best-price membership and deterministic selection, and that a
+provider cannot be both a contributor and an exclusion. All four evidence
+tables reject destructive history changes; source references use `ON DELETE
+RESTRICT`.
+
+`src/sportsmodel/nfl/market_evaluation.py` is the narrow persistence service.
+It verifies the on-disk protocol artifact and embedded fingerprint before
+opening an official attempt. It accepts only a persisted completed official
+prediction under `nfl_moneyline_forward_0.1.0`, verifies the frozen route and
+artifact identity, locks the canonical game against a concurrent kickoff/team
+change, and accepts only a completed NFL Odds API `entry` run. It does not
+accept a caller-supplied team, probability, evaluation time, or contributor
+set.
+
+The service groups immutable evidence by
+`sportsbook_provider_identity_id`. Unknown/cross-context evidence, duplicate
+selections, conflicting pair timestamps, and future provider timestamps fail
+the entire attempt. One-sided providers receive `incomplete_market`; a missing
+or more-than-300-second-old market update receives `stale_market`. At least five
+complete providers remain mandatory. Consensus, no-vig, best price, edge, and
+model EV call the pure Phase 4B1 functions; persisted derived values are
+quantized to 16 places with `ROUND_HALF_EVEN`.
+
+The source graph uses canonical sorted JSON and SHA-256. Its ordering is
+provider identity, then the home and away official evidence IDs; exclusions are
+ordered by provider identity. It includes the prediction/run/protocol and model
+identity, canonical game/home/away/selected team, selected probability and
+kickoff, odds run and trusted receipt, exact contributor evidence and prices,
+best-price evidence/provider, and exclusions. The same sources therefore
+reproduce the same fingerprint without using derived results as source
+identity.
+
+Each attempt uses `REPEATABLE READ`, explicit prediction and canonical-game row
+locks, a savepoint around parent/child insertion, deferred graph validation,
+and one commit. A child or graph failure rolls back the complete successful
+graph while retaining only a terminal failed attempt. The prediction/protocol/
+kind unique key resolves concurrent creation: the winning graph persists;
+after a unique-key race, a fresh transaction returns that evaluation only when
+the requested fingerprint matches, otherwise it records and raises an explicit
+source-graph conflict. A historical same-graph replay may return its existing
+immutable evidence after kickoff; it does not create or reinterpret evidence.
+
+There is no production CLI or scheduler entry for this service. Migration 031
+must be applied through a separately approved version-capped production step
+before any future caller can use it. The service makes no provider request and
+does not create paper, CLV, settlement, or model evidence.
+
 These rules are NFL-specific. Existing MLB snapshot timing, legacy
 `sportsbook_id` consensus, starter policy, mutable evaluation persistence, paper
 qualification, and settlement behavior remain unchanged.
 
-#### Persistence-slice proof plan
+#### Persistence-slice proof obligations
 
-Before any evaluation write, the next slice must prove:
+Migration 031 and the official evaluation service are validated against these
+durable obligations:
 
 - only completed `official` predictions under the accepted frozen prediction
   protocol enter; preview, failed, partial, ad hoc, and unknown-model inputs fail;
@@ -766,11 +847,12 @@ are required before multiple workers or scheduled capture are authorized:
 - official qualification: canonical-game row lock, database-clock cutoff,
   unique quote qualification, and immutable evidence.
 
-No broader Phase 4A concurrent-worker test is a prerequisite for designing the
-manual Phase 4B evaluation boundary. Phase 4B's own evaluation-run uniqueness,
-atomic source graph, retry, and partial-rollback tests remain required before
-any Phase 4B evidence write. The Phase 4A races above remain automation-readiness
-work and must be completed before scheduled or multi-worker capture.
+No broader Phase 4A concurrent-worker test is a prerequisite for the manual
+Phase 4B evaluation boundary. Phase 4B's own evaluation-run uniqueness, atomic
+source graph, retry, partial rollback, same-graph race, conflicting-graph race,
+and kickoff-lock tests are part of migration-031 validation. The Phase 4A races
+above remain automation-readiness work and must be completed before scheduled
+or multi-worker capture.
 
 #### Future independent-review package completeness
 
