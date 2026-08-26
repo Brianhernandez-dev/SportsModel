@@ -1,7 +1,7 @@
 # NFL Phase 4 — Market Layer and Paper Validation Architecture Audit
 
 Status: Phase 4A controlled manual foundation and first live evidence complete;
-Phase 4B has not begun
+Phase 4B1 pure official market-evaluation math implemented without persistence
 
 Audit baseline for Phase 4A5: `main` at
 `4d40cc4f45b32c9ef1308f881bcea2ec2ad120da`
@@ -453,6 +453,78 @@ duplicate provider identity and retain the exact contributing snapshot IDs. The
 existing MLB `MarketSnapshot`/consensus path groups by `sportsbook_id`; it must
 not be reused as the Phase 4B identity boundary without a provider-identity-aware
 adapter or NFL-specific input contract.
+
+### Phase 4B1 pure official market-evaluation math contract
+
+`sportsmodel.nfl.market_math` is the pure calculation boundary for future NFL
+official market evaluation. It performs no database access, persistence,
+qualification, paper-candidate creation, settlement, provider request, or
+scheduling. Its immutable inputs carry sport, canonical game and team IDs,
+home/away selection identity, `sportsbook_provider_identity_id`, American price,
+and a timezone-aware trusted observation time.
+
+Complete-market construction requires exactly one canonical home outcome and one
+canonical away outcome from the same sport, game, team orientation, provider
+identity, and trusted observation context. It rejects incomplete, duplicate,
+third-outcome, unknown-selection, mixed-game, mixed-sport, mixed-provider, and
+mixed-time inputs rather than repairing them. A complete market is inherently a
+two-sided `h2h` contract; other market types do not enter this API.
+
+For each complete provider-book market, raw implied probabilities are derived
+from American prices and its two-sided overround is removed as:
+
+`home_no_vig = home_implied / (home_implied + away_implied)`
+
+`away_no_vig = away_implied / (home_implied + away_implied)`
+
+The implementation stores the away result as the exact Decimal complement of
+the calculated home result. This is algebraically equivalent and ensures the
+two represented no-vig probabilities sum exactly to one under finite Decimal
+precision.
+
+Consensus is the unweighted arithmetic mean of the per-book no-vig
+probabilities. Its voting identity is `sportsbook_provider_identity_id`, not
+legacy `sportsbook_id` or display title. One provider identity gets one vote;
+duplicate identities are rejected. Provider inputs are sorted by that identity
+before aggregation so input order cannot affect the result. A one-book input is
+a valid mathematical consensus with a book count of one; later official policy
+may impose a higher minimum without changing this math.
+
+The caller must select exactly one intended point-in-time observation per
+eligible provider identity before invoking the pure API. Phase 4B1 does not
+choose among temporal observations, determine pregame eligibility, define an
+official evaluation run, or persist contributor evidence. Those protocol and
+persistence responsibilities remain deferred to later Phase 4B work. The pure
+model-evaluation function does not require the best-price provider to be in the
+consensus contributor set; whether official consensus includes that book or
+uses a declared leave-one-out set remains a later protocol decision.
+
+For a canonical selection, best offered price is the valid price with the
+largest decimal return. A tie is broken deterministically by the lowest
+`sportsbook_provider_identity_id`. Home and away selection work identically.
+
+Given the frozen model probability for that same canonical selection:
+
+`market_edge = model_probability - consensus_no_vig_probability`
+
+`model_expected_value = (model_probability * decimal_offered_odds) - 1`
+
+This expected value uses the actual selected provider price. It is not the MLB
+leave-one-book-out market-relative EV, bookmaker hold, model-minus-price-implied
+edge, or consensus-relative price edge. The shared Decimal American-odds
+conversions are reused, while MLB grouping, policy, persistence, and paper logic
+remain unchanged and outside this boundary.
+
+Calculations use a local Decimal precision of 28 significant digits. Phase 4B1
+does not quantize results for persistence; tests compare repeating probability
+calculations at the migration-026 probability scale of 16 decimal places where
+exact finite representation is impossible. A later immutable schema must state
+its storage scales and rounding rule explicitly.
+
+Run 281 is genuine market evidence and may be used read-only to check this input
+shape and the market-only calculations. It must not be retroactively paired with
+fabricated model probabilities or described as official model edge, EV,
+qualification, or paper evidence.
 
 #### Concurrency-test disposition
 
