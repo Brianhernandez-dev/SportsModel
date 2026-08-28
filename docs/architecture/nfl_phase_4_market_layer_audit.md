@@ -788,14 +788,66 @@ the requested fingerprint matches, otherwise it records and raises an explicit
 source-graph conflict. A historical same-graph replay may return its existing
 immutable evidence after kickoff; it does not create or reinterpret evidence.
 
-There is no production CLI or scheduler entry for this service. Migration 031
-must be applied through a separately approved version-capped production step
-before any future caller can use it. The service makes no provider request and
-does not create paper, CLV, settlement, or model evidence.
+Phase 4B3 introduced no production CLI or scheduler entry. Phase 4B4 adds the
+manual, dry-run-first operator boundary documented below. The service makes no
+provider request and does not create paper, CLV, settlement, or model evidence.
 
 These rules are NFL-specific. Existing MLB snapshot timing, legacy
 `sportsbook_id` consensus, starter policy, mutable evaluation persistence, paper
 qualification, and settlement behavior remain unchanged.
+
+### Phase 4B4 guarded official evaluation execution
+
+`src/sportsmodel/nfl/manual_market_evaluation.py` and
+`manual_market_evaluation_cli.py` expose the Phase 4B3 service without adding a
+second evaluation implementation. The only operator-supplied evidence values
+are `nfl_moneyline_game_prediction_id` and `odds_ingestion_run_id`. Team and game
+identity, kickoff, selected side, model probability and identity, source timing,
+contributors, exclusions, consensus, best price, edge, EV, evaluation time, and
+protocol identity are always reloaded or derived from immutable database and
+frozen-repository evidence.
+
+The default command is a read-only `REPEATABLE READ` preview. It verifies schema
+migration 031 and its four tables, reloads the frozen protocol artifact, applies
+the same prediction, odds-run, temporal, contributor, exclusion, minimum-book,
+market-math, and source-graph logic used by the write path, and rolls the
+transaction back. Its output distinguishes a prospective new evaluation from a
+same-graph idempotent return. It creates neither an evaluation-attempt row nor
+any child evidence.
+
+A write requires both `--live` and `--confirm-create-evaluation`. Supplying only
+one guard fails before database access. With both guards, the operator service
+first obtains the read-only preview and then calls
+`evaluate_official_nfl_moneyline_market`; that existing Phase 4B3 entry point
+again reloads, locks, validates, derives, and fingerprints all sources in its own
+authoritative write transaction. There is no force or protocol-override option.
+The write path itself verifies schema 031 before opening an attempt.
+
+The manual modules and Phase 4B3 service have no import of the Odds API client,
+manual capture adapter, `requests`, `httpx`, or `urllib`. Evaluation failure
+cannot call, retry, or recapture odds. The command consumes only already-
+persisted official evidence. It also creates no prediction, paper candidate,
+settlement, CLV, scheduler, or model evidence.
+
+Dry-run failures create no attempt. A guarded live failure after an attempt has
+started follows the Phase 4B3 terminal-failure contract and retains only the
+failed attempt. A same-graph guarded retry creates a new completed attempt that
+references the existing immutable evaluation; a different graph raises
+`source_graph_conflict` and never replaces the existing graph. Operators must
+investigate failures and must never use an override or odds recapture as an
+automatic retry.
+
+Run 281 has no special-case logic. It is naturally ineligible because no
+persisted official NFL prediction predates that capture. As long as production
+has zero NFL prediction rows, there is no valid real prediction/run pair for
+this command; do not manufacture a production prediction to exercise it.
+
+The CLI outcome contract is deterministic: live success is exit 0, invalid
+operator arguments are 2, eligible dry run is 10, protocol/source/timing
+ineligibility is 20, insufficient coverage is 21, source-graph conflict is 22,
+and database/infrastructure failure is 30. Operator output includes stable IDs,
+timestamps, protocol and source fingerprints, and derived evaluation values but
+never prints credentials, API keys, credential-bearing URLs, or headers.
 
 #### Persistence-slice proof obligations
 

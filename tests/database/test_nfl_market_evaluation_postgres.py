@@ -31,6 +31,10 @@ from sportsmodel.nfl.market_evaluation import (
     OfficialMarketEvaluationError,
     evaluate_official_nfl_moneyline_market,
 )
+from sportsmodel.nfl.manual_market_evaluation import (
+    ManualMarketEvaluationGuardError,
+    execute_manual_market_evaluation,
+)
 from sportsmodel.nfl.market_math import american_to_decimal_odds
 from sportsmodel.nfl.moneyline_frozen import (
     EARLY_FEATURE_SCHEMA_VERSION,
@@ -251,6 +255,7 @@ def _seed_odds(
     incomplete_provider: int | None = None,
     stale_provider: int | None = None,
     duplicate_provider: int | None = None,
+    observed_at: datetime | None = None,
 ) -> SeededOdds:
     with connection.cursor() as cursor:
         cursor.execute(
@@ -260,12 +265,13 @@ def _seed_odds(
         )
         completed_at = cursor.fetchone()[0]
         baseline = datetime.now(timezone.utc)
-        observed_at = max(
-            baseline,
-            (completed_at + timedelta(milliseconds=10))
-            if completed_at is not None
-            else baseline,
-        )
+        if observed_at is None:
+            observed_at = max(
+                baseline,
+                (completed_at + timedelta(milliseconds=10))
+                if completed_at is not None
+                else baseline,
+            )
         request_started_at = observed_at - timedelta(milliseconds=1)
         cursor.execute(
             "SELECT COUNT(*) FROM odds_ingestion_runs "
@@ -380,6 +386,21 @@ def _counts(connection):
             SELECT
                 (SELECT COUNT(*) FROM nfl_moneyline_market_evaluations),
                 (SELECT COUNT(*) FROM nfl_moneyline_market_evaluation_contributors),
+                (SELECT COUNT(*) FROM nfl_moneyline_market_evaluation_exclusions)
+            """
+        )
+        return cursor.fetchone()
+
+
+def _all_evaluation_counts(connection):
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT
+                (SELECT COUNT(*) FROM nfl_moneyline_market_evaluation_runs),
+                (SELECT COUNT(*) FROM nfl_moneyline_market_evaluations),
+                (SELECT COUNT(*)
+                   FROM nfl_moneyline_market_evaluation_contributors),
                 (SELECT COUNT(*) FROM nfl_moneyline_market_evaluation_exclusions)
             """
         )
@@ -816,4 +837,294 @@ def test_kickoff_row_lock_prevents_overlapping_invalid_update(
         result = future.result(timeout=5)
     assert result.evaluation.evaluation_id > 0
     assert _counts(connection) == (1, 5, 0)
+    connection.close()
+
+
+@pytest.mark.parametrize(
+    ("route", "probability", "selected_side"),
+    [
+        ("early", Decimal("0.6000000000000000"), "home"),
+        ("mature", Decimal("0.4000000000000000"), "away"),
+    ],
+)
+def test_manual_preview_and_guarded_live_rehearsal(
+    initialized_nfl_test_database,
+    route,
+    probability,
+    selected_side,
+) -> None:
+    connection = psycopg2.connect(initialized_nfl_test_database)
+    prediction = _seed_prediction(
+        connection,
+        route=route,
+        probability=probability,
+    )
+    odds = _seed_odds(connection, prediction, books=5)
+    factory = _connect(initialized_nfl_test_database)
+
+    preview = execute_manual_market_evaluation(
+        prediction_id=prediction.prediction_id,
+        odds_ingestion_run_id=odds.odds_run_id,
+        connection_factory=factory,
+    )
+    assert preview.dry_run is True
+    assert preview.preview.selected_route == route
+    assert preview.preview.selected_side == selected_side
+    assert preview.preview.contributor_count == 5
+    assert preview.preview.idempotent is False
+    assert _all_evaluation_counts(connection) == (0, 0, 0, 0)
+
+    with pytest.raises(ManualMarketEvaluationGuardError):
+        execute_manual_market_evaluation(
+            prediction_id=prediction.prediction_id,
+            odds_ingestion_run_id=odds.odds_run_id,
+            live=True,
+            connection_factory=factory,
+        )
+    assert _all_evaluation_counts(connection) == (0, 0, 0, 0)
+
+    live = execute_manual_market_evaluation(
+        prediction_id=prediction.prediction_id,
+        odds_ingestion_run_id=odds.odds_run_id,
+        live=True,
+        confirm_create_evaluation=True,
+        connection_factory=factory,
+    )
+    assert live.execution is not None
+    assert live.execution.idempotent is False
+    evaluation_id = live.execution.evaluation.evaluation_id
+    assert _all_evaluation_counts(connection) == (1, 1, 5, 0)
+
+    replay = execute_manual_market_evaluation(
+        prediction_id=prediction.prediction_id,
+        odds_ingestion_run_id=odds.odds_run_id,
+        live=True,
+        confirm_create_evaluation=True,
+        connection_factory=factory,
+    )
+    assert replay.execution is not None
+    assert replay.execution.idempotent is True
+    assert replay.execution.evaluation.evaluation_id == evaluation_id
+    assert _all_evaluation_counts(connection) == (2, 1, 5, 0)
+    connection.close()
+
+
+def test_manual_different_graph_conflicts_before_write(
+    initialized_nfl_test_database,
+) -> None:
+    connection = psycopg2.connect(initialized_nfl_test_database)
+    prediction = _seed_prediction(connection)
+    first_odds = _seed_odds(connection, prediction)
+    second_odds = _seed_odds(connection, prediction)
+    factory = _connect(initialized_nfl_test_database)
+    first = execute_manual_market_evaluation(
+        prediction_id=prediction.prediction_id,
+        odds_ingestion_run_id=first_odds.odds_run_id,
+        live=True,
+        confirm_create_evaluation=True,
+        connection_factory=factory,
+    )
+    assert first.execution is not None
+    with pytest.raises(OfficialMarketEvaluationConflictError) as conflict:
+        execute_manual_market_evaluation(
+            prediction_id=prediction.prediction_id,
+            odds_ingestion_run_id=second_odds.odds_run_id,
+            live=True,
+            confirm_create_evaluation=True,
+            connection_factory=factory,
+        )
+    assert conflict.value.code == "source_graph_conflict"
+    assert _all_evaluation_counts(connection) == (1, 1, 5, 0)
+    connection.close()
+
+
+@pytest.mark.parametrize(
+    ("run_type", "run_status"),
+    [
+        ("preview", "completed"),
+        ("official", "running"),
+    ],
+)
+def test_manual_preview_rejects_nonofficial_or_noncompleted_prediction_runs(
+    initialized_nfl_test_database,
+    run_type,
+    run_status,
+) -> None:
+    connection = psycopg2.connect(initialized_nfl_test_database)
+    prediction = _seed_prediction(
+        connection,
+        run_type=run_type,
+        run_status=run_status,
+    )
+    odds = _seed_odds(connection, prediction)
+    with pytest.raises(OfficialMarketEvaluationError) as captured:
+        execute_manual_market_evaluation(
+            prediction_id=prediction.prediction_id,
+            odds_ingestion_run_id=odds.odds_run_id,
+            connection_factory=_connect(initialized_nfl_test_database),
+        )
+    assert captured.value.code == "prediction_ineligible"
+    assert _all_evaluation_counts(connection) == (0, 0, 0, 0)
+    connection.close()
+
+
+@pytest.mark.parametrize(
+    ("sport", "source", "role", "status"),
+    [
+        ("baseball_mlb", "odds_api", "entry", "completed"),
+        ("americanfootball_nfl", "manual", "entry", "completed"),
+        ("americanfootball_nfl", "odds_api", "manual", "completed"),
+        ("americanfootball_nfl", "odds_api", "entry", "running"),
+    ],
+)
+def test_manual_preview_rejects_odds_run_identity_mismatch(
+    initialized_nfl_test_database,
+    sport,
+    source,
+    role,
+    status,
+) -> None:
+    connection = psycopg2.connect(initialized_nfl_test_database)
+    prediction = _seed_prediction(connection)
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO odds_ingestion_runs (
+                sport, source_name, snapshot_role, status, target_date,
+                request_path, request_regions, request_markets,
+                request_odds_format, request_started_at,
+                response_received_at, status_code
+            ) VALUES (%s, %s, %s, %s, '2099-09-11',
+                      '/test/persisted-evidence', 'us', 'h2h', 'american',
+                      clock_timestamp(), clock_timestamp(), 200)
+            RETURNING odds_ingestion_run_id
+            """,
+            (sport, source, role, status),
+        )
+        odds_run_id = cursor.fetchone()[0]
+    connection.commit()
+    with pytest.raises(OfficialMarketEvaluationError) as captured:
+        execute_manual_market_evaluation(
+            prediction_id=prediction.prediction_id,
+            odds_ingestion_run_id=odds_run_id,
+            connection_factory=_connect(initialized_nfl_test_database),
+        )
+    assert captured.value.code == "odds_run_ineligible"
+    assert _all_evaluation_counts(connection) == (0, 0, 0, 0)
+    connection.close()
+
+
+def test_manual_preview_rejects_odds_captured_before_prediction(
+    initialized_nfl_test_database,
+) -> None:
+    connection = psycopg2.connect(initialized_nfl_test_database)
+    prediction = _seed_prediction(connection)
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT prediction_created_at FROM nfl_moneyline_game_predictions "
+            "WHERE nfl_moneyline_game_prediction_id = %s",
+            (prediction.prediction_id,),
+        )
+        prediction_created_at = cursor.fetchone()[0]
+    odds = _seed_odds(
+        connection,
+        prediction,
+        observed_at=prediction_created_at - timedelta(seconds=1),
+    )
+    with pytest.raises(OfficialMarketEvaluationError) as captured:
+        execute_manual_market_evaluation(
+            prediction_id=prediction.prediction_id,
+            odds_ingestion_run_id=odds.odds_run_id,
+            connection_factory=_connect(initialized_nfl_test_database),
+        )
+    assert captured.value.code == "prediction_market_timing_ineligible"
+    assert _all_evaluation_counts(connection) == (0, 0, 0, 0)
+    connection.close()
+
+
+def test_manual_preview_excludes_stale_and_incomplete_then_enforces_minimum(
+    initialized_nfl_test_database,
+) -> None:
+    connection = psycopg2.connect(initialized_nfl_test_database)
+    prediction = _seed_prediction(connection)
+    eligible_odds = _seed_odds(
+        connection,
+        prediction,
+        books=7,
+        incomplete_provider=5,
+        stale_provider=6,
+    )
+    preview = execute_manual_market_evaluation(
+        prediction_id=prediction.prediction_id,
+        odds_ingestion_run_id=eligible_odds.odds_run_id,
+        connection_factory=_connect(initialized_nfl_test_database),
+    )
+    assert preview.preview.contributor_count == 5
+    assert {item.reason_code for item in preview.preview.exclusions} == {
+        "incomplete_market",
+        "stale_market",
+    }
+    assert _all_evaluation_counts(connection) == (0, 0, 0, 0)
+
+    insufficient_odds = _seed_odds(connection, prediction, books=4)
+    with pytest.raises(OfficialMarketEvaluationError) as captured:
+        execute_manual_market_evaluation(
+            prediction_id=prediction.prediction_id,
+            odds_ingestion_run_id=insufficient_odds.odds_run_id,
+            connection_factory=_connect(initialized_nfl_test_database),
+        )
+    assert captured.value.code == "insufficient_coverage"
+    assert _all_evaluation_counts(connection) == (0, 0, 0, 0)
+    connection.close()
+
+
+def test_manual_preview_rejects_game_that_is_no_longer_unplayed(
+    initialized_nfl_test_database,
+) -> None:
+    connection = psycopg2.connect(initialized_nfl_test_database)
+    prediction = _seed_prediction(connection)
+    odds = _seed_odds(connection, prediction)
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "UPDATE nfl_games SET status = 'final', home_score = 24, "
+            "away_score = 17, overtime = FALSE WHERE game_id = %s",
+            (prediction.game_id,),
+        )
+    connection.commit()
+    with pytest.raises(OfficialMarketEvaluationError) as captured:
+        execute_manual_market_evaluation(
+            prediction_id=prediction.prediction_id,
+            odds_ingestion_run_id=odds.odds_run_id,
+            connection_factory=_connect(initialized_nfl_test_database),
+        )
+    assert captured.value.code == "game_already_played"
+    assert _all_evaluation_counts(connection) == (0, 0, 0, 0)
+    connection.close()
+
+
+def test_manual_and_persistence_paths_require_schema_031_before_attempt(
+    initialized_nfl_test_database,
+) -> None:
+    connection = psycopg2.connect(initialized_nfl_test_database)
+    prediction = _seed_prediction(connection)
+    odds = _seed_odds(connection, prediction)
+    with connection.cursor() as cursor:
+        cursor.execute("DELETE FROM schema_migrations WHERE version = 31")
+    connection.commit()
+    factory = _connect(initialized_nfl_test_database)
+    with pytest.raises(OfficialMarketEvaluationError) as preview_error:
+        execute_manual_market_evaluation(
+            prediction_id=prediction.prediction_id,
+            odds_ingestion_run_id=odds.odds_run_id,
+            connection_factory=factory,
+        )
+    assert preview_error.value.code == "schema_incompatible"
+    with pytest.raises(OfficialMarketEvaluationError) as live_error:
+        evaluate_official_nfl_moneyline_market(
+            prediction_id=prediction.prediction_id,
+            odds_ingestion_run_id=odds.odds_run_id,
+            connection_factory=factory,
+        )
+    assert live_error.value.code == "schema_incompatible"
+    assert _all_evaluation_counts(connection) == (0, 0, 0, 0)
     connection.close()

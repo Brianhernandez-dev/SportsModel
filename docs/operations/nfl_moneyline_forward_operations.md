@@ -91,6 +91,59 @@ A completed same-key retry is idempotent. A failed run is permanent evidence and
 requires a new key after the cause is understood. Never use a new key merely to
 replace an official probability: official evidence is immutable and unique.
 
+## Official entry-market evaluation
+
+Market evaluation is a separate persisted-evidence step. It does not capture
+odds and cannot call a provider. Use it only after an authorized official
+prediction and a separately authorized, completed NFL Odds API `entry` run both
+exist. Retain both IDs in the operator transcript.
+
+The safe inspection command is dry run by default:
+
+```powershell
+$predictionId = 123 # illustrative; obtain from persisted official evidence
+$oddsRunId = 456    # illustrative; obtain from a completed NFL entry run
+
+& $python -m sportsmodel.nfl.manual_market_evaluation_cli `
+  --prediction-id $predictionId `
+  --odds-run-id $oddsRunId
+```
+
+This opens a read-only repeatable transaction, performs zero provider calls and
+zero writes, and exits 10 when the pair is eligible. Review the exact
+prediction/run IDs, route/model/schema, canonical matchup and kickoff, selected
+team and stored probability, request/receipt gap, contributors and exclusions,
+consensus, best price/provider, edge, model EV, protocol identity, and source-
+graph fingerprint. A current production database with no NFL predictions has no
+valid pair; do not create a fake prediction to test the command. Run 281 is
+naturally rejected because it has no eligible official prediction before its
+receipt time.
+
+Creating an evaluation requires a separate explicit authorization and both
+write guards:
+
+```powershell
+& $python -m sportsmodel.nfl.manual_market_evaluation_cli `
+  --prediction-id $predictionId `
+  --odds-run-id $oddsRunId `
+  --live `
+  --confirm-create-evaluation
+```
+
+Never add force, protocol-override, model-probability, team, kickoff, price,
+contributor, fingerprint, or evaluation-time arguments. The service rederives
+those values from persisted evidence and the frozen protocol. A same-graph retry
+returns the existing evaluation idempotently. A different graph conflicts and
+must be investigated; it must not be replaced. A failed live attempt never
+triggers odds recapture or provider retry.
+
+Exit codes are: 0 live success; 2 invalid operator arguments; 10 eligible dry
+run; 20 protocol, source, or timing ineligibility; 21 insufficient complete-book
+coverage; 22 immutable source-graph conflict; and 30 database or infrastructure
+failure. Dry-run failures write nothing. A live failure that reached the
+authoritative Phase 4B3 transaction may retain one immutable failed attempt; the
+CLI reports that attempt ID when available.
+
 ## Stuck `running` run recovery
 
 A hard process interruption can leave the durable parent run at `status =

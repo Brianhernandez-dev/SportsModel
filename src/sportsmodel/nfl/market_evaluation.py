@@ -57,6 +57,7 @@ EVALUATION_KIND = "official_entry"
 NFL_SPORT_KEY = "americanfootball_nfl"
 ODDS_SOURCE_NAME = "odds_api"
 MINIMUM_CONTRIBUTOR_COUNT = 5
+MINIMUM_SCHEMA_VERSION = 31
 DERIVED_QUANTUM = Decimal("0.0000000000000001")
 PROTOCOL_PATH = (
     Path(__file__).resolve().parents[3]
@@ -140,6 +141,67 @@ class OfficialMarketEvaluationExecutionResult:
     run_key: UUID
     evaluation: OfficialMarketEvaluation
     idempotent: bool
+
+
+@dataclass(frozen=True)
+class OfficialMarketEvaluationProviderDisplay:
+    provider_identity_id: int
+    provider_name: str
+    provider_bookmaker_key: str
+    sportsbook_name: str
+
+
+@dataclass(frozen=True)
+class OfficialMarketEvaluationPreviewExclusion:
+    provider: OfficialMarketEvaluationProviderDisplay
+    reason_code: str
+
+
+@dataclass(frozen=True)
+class OfficialMarketEvaluationPreview:
+    prediction_id: int
+    prediction_run_id: int
+    prediction_protocol_version: str
+    prediction_protocol_fingerprint: str
+    selected_route: str
+    routing_contract_version: str
+    model_specification_version: str
+    feature_schema_version: str
+    game_id: int
+    home_team_id: int
+    home_team_name: str
+    home_team_abbreviation: str
+    away_team_id: int
+    away_team_name: str
+    away_team_abbreviation: str
+    selected_team_id: int
+    selected_team_name: str
+    selected_team_abbreviation: str
+    selected_side: SelectionSide
+    selected_model_probability: Decimal
+    prediction_created_at: datetime
+    odds_ingestion_run_id: int
+    request_started_at: datetime
+    response_received_at: datetime
+    prediction_to_receipt_seconds: Decimal
+    kickoff: datetime
+    contributor_count: int
+    exclusions: tuple[OfficialMarketEvaluationPreviewExclusion, ...]
+    consensus_no_vig_selected_probability: Decimal
+    best_price_provider: OfficialMarketEvaluationProviderDisplay
+    best_price_evidence_id: int
+    best_american_price: int
+    best_decimal_odds: Decimal
+    market_edge: Decimal
+    model_expected_value: Decimal
+    source_graph_fingerprint: str
+    market_evaluation_protocol_version: str
+    market_evaluation_protocol_fingerprint: str
+    existing_evaluation_id: int | None
+
+    @property
+    def idempotent(self) -> bool:
+        return self.existing_evaluation_id is not None
 
 
 @dataclass(frozen=True)
@@ -292,6 +354,59 @@ def evaluate_official_nfl_moneyline_market(
     raise AssertionError("unreachable evaluation retry state")
 
 
+def preview_official_nfl_moneyline_market(
+    *,
+    prediction_id: int,
+    odds_ingestion_run_id: int,
+    connection_factory: ConnectionFactory = get_connection,
+) -> OfficialMarketEvaluationPreview:
+    """Evaluate persisted sources in a read-only repeatable transaction."""
+
+    _require_positive_identifier(prediction_id, "prediction_id")
+    _require_positive_identifier(
+        odds_ingestion_run_id,
+        "odds_ingestion_run_id",
+    )
+    _load_and_verify_market_protocol()
+    connection = connection_factory()
+    try:
+        connection.set_session(
+            isolation_level="REPEATABLE READ",
+            readonly=True,
+        )
+        with connection.cursor() as cursor:
+            validate_market_evaluation_schema(cursor)
+            prediction = _load_prediction_source(
+                cursor,
+                prediction_id,
+                lock_rows=False,
+            )
+            odds_run = _load_odds_run_source(
+                cursor,
+                odds_ingestion_run_id,
+                lock_rows=False,
+            )
+            prepared, existing = _prepare_for_identity(
+                cursor,
+                prediction=prediction,
+                odds_run=odds_run,
+                lock_rows=False,
+            )
+            preview = _build_preview(
+                cursor,
+                prepared=prepared,
+                existing_evaluation_id=(existing[0] if existing else None),
+            )
+        connection.rollback()
+        return preview
+    except Exception:
+        if not connection.closed:
+            connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
 def _execute_evaluation_attempt(
     *,
     prediction_id: int,
@@ -305,6 +420,7 @@ def _execute_evaluation_attempt(
     try:
         connection.set_session(isolation_level="REPEATABLE READ")
         with connection.cursor() as cursor:
+            validate_market_evaluation_schema(cursor)
             prediction = _load_prediction_source(cursor, prediction_id)
             odds_run = _load_odds_run_source(cursor, odds_ingestion_run_id)
             evaluation_run_id = _insert_evaluation_run(
@@ -315,27 +431,13 @@ def _execute_evaluation_attempt(
                 odds_run=odds_run,
             )
             cursor.execute("SAVEPOINT official_evaluation_work")
-            existing = _load_existing_evaluation_identity(
-                cursor,
-                prediction_id=prediction_id,
-            )
             try:
-                prepared = _prepare_evaluation(
+                prepared, existing = _prepare_for_identity(
                     cursor,
                     prediction=prediction,
                     odds_run=odds_run,
-                    enforce_creation_eligibility=(existing is None),
                 )
                 if existing is not None:
-                    if existing[1] != prepared.source_graph_fingerprint:
-                        raise OfficialMarketEvaluationConflictError(
-                            "source_graph_conflict",
-                            "The official evaluation identity already has a "
-                            "different immutable source graph.",
-                            source_graph_fingerprint=(
-                                prepared.source_graph_fingerprint
-                            ),
-                        )
                     _complete_evaluation_run(
                         cursor,
                         evaluation_run_id=evaluation_run_id,
@@ -443,11 +545,47 @@ def _load_and_verify_market_protocol() -> dict[str, Any]:
     return protocol
 
 
-def _load_prediction_source(cursor: Any, prediction_id: int) -> _PredictionSource:
+def validate_market_evaluation_schema(cursor: Any) -> int:
+    """Fail before evaluation work when migration 031 is unavailable."""
+
+    cursor.execute("SELECT MAX(version) FROM schema_migrations")
+    highest = cursor.fetchone()[0]
+    if highest is None or int(highest) < MINIMUM_SCHEMA_VERSION:
+        raise OfficialMarketEvaluationError(
+            "schema_incompatible",
+            "Official NFL market evaluation requires schema migration "
+            f"{MINIMUM_SCHEMA_VERSION:03d}; highest applied is {highest!r}.",
+        )
+    cursor.execute(
+        """
+        SELECT
+            to_regclass('public.nfl_moneyline_market_evaluation_runs'),
+            to_regclass('public.nfl_moneyline_market_evaluations'),
+            to_regclass(
+                'public.nfl_moneyline_market_evaluation_contributors'
+            ),
+            to_regclass('public.nfl_moneyline_market_evaluation_exclusions')
+        """
+    )
+    if any(value is None for value in cursor.fetchone()):
+        raise OfficialMarketEvaluationError(
+            "schema_incompatible",
+            "Official NFL market evaluation requires all migration-031 tables.",
+        )
+    return int(highest)
+
+
+def _load_prediction_source(
+    cursor: Any,
+    prediction_id: int,
+    *,
+    lock_rows: bool = True,
+) -> _PredictionSource:
+    prediction_lock = " FOR UPDATE" if lock_rows else ""
     cursor.execute(
         "SELECT nfl_moneyline_game_prediction_id "
         "FROM nfl_moneyline_game_predictions "
-        "WHERE nfl_moneyline_game_prediction_id = %s FOR UPDATE",
+        "WHERE nfl_moneyline_game_prediction_id = %s" + prediction_lock,
         (prediction_id,),
     )
     if cursor.fetchone() is None:
@@ -455,6 +593,7 @@ def _load_prediction_source(cursor: Any, prediction_id: int) -> _PredictionSourc
             "prediction_not_found",
             "The NFL Moneyline prediction does not exist.",
         )
+    source_lock = " FOR SHARE OF run, nfl, game" if lock_rows else ""
     cursor.execute(
         """
         SELECT
@@ -496,8 +635,7 @@ def _load_prediction_source(cursor: Any, prediction_id: int) -> _PredictionSourc
         JOIN nfl_games AS nfl ON nfl.game_id = prediction.game_id
         JOIN games AS game ON game.game_id = prediction.game_id
         WHERE prediction.nfl_moneyline_game_prediction_id = %s
-        FOR SHARE OF run, nfl, game
-        """,
+        """ + source_lock,
         (prediction_id,),
     )
     row = cursor.fetchone()
@@ -509,15 +647,20 @@ def _load_prediction_source(cursor: Any, prediction_id: int) -> _PredictionSourc
     return _PredictionSource(*row)
 
 
-def _load_odds_run_source(cursor: Any, odds_run_id: int) -> _OddsRunSource:
+def _load_odds_run_source(
+    cursor: Any,
+    odds_run_id: int,
+    *,
+    lock_rows: bool = True,
+) -> _OddsRunSource:
+    source_lock = " FOR SHARE" if lock_rows else ""
     cursor.execute(
         """
         SELECT odds_ingestion_run_id, sport, source_name, snapshot_role,
                status, request_started_at, response_received_at
         FROM odds_ingestion_runs
         WHERE odds_ingestion_run_id = %s
-        FOR SHARE
-        """,
+        """ + source_lock,
         (odds_run_id,),
     )
     row = cursor.fetchone()
@@ -529,12 +672,185 @@ def _load_odds_run_source(cursor: Any, odds_run_id: int) -> _OddsRunSource:
     return _OddsRunSource(*row)
 
 
+def _prepare_for_identity(
+    cursor: Any,
+    *,
+    prediction: _PredictionSource,
+    odds_run: _OddsRunSource,
+    lock_rows: bool = True,
+) -> tuple[_PreparedEvaluation, tuple[int, str] | None]:
+    existing = _load_existing_evaluation_identity(
+        cursor,
+        prediction_id=prediction.prediction_id,
+    )
+    prepared = _prepare_evaluation(
+        cursor,
+        prediction=prediction,
+        odds_run=odds_run,
+        enforce_creation_eligibility=(existing is None),
+        lock_rows=lock_rows,
+    )
+    if existing is not None and existing[1] != prepared.source_graph_fingerprint:
+        raise OfficialMarketEvaluationConflictError(
+            "source_graph_conflict",
+            "The official evaluation identity already has a different "
+            "immutable source graph.",
+            source_graph_fingerprint=prepared.source_graph_fingerprint,
+        )
+    return prepared, existing
+
+
+def _build_preview(
+    cursor: Any,
+    *,
+    prepared: _PreparedEvaluation,
+    existing_evaluation_id: int | None,
+) -> OfficialMarketEvaluationPreview:
+    prediction = prepared.prediction
+    odds_run = prepared.odds_run
+    request_started_at = _require_timestamp(odds_run.request_started_at)
+    response_received_at = _require_timestamp(odds_run.response_received_at)
+    team_display = _load_team_display(
+        cursor,
+        team_ids=(prediction.home_team_id, prediction.away_team_id),
+    )
+    provider_ids = tuple(sorted({
+        prepared.best_provider_identity_id,
+        *(item.provider_identity_id for item in prepared.exclusions),
+    }))
+    provider_display = _load_provider_display(
+        cursor,
+        provider_identity_ids=provider_ids,
+    )
+    home_name, home_abbreviation = team_display[prediction.home_team_id]
+    away_name, away_abbreviation = team_display[prediction.away_team_id]
+    selected_name, selected_abbreviation = team_display[
+        prediction.selected_team_id
+    ]
+    return OfficialMarketEvaluationPreview(
+        prediction_id=prediction.prediction_id,
+        prediction_run_id=prediction.prediction_run_id,
+        prediction_protocol_version=prediction.protocol_version,
+        prediction_protocol_fingerprint=PREDICTION_PROTOCOL_FINGERPRINT,
+        selected_route=prediction.selected_route,
+        routing_contract_version=prediction.routing_contract_version,
+        model_specification_version=prediction.model_specification_version,
+        feature_schema_version=prediction.feature_schema_version,
+        game_id=prediction.game_id,
+        home_team_id=prediction.home_team_id,
+        home_team_name=home_name,
+        home_team_abbreviation=home_abbreviation,
+        away_team_id=prediction.away_team_id,
+        away_team_name=away_name,
+        away_team_abbreviation=away_abbreviation,
+        selected_team_id=prediction.selected_team_id,
+        selected_team_name=selected_name,
+        selected_team_abbreviation=selected_abbreviation,
+        selected_side=prediction.selected_side,
+        selected_model_probability=prediction.selected_model_probability,
+        prediction_created_at=prediction.prediction_created_at,
+        odds_ingestion_run_id=odds_run.odds_ingestion_run_id,
+        request_started_at=request_started_at,
+        response_received_at=response_received_at,
+        prediction_to_receipt_seconds=Decimal(str(
+            (response_received_at - prediction.prediction_created_at)
+            .total_seconds()
+        )),
+        kickoff=prediction.target_kickoff,
+        contributor_count=len(prepared.contributors),
+        exclusions=tuple(
+            OfficialMarketEvaluationPreviewExclusion(
+                provider=provider_display[item.provider_identity_id],
+                reason_code=item.reason_code,
+            )
+            for item in prepared.exclusions
+        ),
+        consensus_no_vig_selected_probability=(
+            prepared.consensus_selected_probability
+        ),
+        best_price_provider=provider_display[
+            prepared.best_provider_identity_id
+        ],
+        best_price_evidence_id=prepared.best_evidence_id,
+        best_american_price=prepared.best_american_price,
+        best_decimal_odds=prepared.best_decimal_odds,
+        market_edge=prepared.market_edge,
+        model_expected_value=prepared.model_expected_value,
+        source_graph_fingerprint=prepared.source_graph_fingerprint,
+        market_evaluation_protocol_version=(
+            MARKET_EVALUATION_PROTOCOL_VERSION
+        ),
+        market_evaluation_protocol_fingerprint=(
+            MARKET_EVALUATION_PROTOCOL_FINGERPRINT
+        ),
+        existing_evaluation_id=existing_evaluation_id,
+    )
+
+
+def _load_team_display(
+    cursor: Any,
+    *,
+    team_ids: tuple[int, ...],
+) -> dict[int, tuple[str, str]]:
+    cursor.execute(
+        """
+        SELECT profile.team_id, team.team_name,
+               profile.current_abbreviation
+        FROM nfl_team_profiles AS profile
+        JOIN teams AS team ON team.team_id = profile.team_id
+        WHERE profile.team_id = ANY(%s)
+        """,
+        (list(team_ids),),
+    )
+    display = {
+        int(team_id): (str(team_name), str(abbreviation))
+        for team_id, team_name, abbreviation in cursor.fetchall()
+    }
+    if set(display) != set(team_ids):
+        raise OfficialMarketEvaluationError(
+            "prediction_source_incomplete",
+            "The canonical NFL team display identity is incomplete.",
+        )
+    return display
+
+
+def _load_provider_display(
+    cursor: Any,
+    *,
+    provider_identity_ids: tuple[int, ...],
+) -> dict[int, OfficialMarketEvaluationProviderDisplay]:
+    cursor.execute(
+        """
+        SELECT identity.sportsbook_provider_identity_id,
+               identity.provider_name,
+               identity.provider_bookmaker_key,
+               sportsbook.name
+        FROM sportsbook_provider_identities AS identity
+        JOIN sportsbooks AS sportsbook
+          ON sportsbook.sportsbook_id = identity.sportsbook_id
+        WHERE identity.sportsbook_provider_identity_id = ANY(%s)
+        """,
+        (list(provider_identity_ids),),
+    )
+    display = {
+        int(row[0]): OfficialMarketEvaluationProviderDisplay(*row)
+        for row in cursor.fetchall()
+    }
+    if set(display) != set(provider_identity_ids):
+        raise OfficialMarketEvaluationError(
+            "source_graph_identity_conflict",
+            "The sportsbook provider display identity is incomplete.",
+        )
+    return display
+
+
 def _prepare_evaluation(
     cursor: Any,
     *,
     prediction: _PredictionSource,
     odds_run: _OddsRunSource,
     enforce_creation_eligibility: bool,
+    lock_rows: bool,
 ) -> _PreparedEvaluation:
     _validate_prediction_source(
         prediction,
@@ -556,6 +872,7 @@ def _prepare_evaluation(
         cursor,
         game_id=prediction.game_id,
         odds_run_id=odds_run.odds_ingestion_run_id,
+        lock_rows=lock_rows,
     )
     contributors, exclusions = _select_contributors(
         prediction=prediction,
@@ -782,7 +1099,9 @@ def _load_official_evidence(
     *,
     game_id: int,
     odds_run_id: int,
+    lock_rows: bool,
 ) -> tuple[_EvidenceSource, ...]:
+    source_lock = " FOR SHARE" if lock_rows else ""
     cursor.execute(
         """
         SELECT nfl_official_pregame_evidence_id,
@@ -799,8 +1118,7 @@ def _load_official_evidence(
         WHERE game_id = %s AND odds_ingestion_run_id = %s
         ORDER BY sportsbook_provider_identity_id,
                  nfl_official_pregame_evidence_id
-        FOR SHARE
-        """,
+        """ + source_lock,
         (game_id, odds_run_id),
     )
     return tuple(_EvidenceSource(*row) for row in cursor.fetchall())
