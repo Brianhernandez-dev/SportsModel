@@ -94,9 +94,14 @@ Expected completed state:
 
 ## Dashboard
 
-Run from `D:\SportsModelDashboard`:
+Run from `D:\SportsModel`:
 
     powershell.exe -ExecutionPolicy Bypass -File .\scripts\run_dashboard.ps1
+
+The production dashboard is normally owned by the repository-managed Windows
+scheduled task rather than an interactive shell. Its boot triggers, process
+ownership, health contract, controlled restart procedure, and reboot validation
+are documented in [Dashboard Boot and Recovery](dashboard_recovery.md).
 
 The Moneyline Live page displays predictions, evaluations, paper candidates, settlements, record, profit, ROI, model EV, market edge, and drawdown.
 
