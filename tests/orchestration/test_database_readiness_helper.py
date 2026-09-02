@@ -390,12 +390,18 @@ class _Cursor:
     def __exit__(self, *arguments: object) -> None:
         del arguments
 
-    def execute(self, query: str) -> None:
+    def execute(
+        self,
+        query: str,
+        parameters: tuple[int, ...] | None = None,
+    ) -> None:
         assert "current_database()" in query
         assert "pg_is_in_recovery()" in query
         assert "transaction_read_only" in query
         assert "MAX(version)" in query
         assert "schema_migrations" in query
+        assert "WHERE version = %s" in query
+        assert parameters == (MINIMUM_COMPATIBLE_PRODUCTION_MIGRATION,)
 
     def fetchone(self) -> tuple[Any, ...]:
         return self._row
@@ -423,8 +429,13 @@ class _FailingCursor:
     def __exit__(self, *arguments: object) -> None:
         del arguments
 
-    def execute(self, query: str) -> None:
+    def execute(
+        self,
+        query: str,
+        parameters: tuple[int, ...] | None = None,
+    ) -> None:
         del query
+        del parameters
         raise self._error
 
 
@@ -469,6 +480,7 @@ def test_probe_accepts_writable_production_primary() -> None:
             "off",
             "off",
             MINIMUM_COMPATIBLE_PRODUCTION_MIGRATION,
+            True,
         )
     )
 
@@ -478,7 +490,7 @@ def test_probe_accepts_writable_production_primary() -> None:
 
 def test_probe_accepts_schema_newer_than_minimum() -> None:
     result = _result_for_row(
-        ("sportsmodel", 5432, False, "off", "off", 31)
+        ("sportsmodel", 5432, False, "off", "off", 31, True)
     )
 
     assert result.exit_code == READY_EXIT_CODE
@@ -488,7 +500,7 @@ def test_probe_accepts_schema_newer_than_minimum() -> None:
 
 def test_probe_rejects_schema_below_minimum_as_permanent() -> None:
     result = _result_for_row(
-        ("sportsmodel", 5432, False, "off", "off", 26)
+        ("sportsmodel", 5432, False, "off", "off", 26, False)
     )
 
     assert result.exit_code == PERMANENT_EXIT_CODE
@@ -499,7 +511,7 @@ def test_probe_rejects_schema_below_minimum_as_permanent() -> None:
 
 def test_probe_fails_closed_when_schema_version_is_unknown() -> None:
     result = _result_for_row(
-        ("sportsmodel", 5432, False, "off", "off", None)
+        ("sportsmodel", 5432, False, "off", "off", None, False)
     )
 
     assert result.exit_code == PERMANENT_EXIT_CODE
@@ -508,19 +520,31 @@ def test_probe_fails_closed_when_schema_version_is_unknown() -> None:
     assert "before live workflow or provider work began" in result.message
 
 
+def test_probe_rejects_missing_required_migration_despite_newer_max() -> None:
+    result = _result_for_row(
+        ("sportsmodel", 5432, False, "off", "off", 31, False)
+    )
+
+    assert result.exit_code == PERMANENT_EXIT_CODE
+    assert "migration 031" in result.message
+    assert "migration 029" in result.message
+    assert "absent" in result.message
+    assert "before live workflow or provider work began" in result.message
+
+
 @pytest.mark.parametrize(
     ("row", "message"),
     [
         (
-            ("sportsmodel", 5432, True, "off", "off", 29),
+            ("sportsmodel", 5432, True, "off", "off", 29, True),
             "recovery replica",
         ),
         (
-            ("sportsmodel", 5432, False, "on", "off", 29),
+            ("sportsmodel", 5432, False, "on", "off", 29, True),
             "transaction state is read-only",
         ),
         (
-            ("sportsmodel", 5432, False, "off", "on", 29),
+            ("sportsmodel", 5432, False, "off", "on", 29, True),
             "server default is read-only",
         ),
     ],

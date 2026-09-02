@@ -164,8 +164,14 @@ def check_database_readiness(
                     (
                         SELECT MAX(version)
                         FROM schema_migrations
+                    ),
+                    EXISTS (
+                        SELECT 1
+                        FROM schema_migrations
+                        WHERE version = %s
                     );
-                """
+                """,
+                (MINIMUM_COMPATIBLE_PRODUCTION_MIGRATION,),
             )
             row = cursor.fetchone()
     except psycopg2.OperationalError as error:
@@ -201,7 +207,7 @@ def check_database_readiness(
     finally:
         connection.close()
 
-    if row is None or len(row) != 6:
+    if row is None or len(row) != 7:
         return DatabaseReadinessProbeResult(
             exit_code=PERMANENT_EXIT_CODE,
             message=(
@@ -220,6 +226,7 @@ def check_database_readiness(
         transaction_read_only,
         default_transaction_read_only,
         observed_migration,
+        required_migration_present,
     ) = row
 
     if actual_database != expected_database:
@@ -255,6 +262,7 @@ def check_database_readiness(
     if (
         isinstance(observed_migration, bool)
         or not isinstance(observed_migration, int)
+        or not isinstance(required_migration_present, bool)
     ):
         return DatabaseReadinessProbeResult(
             exit_code=PERMANENT_EXIT_CODE,
@@ -274,6 +282,18 @@ def check_database_readiness(
                 f"{observed_migration:03d}; required minimum compatible "
                 "migration "
                 f"{MINIMUM_COMPATIBLE_PRODUCTION_MIGRATION:03d}. "
+                f"{_COMPATIBILITY_REFUSAL_MESSAGE}"
+            ),
+        )
+
+    if not required_migration_present:
+        return DatabaseReadinessProbeResult(
+            exit_code=PERMANENT_EXIT_CODE,
+            message=(
+                "Observed production schema migration "
+                f"{observed_migration:03d}, but required migration "
+                f"{MINIMUM_COMPATIBLE_PRODUCTION_MIGRATION:03d} is "
+                "absent. "
                 f"{_COMPATIBILITY_REFUSAL_MESSAGE}"
             ),
         )
