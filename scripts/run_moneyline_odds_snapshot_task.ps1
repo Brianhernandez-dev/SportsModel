@@ -33,6 +33,10 @@ $SnapshotWrapperPath = Join-Path `
     $ProjectRoot `
     "scripts\run_moneyline_odds_snapshot.ps1"
 
+$ScheduledExecutionGuardPath = Join-Path `
+    $ProjectRoot `
+    "scripts\assert_moneyline_scheduled_execution.ps1"
+
 $EarlyEntryCapturePath = Join-Path `
     $ProjectRoot `
     "scripts\capture_moneyline_early_entry.py"
@@ -84,6 +88,7 @@ try {
         $PythonPath,
         $ResolverPath,
         $SnapshotWrapperPath,
+        $ScheduledExecutionGuardPath,
         $EarlyEntryCapturePath,
         $SourcePath,
         $EnvironmentPath
@@ -98,6 +103,22 @@ try {
     $env:PYTHONPATH = $SourcePath
     $env:SPORTSMODEL_ENV_FILE = $EnvironmentPath
     $env:PYTHONUNBUFFERED = "1"
+
+    if ((-not $ValidateOnly) -and (-not $DryRun)) {
+        . $ScheduledExecutionGuardPath
+
+        $ScheduledExecutionLogger = {
+            param([string]$Message)
+            Write-Log $Message
+        }
+
+        Assert-MoneylineScheduledExecutionValid `
+            -PythonPath $PythonPath `
+            -SourcePath $SourcePath `
+            -TaskIdentity "moneyline_odds_snapshot" `
+            -SnapshotRole $SnapshotRole `
+            -Logger $ScheduledExecutionLogger
+    }
 
     $TargetDateOutput = & $PythonPath `
         $ResolverPath `
@@ -202,6 +223,13 @@ try {
     }
 
     if ($SnapshotRole -eq "late_night") {
+        Assert-MoneylineScheduledExecutionValid `
+            -PythonPath $PythonPath `
+            -SourcePath $SourcePath `
+            -TaskIdentity "moneyline_odds_snapshot" `
+            -SnapshotRole $SnapshotRole `
+            -Logger $ScheduledExecutionLogger
+
         Write-Log "Starting Early Entry capture for $TargetDate."
 
         $CaptureOutput = & $PythonPath `

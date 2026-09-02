@@ -26,6 +26,33 @@ Use:
 
     D:\SportsModel\.venv\Scripts\python.exe
 
+### Scheduled execution validity
+
+Production wrappers fail closed when Task Scheduler starts an MLB writer
+outside its intended Pacific-time start window. The valid start window is
+half-open and lasts one hour from the scheduled trigger: `[trigger, trigger +
+60 minutes)`. This admits normal start jitter and the configured retries at
+15, 30, and 45 minutes while refusing broader `StartWhenAvailable` catch-up.
+
+| Writer | Pacific trigger | Intended target |
+| --- | --- | --- |
+| Morning snapshot | 6:00 AM | Current Pacific date |
+| Postgame | 7:15 AM and 1:15 PM | Previous Pacific date |
+| Pregame | 8:00 AM | Current Pacific date |
+| Afternoon snapshot | 12:00 PM | Current Pacific date |
+| Opening snapshot | 6:30 PM | Next Pacific date |
+| Tomorrow Preview | 6:45 PM | Next Pacific date |
+| Evening snapshot | 8:30 PM | Next Pacific date |
+| Late Night snapshot | 11:00 PM | Next Pacific date |
+
+The wrappers check once before readiness or task-dependency waits and again
+immediately before provider or workflow execution. An expired run exits
+nonzero, records its intended schedule, target date, validity window, and
+refusal reason in the task log, and must remain a point-in-time gap. Do not
+backfill an expired snapshot or prediction with later evidence. `near_close`
+remains an explicitly invoked, game-relative capture and is not one of these
+fixed scheduled roles.
+
 ### 1. Synchronize the schedule
 
     D:\SportsModel\.venv\Scripts\python.exe .\scripts\sync_mlb_schedule.py --start-date YYYY-MM-DD --days-ahead 7

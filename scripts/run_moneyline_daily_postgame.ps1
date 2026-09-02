@@ -10,6 +10,7 @@ $PythonPath = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
 $ScriptPath = Join-Path $ProjectRoot "scripts\run_moneyline_daily_postgame.py"
 $SourcePath = Join-Path $ProjectRoot "src"
 $DatabaseReadinessPath = Join-Path $ProjectRoot "scripts\wait_for_sportsmodel_database.ps1"
+$ScheduledExecutionGuardPath = Join-Path $ProjectRoot "scripts\assert_moneyline_scheduled_execution.ps1"
 $LogDirectory = Join-Path $ProjectRoot "logs\moneyline_daily_postgame"
 
 if (-not (Test-Path $LogDirectory)) {
@@ -61,6 +62,13 @@ try {
 
     if (-not (Test-Path $DatabaseReadinessPath)) {
         throw "Database readiness helper was not found: $DatabaseReadinessPath"
+    }
+
+    if (-not (Test-Path $ScheduledExecutionGuardPath)) {
+        throw (
+            "Scheduled execution guard was not found: " +
+            $ScheduledExecutionGuardPath
+        )
     }
 
     if ($ValidateOnly -and $DryRun) {
@@ -135,6 +143,18 @@ try {
     }
 
     . $DatabaseReadinessPath
+    . $ScheduledExecutionGuardPath
+
+    $ScheduledExecutionLogger = {
+        param([string]$Message)
+        Write-Log $Message
+    }
+
+    Assert-MoneylineScheduledExecutionValid `
+        -PythonPath $PythonPath `
+        -SourcePath $SourcePath `
+        -TaskIdentity "moneyline_postgame" `
+        -Logger $ScheduledExecutionLogger
 
     Write-Log "Checking SportsModel database readiness."
 
@@ -151,6 +171,12 @@ try {
         -Logger $DatabaseLogger
 
     Write-Log "Database readiness check completed."
+
+    Assert-MoneylineScheduledExecutionValid `
+        -PythonPath $PythonPath `
+        -SourcePath $SourcePath `
+        -TaskIdentity "moneyline_postgame" `
+        -Logger $ScheduledExecutionLogger
 
     & $PythonPath $ScriptPath 2>&1 |
         ForEach-Object {

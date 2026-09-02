@@ -14,6 +14,9 @@ $PreviewScriptPath = Join-Path `
 $PreviewModulePath = Join-Path `
     $SourcePath `
     "sportsmodel\predictions\moneyline_preview_cli.py"
+$ScheduledExecutionGuardPath = Join-Path `
+    $ProjectRoot `
+    "scripts\assert_moneyline_scheduled_execution.ps1"
 $OpeningTaskName = "SportsModel - Moneyline Opening Snapshot"
 $LogDirectory = Join-Path `
     $ProjectRoot `
@@ -61,7 +64,8 @@ try {
         $SourcePath,
         $EnvironmentPath,
         $PreviewScriptPath,
-        $PreviewModulePath
+        $PreviewModulePath,
+        $ScheduledExecutionGuardPath
     )) {
         if (-not (Test-Path $RequiredPath)) {
             throw "Required path was not found: $RequiredPath"
@@ -109,6 +113,19 @@ try {
         exit 0
     }
 
+    . $ScheduledExecutionGuardPath
+
+    $ScheduledExecutionLogger = {
+        param([string]$Message)
+        Write-Log $Message
+    }
+
+    Assert-MoneylineScheduledExecutionValid `
+        -PythonPath $PythonPath `
+        -SourcePath $SourcePath `
+        -TaskIdentity "moneyline_tomorrow_preview" `
+        -Logger $ScheduledExecutionLogger
+
     Write-Log "Checking opening snapshot task."
 
     for ($Attempt = 1; $Attempt -le 20; $Attempt++) {
@@ -148,6 +165,13 @@ try {
     }
 
     Write-Log "Opening snapshot verified successfully."
+
+    Assert-MoneylineScheduledExecutionValid `
+        -PythonPath $PythonPath `
+        -SourcePath $SourcePath `
+        -TaskIdentity "moneyline_tomorrow_preview" `
+        -Logger $ScheduledExecutionLogger
+
     Write-Log "Starting Tomorrow Preview generation."
 
     $PreviewOutput = & $PythonPath `
