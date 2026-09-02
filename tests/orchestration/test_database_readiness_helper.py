@@ -11,6 +11,7 @@ import psycopg2
 import pytest
 
 from sportsmodel.database.readiness_probe import (
+    MINIMUM_COMPATIBLE_PRODUCTION_MIGRATION,
     PERMANENT_EXIT_CODE,
     READY_EXIT_CODE,
     TRANSIENT_EXIT_CODE,
@@ -48,7 +49,7 @@ if exist "%state%" (
 set /a attempt+=1
 >"%state%" echo !attempt!
 if !attempt! LSS %TEST_DB_PROBE_SUCCEEDS_AFTER% (
-    >&2 echo Native PostgreSQL is temporarily unavailable.
+    >&2 echo %TEST_DB_PROBE_FAILURE_MESSAGE%
     exit /b %TEST_DB_PROBE_FAILURE_EXIT_CODE%
 )
 echo Native PostgreSQL production primary is ready.
@@ -146,6 +147,10 @@ def _run_readiness(
     poll_seconds: int = 1,
     wrong_listener_owner: bool = False,
     service_running: bool = True,
+    failure_message: str = (
+        "Native PostgreSQL is temporarily unavailable."
+    ),
+    workflow_marker_path: Path | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], int, float]:
     fake_python = _write_fake_python(tmp_path)
     source_path = tmp_path / "src"
@@ -154,6 +159,14 @@ def _run_readiness(
     helper_path = str(HELPER_PATH).replace("'", "''")
     python_path = str(fake_python).replace("'", "''")
     source = str(source_path).replace("'", "''")
+    if workflow_marker_path is None:
+        workflow_action = ""
+    else:
+        marker = str(workflow_marker_path).replace("'", "''")
+        workflow_action = (
+            f"Set-Content -LiteralPath '{marker}' "
+            "-Value 'workflow executed'"
+        )
     command = rf"""
 $ErrorActionPreference = "Stop"
 {_identity_mocks(
@@ -167,6 +180,7 @@ try {{
         -SourcePath '{source}' `
         -TimeoutSeconds {timeout_seconds} `
         -PollSeconds {poll_seconds}
+    {workflow_action}
     exit 0
 }}
 catch {{
@@ -180,6 +194,7 @@ catch {{
             "TEST_DB_PROBE_STATE": str(state_path),
             "TEST_DB_PROBE_SUCCEEDS_AFTER": str(succeeds_after),
             "TEST_DB_PROBE_FAILURE_EXIT_CODE": str(failure_exit_code),
+            "TEST_DB_PROBE_FAILURE_MESSAGE": failure_message,
         }
     )
     started_at = time.monotonic()
@@ -287,6 +302,31 @@ def test_permanent_database_failure_does_not_retry(tmp_path: Path) -> None:
     assert "No database service was started automatically" in result.stderr
 
 
+def test_schema_rejection_prevents_simulated_workflow_execution(
+    tmp_path: Path,
+) -> None:
+    workflow_marker = tmp_path / "workflow_executed.txt"
+    result, attempts, _ = _run_readiness(
+        tmp_path,
+        succeeds_after=100,
+        failure_exit_code=PERMANENT_EXIT_CODE,
+        timeout_seconds=5,
+        failure_message=(
+            "Observed production schema migration 026; required minimum "
+            "compatible migration 029. Execution was refused before "
+            "live workflow or provider work began."
+        ),
+        workflow_marker_path=workflow_marker,
+    )
+
+    assert result.returncode == 1
+    assert attempts == 1
+    assert not workflow_marker.exists()
+    assert "migration 026" in result.stderr
+    assert "migration 029" in result.stderr
+    assert "before live workflow or provider work began" in result.stderr
+
+
 def test_helper_has_no_docker_or_service_control_fallback() -> None:
     helper = HELPER_PATH.read_text(encoding="utf-8-sig").lower()
 
@@ -318,8 +358,10 @@ def test_production_callers_fail_nonzero_when_readiness_throws(
     ).read_text(encoding="utf-8-sig")
     readiness_call = wrapper.index("Wait-SportsModelDatabaseReady")
     catch_block = wrapper.index("catch {", readiness_call)
+    workflow_execution = wrapper.index("& $PythonPath", readiness_call)
 
     assert "exit 1" in wrapper[catch_block:]
+    assert readiness_call < workflow_execution
 
 
 @pytest.mark.parametrize(
@@ -352,6 +394,8 @@ class _Cursor:
         assert "current_database()" in query
         assert "pg_is_in_recovery()" in query
         assert "transaction_read_only" in query
+        assert "MAX(version)" in query
+        assert "schema_migrations" in query
 
     def fetchone(self) -> tuple[Any, ...]:
         return self._row
@@ -417,24 +461,66 @@ def _result_for_row(row: tuple[Any, ...]):
 
 
 def test_probe_accepts_writable_production_primary() -> None:
-    result = _result_for_row(("sportsmodel", 5432, False, "off", "off"))
+    result = _result_for_row(
+        (
+            "sportsmodel",
+            5432,
+            False,
+            "off",
+            "off",
+            MINIMUM_COMPATIBLE_PRODUCTION_MIGRATION,
+        )
+    )
 
     assert result.exit_code == READY_EXIT_CODE
+    assert "migration 029" in result.message
+
+
+def test_probe_accepts_schema_newer_than_minimum() -> None:
+    result = _result_for_row(
+        ("sportsmodel", 5432, False, "off", "off", 31)
+    )
+
+    assert result.exit_code == READY_EXIT_CODE
+    assert "migration 031" in result.message
+    assert "migration 029" in result.message
+
+
+def test_probe_rejects_schema_below_minimum_as_permanent() -> None:
+    result = _result_for_row(
+        ("sportsmodel", 5432, False, "off", "off", 26)
+    )
+
+    assert result.exit_code == PERMANENT_EXIT_CODE
+    assert "migration 026" in result.message
+    assert "migration 029" in result.message
+    assert "before live workflow or provider work began" in result.message
+
+
+def test_probe_fails_closed_when_schema_version_is_unknown() -> None:
+    result = _result_for_row(
+        ("sportsmodel", 5432, False, "off", "off", None)
+    )
+
+    assert result.exit_code == PERMANENT_EXIT_CODE
+    assert "migration unavailable" in result.message
+    assert "migration 029" in result.message
+    assert "before live workflow or provider work began" in result.message
 
 
 @pytest.mark.parametrize(
     ("row", "message"),
     [
         (
-            ("sportsmodel", 5432, True, "off", "off"),
+            ("sportsmodel", 5432, True, "off", "off", 29),
             "recovery replica",
         ),
         (
-            ("sportsmodel", 5432, False, "on", "off"),
+            ("sportsmodel", 5432, False, "on", "off", 29),
             "transaction state is read-only",
         ),
         (
-            ("sportsmodel", 5432, False, "off", "on"),
+            ("sportsmodel", 5432, False, "off", "on", 29),
             "server default is read-only",
         ),
     ],

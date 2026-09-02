@@ -14,6 +14,11 @@ from sportsmodel.database.connection import get_connection
 READY_EXIT_CODE = 0
 TRANSIENT_EXIT_CODE = 10
 PERMANENT_EXIT_CODE = 20
+MINIMUM_COMPATIBLE_PRODUCTION_MIGRATION = 29
+
+_COMPATIBILITY_REFUSAL_MESSAGE = (
+    "Execution was refused before live workflow or provider work began."
+)
 
 _TRANSIENT_SQLSTATES = {
     "57P03",  # cannot_connect_now
@@ -155,7 +160,11 @@ def check_database_readiness(
                     inet_server_port(),
                     pg_is_in_recovery(),
                     current_setting('transaction_read_only'),
-                    current_setting('default_transaction_read_only');
+                    current_setting('default_transaction_read_only'),
+                    (
+                        SELECT MAX(version)
+                        FROM schema_migrations
+                    );
                 """
             )
             row = cursor.fetchone()
@@ -172,22 +181,36 @@ def check_database_readiness(
         return DatabaseReadinessProbeResult(
             exit_code=PERMANENT_EXIT_CODE,
             message=(
-                "PostgreSQL connected but rejected the readiness query "
-                "with a non-transient error."
+                "Observed production schema migration unavailable: "
+                "PostgreSQL rejected the readiness query. "
+                "Required minimum compatible migration "
+                f"{MINIMUM_COMPATIBLE_PRODUCTION_MIGRATION:03d}. "
+                f"{_COMPATIBILITY_REFUSAL_MESSAGE}"
             ),
         )
     except Exception:
         return DatabaseReadinessProbeResult(
             exit_code=PERMANENT_EXIT_CODE,
-            message="PostgreSQL connected but the readiness query failed.",
+            message=(
+                "Observed production schema migration unavailable. "
+                "Required minimum compatible migration "
+                f"{MINIMUM_COMPATIBLE_PRODUCTION_MIGRATION:03d}. "
+                f"{_COMPATIBILITY_REFUSAL_MESSAGE}"
+            ),
         )
     finally:
         connection.close()
 
-    if row is None or len(row) != 5:
+    if row is None or len(row) != 6:
         return DatabaseReadinessProbeResult(
             exit_code=PERMANENT_EXIT_CODE,
-            message="PostgreSQL returned an invalid readiness response.",
+            message=(
+                "Observed production schema migration unavailable from "
+                "the PostgreSQL readiness response. "
+                "Required minimum compatible migration "
+                f"{MINIMUM_COMPATIBLE_PRODUCTION_MIGRATION:03d}. "
+                f"{_COMPATIBILITY_REFUSAL_MESSAGE}"
+            ),
         )
 
     (
@@ -196,6 +219,7 @@ def check_database_readiness(
         is_in_recovery,
         transaction_read_only,
         default_transaction_read_only,
+        observed_migration,
     ) = row
 
     if actual_database != expected_database:
@@ -228,9 +252,41 @@ def check_database_readiness(
             message="Connected PostgreSQL server default is read-only.",
         )
 
+    if (
+        isinstance(observed_migration, bool)
+        or not isinstance(observed_migration, int)
+    ):
+        return DatabaseReadinessProbeResult(
+            exit_code=PERMANENT_EXIT_CODE,
+            message=(
+                "Observed production schema migration unavailable. "
+                "Required minimum compatible migration "
+                f"{MINIMUM_COMPATIBLE_PRODUCTION_MIGRATION:03d}. "
+                f"{_COMPATIBILITY_REFUSAL_MESSAGE}"
+            ),
+        )
+
+    if observed_migration < MINIMUM_COMPATIBLE_PRODUCTION_MIGRATION:
+        return DatabaseReadinessProbeResult(
+            exit_code=PERMANENT_EXIT_CODE,
+            message=(
+                "Observed production schema migration "
+                f"{observed_migration:03d}; required minimum compatible "
+                "migration "
+                f"{MINIMUM_COMPATIBLE_PRODUCTION_MIGRATION:03d}. "
+                f"{_COMPATIBILITY_REFUSAL_MESSAGE}"
+            ),
+        )
+
     return DatabaseReadinessProbeResult(
         exit_code=READY_EXIT_CODE,
-        message="Native PostgreSQL production primary is ready.",
+        message=(
+            "Native PostgreSQL production primary is ready. "
+            "Observed production schema migration "
+            f"{observed_migration:03d}; required minimum compatible "
+            "migration "
+            f"{MINIMUM_COMPATIBLE_PRODUCTION_MIGRATION:03d}."
+        ),
     )
 
 
