@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+from collections.abc import Callable
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -146,6 +147,71 @@ def test_execution_at_exclusive_maximum_is_expired() -> None:
     assert "must not be backfilled" in result.reason
 
 
+def test_semantic_deadline_caps_operational_window() -> None:
+    semantic_deadline = _pacific_time(2026, 9, 1, 8, 20)
+
+    before_deadline = evaluate_scheduled_execution(
+        task_identity=MONEYLINE_PREGAME_TASK,
+        current_time=_pacific_time(2026, 9, 1, 8, 19, 59),
+        semantic_deadline=semantic_deadline,
+    )
+    at_deadline = evaluate_scheduled_execution(
+        task_identity=MONEYLINE_PREGAME_TASK,
+        current_time=semantic_deadline,
+        semantic_deadline=semantic_deadline,
+    )
+
+    assert before_deadline.valid
+    assert before_deadline.latest_valid_start_time == semantic_deadline
+    assert before_deadline.operational_latest_valid_start_time == (
+        _pacific_time(2026, 9, 1, 9, 0)
+    )
+    assert at_deadline.valid is False
+    assert "semantic point-in-time deadline" in at_deadline.reason
+
+
+def test_later_semantic_deadline_does_not_extend_operational_window() -> None:
+    result = evaluate_scheduled_execution(
+        task_identity=MONEYLINE_PREGAME_TASK,
+        current_time=_pacific_time(2026, 9, 1, 9, 0),
+        semantic_deadline=_pacific_time(2026, 9, 1, 10, 0),
+    )
+
+    assert result.valid is False
+    assert result.latest_valid_start_time == _pacific_time(
+        2026, 9, 1, 9, 0
+    )
+    assert "Scheduler retry window" in result.reason
+
+
+@pytest.mark.parametrize("minutes_late", [15, 30, 45])
+def test_pregame_retries_pass_before_later_first_pitch(
+    minutes_late: int,
+) -> None:
+    result = evaluate_scheduled_execution(
+        task_identity=MONEYLINE_PREGAME_TASK,
+        current_time=(
+            _pacific_time(2026, 9, 1, 8, 0)
+            + timedelta(minutes=minutes_late)
+        ),
+        semantic_deadline=_pacific_time(2026, 9, 1, 9, 30),
+    )
+
+    assert result.valid
+    assert result.latest_valid_start_time == _pacific_time(
+        2026, 9, 1, 9, 0
+    )
+
+
+def test_semantic_deadline_must_be_timezone_aware() -> None:
+    with pytest.raises(ValueError, match="Semantic deadline"):
+        evaluate_scheduled_execution(
+            task_identity=MONEYLINE_PREGAME_TASK,
+            current_time=_pacific_time(2026, 9, 1, 8, 10),
+            semantic_deadline=datetime(2026, 9, 1, 8, 20),
+        )
+
+
 def test_earlier_snapshot_is_expired_after_later_role_begins() -> None:
     result = evaluate_scheduled_execution(
         task_identity=MONEYLINE_ODDS_SNAPSHOT_TASK,
@@ -170,6 +236,17 @@ def test_late_night_catch_up_after_date_boundary_is_expired() -> None:
     assert result.intended_scheduled_time == _pacific_time(
         2026, 9, 1, 23, 0
     )
+    assert result.intended_target_date == date(2026, 9, 2)
+
+
+def test_opening_retry_at_preview_trigger_remains_valid() -> None:
+    result = evaluate_scheduled_execution(
+        task_identity=MONEYLINE_ODDS_SNAPSHOT_TASK,
+        snapshot_role="opening",
+        current_time=_pacific_time(2026, 9, 1, 18, 45),
+    )
+
+    assert result.valid
     assert result.intended_target_date == date(2026, 9, 2)
 
 
@@ -226,6 +303,93 @@ def test_cli_expired_result_is_clear_and_nonzero(
     assert "must not be backfilled" in output
 
 
+def test_cli_accepts_pregame_before_canonical_first_pitch(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    loaded_dates: list[date] = []
+
+    def load_deadline(target_date: date) -> datetime:
+        loaded_dates.append(target_date)
+        return _pacific_time(2026, 9, 1, 8, 30)
+
+    exit_code = main(
+        [
+            "--task-identity",
+            MONEYLINE_PREGAME_TASK,
+            "--enforce-canonical-pregame-deadline",
+        ],
+        current_time=_pacific_time(2026, 9, 1, 8, 29, 59),
+        semantic_deadline_loader=load_deadline,
+    )
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert loaded_dates == [date(2026, 9, 1)]
+    assert "Scheduled execution validity: VALID" in output
+    assert "Semantic point-in-time deadline: 2026-09-01T08:30:00" in output
+    assert "Valid start window: [" in output
+
+
+def test_cli_refuses_pregame_at_canonical_first_pitch(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    provider_called = False
+
+    def load_deadline(target_date: date) -> datetime:
+        assert target_date == date(2026, 9, 1)
+        return _pacific_time(2026, 9, 1, 8, 30)
+
+    exit_code = main(
+        [
+            "--task-identity",
+            MONEYLINE_PREGAME_TASK,
+            "--enforce-canonical-pregame-deadline",
+        ],
+        current_time=_pacific_time(2026, 9, 1, 8, 30),
+        semantic_deadline_loader=load_deadline,
+    )
+
+    if exit_code == 0:
+        provider_called = True
+
+    output = capsys.readouterr().out
+    assert exit_code == 1
+    assert provider_called is False
+    assert "Scheduled execution validity: EXPIRED" in output
+    assert "semantic point-in-time deadline" in output
+
+
+@pytest.mark.parametrize(
+    "deadline_loader",
+    [
+        lambda _: None,
+        lambda _: _raise_database_unavailable(),
+    ],
+)
+def test_cli_refuses_pregame_when_canonical_deadline_is_unknown(
+    deadline_loader: Callable[[date], datetime | None],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    exit_code = main(
+        [
+            "--task-identity",
+            MONEYLINE_PREGAME_TASK,
+            "--enforce-canonical-pregame-deadline",
+        ],
+        current_time=_pacific_time(2026, 9, 1, 8, 10),
+        semantic_deadline_loader=deadline_loader,
+    )
+
+    output = capsys.readouterr().out
+    assert exit_code == 1
+    assert "Canonical Pregame deadline: UNKNOWN" in output
+    assert "before live workflow or provider execution" in output
+
+
+def _raise_database_unavailable() -> None:
+    raise RuntimeError("database unavailable")
+
+
 @pytest.mark.parametrize(
     ("wrapper_name", "task_identity"),
     [
@@ -249,6 +413,14 @@ def test_daily_wrappers_recheck_after_readiness_before_workflow(
     assert first_guard < readiness < second_guard < workflow
     assert wrapper.count("Assert-MoneylineScheduledExecutionValid") == 2
     assert f'-TaskIdentity "{task_identity}"' in wrapper
+
+    if task_identity == "moneyline_pregame":
+        assert "-EnforceCanonicalPregameDeadline" not in wrapper[
+            first_guard:readiness
+        ]
+        assert "-EnforceCanonicalPregameDeadline" in wrapper[
+            second_guard:workflow
+        ]
 
 
 def test_snapshot_wrapper_rechecks_after_readiness_before_provider() -> None:
@@ -299,6 +471,15 @@ def test_preview_checks_before_wait_and_again_before_generation() -> None:
 
     assert first_guard < opening_wait < second_guard < preview
     assert wrapper.count("Assert-MoneylineScheduledExecutionValid") == 2
+    assert 'if ($OpeningTask.State -eq "Running")' in wrapper[
+        opening_wait:preview
+    ]
+    assert "Opening snapshot has not run today" in wrapper[
+        opening_wait:preview
+    ]
+    assert "Opening snapshot task failed with result" in wrapper[
+        opening_wait:preview
+    ]
 
 
 def test_guard_failure_prevents_following_simulated_provider(

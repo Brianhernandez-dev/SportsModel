@@ -25,6 +25,8 @@ function Assert-MoneylineScheduledExecutionValid {
         )]
         [string]$SnapshotRole,
 
+        [switch]$EnforceCanonicalPregameDeadline,
+
         [scriptblock]$Logger
     )
 
@@ -46,6 +48,10 @@ function Assert-MoneylineScheduledExecutionValid {
                 "--snapshot-role",
                 $SnapshotRole
             )
+        }
+
+        if ($EnforceCanonicalPregameDeadline) {
+            $Arguments += "--enforce-canonical-pregame-deadline"
         }
 
         $ValidityOutput = @(

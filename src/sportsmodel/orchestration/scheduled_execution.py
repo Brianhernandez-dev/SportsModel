@@ -40,6 +40,8 @@ class ScheduledExecutionValidity:
     intended_target_date: date
     current_pacific_time: datetime
     intended_scheduled_time: datetime
+    operational_latest_valid_start_time: datetime
+    semantic_deadline: datetime | None
     latest_valid_start_time: datetime
     valid: bool
     reason: str
@@ -57,6 +59,7 @@ def evaluate_scheduled_execution(
     task_identity: str,
     snapshot_role: str | None = None,
     current_time: datetime | None = None,
+    semantic_deadline: datetime | None = None,
 ) -> ScheduledExecutionValidity:
     """Evaluate one scheduled MLB task against its Pacific start window."""
 
@@ -84,8 +87,19 @@ def evaluate_scheduled_execution(
         current_pacific_time=current_pacific_time,
         scheduled_times=schedule.scheduled_times,
     )
-    latest_valid_start_time = (
+    operational_latest_valid_start_time = (
         intended_scheduled_time + EXECUTION_VALIDITY_WINDOW
+    )
+    resolved_semantic_deadline = _resolve_semantic_deadline(
+        semantic_deadline
+    )
+    latest_valid_start_time = min(
+        deadline
+        for deadline in (
+            operational_latest_valid_start_time,
+            resolved_semantic_deadline,
+        )
+        if deadline is not None
     )
     intended_target_date = (
         intended_scheduled_time.date()
@@ -93,9 +107,25 @@ def evaluate_scheduled_execution(
     )
     valid = current_pacific_time < latest_valid_start_time
 
-    if valid:
+    semantic_deadline_applies = (
+        resolved_semantic_deadline is not None
+        and resolved_semantic_deadline
+        <= operational_latest_valid_start_time
+    )
+
+    if valid and semantic_deadline_applies:
+        reason = (
+            "Execution is before the semantic point-in-time deadline."
+        )
+    elif valid:
         reason = (
             "Execution is within the configured Scheduler retry window."
+        )
+    elif semantic_deadline_applies:
+        reason = (
+            "Execution is at or after the semantic point-in-time deadline. "
+            "Execution was refused to preserve point-in-time correctness. "
+            "The missed observation must not be backfilled."
         )
     else:
         reason = (
@@ -110,10 +140,24 @@ def evaluate_scheduled_execution(
         intended_target_date=intended_target_date,
         current_pacific_time=current_pacific_time,
         intended_scheduled_time=intended_scheduled_time,
+        operational_latest_valid_start_time=(
+            operational_latest_valid_start_time
+        ),
+        semantic_deadline=resolved_semantic_deadline,
         latest_valid_start_time=latest_valid_start_time,
         valid=valid,
         reason=reason,
     )
+
+
+def _resolve_semantic_deadline(
+    semantic_deadline: datetime | None,
+) -> datetime | None:
+    if semantic_deadline is None:
+        return None
+    if semantic_deadline.tzinfo is None:
+        raise ValueError("Semantic deadline must be timezone-aware.")
+    return semantic_deadline.astimezone(PACIFIC_TIME_ZONE)
 
 
 def _resolve_schedule(

@@ -176,6 +176,7 @@ try {
         -PythonPath $PythonPath `
         -SourcePath $SourcePath `
         -TaskIdentity "moneyline_pregame" `
+        -EnforceCanonicalPregameDeadline `
         -Logger $ScheduledExecutionLogger
 
     & $PythonPath $ScriptPath 2>&1 |

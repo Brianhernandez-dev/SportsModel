@@ -53,6 +53,19 @@ backfill an expired snapshot or prediction with later evidence. `near_close`
 remains an explicitly invoked, game-relative capture and is not one of these
 fixed scheduled roles.
 
+Pregame's second check also reads the earliest canonical MLB start for the
+current Pacific target date. Its effective deadline is the earlier of that
+first pitch and the normal one-hour limit. Missing or unreadable canonical
+slate timing fails closed before the daily workflow creates a run or contacts
+a provider.
+
+Tomorrow Preview waits for an in-progress Opening Snapshot for up to ten
+minutes and then requires Opening's last run to be from the current Pacific
+date with a successful task result. Preview cannot generate output from a
+missing, failed, or still-running Opening capture. This dependency permits a
+normal Opening retry at or after 6:45 PM without allowing Preview to overtake
+it; no separate static 6:45 PM Opening cutoff is applied.
+
 ### 1. Synchronize the schedule
 
     D:\SportsModel\.venv\Scripts\python.exe .\scripts\sync_mlb_schedule.py --start-date YYYY-MM-DD --days-ahead 7
