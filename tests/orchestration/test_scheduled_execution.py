@@ -462,6 +462,7 @@ def test_preview_checks_before_wait_and_again_before_generation() -> None:
         SCRIPTS_ROOT / "run_moneyline_tomorrow_preview.ps1"
     ).read_text(encoding="utf-8-sig")
     first_guard = wrapper.index("Assert-MoneylineScheduledExecutionValid")
+    readiness = wrapper.index("Wait-SportsModelDatabaseReady")
     opening_wait = wrapper.index("Get-ScheduledTask -TaskName")
     second_guard = wrapper.index(
         "Assert-MoneylineScheduledExecutionValid",
@@ -469,7 +470,7 @@ def test_preview_checks_before_wait_and_again_before_generation() -> None:
     )
     preview = wrapper.index("$PreviewOutput = & $PythonPath")
 
-    assert first_guard < opening_wait < second_guard < preview
+    assert first_guard < readiness < opening_wait < second_guard < preview
     assert wrapper.count("Assert-MoneylineScheduledExecutionValid") == 2
     assert 'if ($OpeningTask.State -eq "Running")' in wrapper[
         opening_wait:preview

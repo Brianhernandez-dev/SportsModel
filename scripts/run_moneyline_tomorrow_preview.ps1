@@ -17,6 +17,9 @@ $PreviewModulePath = Join-Path `
 $ScheduledExecutionGuardPath = Join-Path `
     $ProjectRoot `
     "scripts\assert_moneyline_scheduled_execution.ps1"
+$DatabaseReadinessPath = Join-Path `
+    $ProjectRoot `
+    "scripts\wait_for_sportsmodel_database.ps1"
 $OpeningTaskName = "SportsModel - Moneyline Opening Snapshot"
 $LogDirectory = Join-Path `
     $ProjectRoot `
@@ -65,6 +68,7 @@ try {
         $EnvironmentPath,
         $PreviewScriptPath,
         $PreviewModulePath,
+        $DatabaseReadinessPath,
         $ScheduledExecutionGuardPath
     )) {
         if (-not (Test-Path $RequiredPath)) {
@@ -113,6 +117,7 @@ try {
         exit 0
     }
 
+    . $DatabaseReadinessPath
     . $ScheduledExecutionGuardPath
 
     $ScheduledExecutionLogger = {
@@ -125,6 +130,22 @@ try {
         -SourcePath $SourcePath `
         -TaskIdentity "moneyline_tomorrow_preview" `
         -Logger $ScheduledExecutionLogger
+
+    Write-Log "Checking SportsModel database readiness."
+
+    $DatabaseLogger = {
+        param([string]$Message)
+        Write-Log $Message
+    }
+
+    Wait-SportsModelDatabaseReady `
+        -PythonPath $PythonPath `
+        -SourcePath $SourcePath `
+        -TimeoutSeconds 600 `
+        -PollSeconds 15 `
+        -Logger $DatabaseLogger
+
+    Write-Log "Database readiness check completed."
 
     Write-Log "Checking opening snapshot task."
 

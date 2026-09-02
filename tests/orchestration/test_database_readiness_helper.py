@@ -348,6 +348,7 @@ def test_helper_has_no_docker_or_service_control_fallback() -> None:
         "run_moneyline_daily_pregame.ps1",
         "run_moneyline_daily_postgame.ps1",
         "run_moneyline_odds_snapshot.ps1",
+        "run_moneyline_tomorrow_preview.ps1",
     ],
 )
 def test_production_callers_fail_nonzero_when_readiness_throws(
