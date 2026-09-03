@@ -458,7 +458,11 @@ def _format_sync_summary(
     summary: ScheduleSyncSummary,
 ) -> tuple[str, ...]:
     return (
-        "MLB schedule synchronization complete.",
+        (
+            "MLB schedule synchronization partially completed."
+            if summary.dates_failed > 0
+            else "MLB schedule synchronization complete."
+        ),
         (
             "Date range: "
             f"{summary.start_date} through "

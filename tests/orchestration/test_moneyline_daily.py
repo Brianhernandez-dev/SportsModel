@@ -3,6 +3,10 @@ from types import SimpleNamespace
 
 import pytest
 
+from sportsmodel.ingest.mlb_schedule import (
+    ScheduleSyncDateSummary,
+    ScheduleSyncSummary,
+)
 from sportsmodel.orchestration import moneyline_daily
 
 
@@ -32,6 +36,21 @@ class FakeConnection:
 
     def close(self) -> None:
         self.closed = True
+
+
+def _schedule_summary(
+    *date_summaries: ScheduleSyncDateSummary,
+) -> ScheduleSyncSummary:
+    schedule_dates = tuple(
+        item.schedule_date
+        for item in date_summaries
+    )
+
+    return ScheduleSyncSummary(
+        start_date=min(schedule_dates),
+        end_date=max(schedule_dates),
+        date_summaries=date_summaries,
+    )
 
 
 def test_gets_or_creates_workflow_transactionally(
@@ -338,8 +357,13 @@ def test_runs_schedule_and_prediction(
         target_date=date(2026, 8, 2),
         schedule_days_ahead=7,
         connection_factory=lambda: None,
-        schedule_syncer=lambda **arguments: SimpleNamespace(
-            dates_failed=0,
+        schedule_syncer=lambda **arguments: _schedule_summary(
+            ScheduleSyncDateSummary(
+                schedule_date=date(2026, 8, 2),
+                games_received=15,
+                games_synchronized=15,
+                games_skipped=0,
+            ),
         ),
         prediction_runner=lambda **arguments: prediction_result,
     )
@@ -349,20 +373,142 @@ def test_runs_schedule_and_prediction(
     assert updates[1]["prediction_run_id"] == 25
 
 
-def test_stops_when_schedule_sync_fails() -> None:
+def test_stops_when_required_schedule_date_fails() -> None:
+    prediction_calls = []
+
     with pytest.raises(
         RuntimeError,
-        match="1 failed date",
+        match=(
+            "failed for required date.*2026-08-02.*"
+            "ReadTimeout: target timeout"
+        ),
     ):
         moneyline_daily._run_schedule_and_prediction(
             workflow_run_id=12,
             target_date=date(2026, 8, 2),
             schedule_days_ahead=7,
             connection_factory=lambda: None,
-            schedule_syncer=lambda **arguments: SimpleNamespace(
-                dates_failed=1,
+            schedule_syncer=lambda **arguments: _schedule_summary(
+                ScheduleSyncDateSummary(
+                    schedule_date=date(2026, 8, 2),
+                    games_received=0,
+                    games_synchronized=0,
+                    games_skipped=0,
+                    error_message=(
+                        "ReadTimeout: target timeout"
+                    ),
+                ),
             ),
-            prediction_runner=lambda **arguments: None,
+            prediction_runner=lambda **arguments: (
+                prediction_calls.append(arguments)
+            ),
+        )
+
+    assert prediction_calls == []
+
+
+def test_continues_after_nonrequired_future_schedule_failure(
+    monkeypatch,
+    capsys,
+) -> None:
+    updates = []
+    prediction_calls = []
+    prediction_result = SimpleNamespace(
+        moneyline_prediction_run_id=25,
+    )
+
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_update_workflow",
+        lambda **arguments: updates.append(arguments),
+    )
+
+    result = moneyline_daily._run_schedule_and_prediction(
+        workflow_run_id=12,
+        target_date=date(2026, 8, 2),
+        schedule_days_ahead=7,
+        connection_factory=lambda: None,
+        schedule_syncer=lambda **arguments: _schedule_summary(
+            ScheduleSyncDateSummary(
+                schedule_date=date(2026, 8, 2),
+                games_received=15,
+                games_synchronized=15,
+                games_skipped=0,
+            ),
+            ScheduleSyncDateSummary(
+                schedule_date=date(2026, 8, 8),
+                games_received=0,
+                games_synchronized=0,
+                games_skipped=0,
+                error_message="ReadTimeout: future timeout",
+            ),
+        ),
+        prediction_runner=lambda **arguments: (
+            prediction_calls.append(arguments)
+            or prediction_result
+        ),
+    )
+
+    output = capsys.readouterr().out
+    assert result is prediction_result
+    assert prediction_calls == [
+        {"target_date": date(2026, 8, 2)}
+    ]
+    assert updates[0]["current_stage"] == "prediction"
+    assert "schedule synchronization was partial" in output
+    assert "required Pregame date 2026-08-02 succeeded" in output
+    assert "2026-08-08 (ReadTimeout: future timeout)" in output
+
+
+def test_stops_when_explicitly_required_future_date_fails() -> None:
+    target_date = date(2026, 8, 2)
+    required_future_date = date(2026, 8, 3)
+    summary = _schedule_summary(
+        ScheduleSyncDateSummary(
+            schedule_date=target_date,
+            games_received=15,
+            games_synchronized=15,
+            games_skipped=0,
+        ),
+        ScheduleSyncDateSummary(
+            schedule_date=required_future_date,
+            games_received=0,
+            games_synchronized=0,
+            games_skipped=0,
+            error_message="ReadTimeout: required future timeout",
+        ),
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match=(
+            "failed for required date.*2026-08-03.*"
+            "required future timeout"
+        ),
+    ):
+        moneyline_daily._validate_schedule_sync_for_required_dates(
+            schedule_summary=summary,
+            required_dates=frozenset(
+                {target_date, required_future_date}
+            ),
+        )
+
+
+def test_stops_when_required_schedule_date_is_not_reported() -> None:
+    with pytest.raises(
+        RuntimeError,
+        match="did not report required date.*2026-08-02",
+    ):
+        moneyline_daily._validate_schedule_sync_for_required_dates(
+            schedule_summary=_schedule_summary(
+                ScheduleSyncDateSummary(
+                    schedule_date=date(2026, 8, 3),
+                    games_received=9,
+                    games_synchronized=9,
+                    games_skipped=0,
+                ),
+            ),
+            required_dates=frozenset({date(2026, 8, 2)}),
         )
 
 

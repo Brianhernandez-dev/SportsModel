@@ -31,8 +31,9 @@ Use:
 Production wrappers fail closed when Task Scheduler starts an MLB writer
 outside its intended Pacific-time start window. The valid start window is
 half-open and lasts one hour from the scheduled trigger: `[trigger, trigger +
-60 minutes)`. This admits normal start jitter and the configured retries at
-15, 30, and 45 minutes while refusing broader `StartWhenAvailable` catch-up.
+60 minutes)`. This admits normal start jitter and any actual relaunch at 15,
+30, or 45 minutes while refusing broader `StartWhenAvailable` catch-up. The
+validity guard does not itself schedule retries.
 
 | Writer | Pacific trigger | Intended target |
 | --- | --- | --- |
@@ -58,6 +59,15 @@ current Pacific target date. Its effective deadline is the earlier of that
 first pitch and the normal one-hour limit. Missing or unreadable canonical
 slate timing fails closed before the daily workflow creates a run or contacts
 a provider.
+
+Pregame's schedule preload covers the target date through seven days after it.
+Only the target date is required by the current official-card path; later dates
+preload canonical games for future workflows. A missing or failed target-date
+summary fails closed before prediction generation. A failed later date is
+reported as a partial schedule synchronization with its diagnostic retained in
+the task log, but it does not abort an otherwise valid current-date card. The
+prediction service still fetches and synchronizes the target date itself and
+fails closed if that required synchronization is unsuccessful.
 
 Tomorrow Preview waits for an in-progress Opening Snapshot for up to ten
 minutes and then requires Opening's last run to be from the current Pacific

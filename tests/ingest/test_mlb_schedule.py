@@ -136,6 +136,7 @@ def test_syncs_regular_season_schedule_games() -> None:
 def test_schedule_failure_does_not_stop_later_dates() -> None:
     requested_dates: list[date] = []
     connections: list[FakeConnection] = []
+    progress: list[str] = []
 
     def fetcher(
         schedule_date: date,
@@ -163,7 +164,7 @@ def test_schedule_failure_does_not_stop_later_dates() -> None:
     summary = sync_mlb_schedule(
         start_date=date(2026, 7, 29),
         days_ahead=1,
-        progress_callback=None,
+        progress_callback=progress.append,
         schedule_fetcher=fetcher,
         connection_factory=connection_factory,
     )
@@ -177,6 +178,15 @@ def test_schedule_failure_does_not_stop_later_dates() -> None:
     assert len(connections) == 1
     assert connections[0].committed is True
     assert connections[0].closed is True
+    assert progress[0] == (
+        "2026-07-29: failed - RuntimeError: "
+        "temporary schedule failure"
+    )
+    assert (
+        "MLB schedule synchronization partially completed."
+        in progress
+    )
+    assert "MLB schedule synchronization complete." not in progress
 
 
 def test_sync_rejects_negative_days_ahead() -> None:

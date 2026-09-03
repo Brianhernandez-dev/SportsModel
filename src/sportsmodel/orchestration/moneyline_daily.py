@@ -22,7 +22,11 @@ from sportsmodel.database.moneyline_daily_workflow_repository import (
     record_moneyline_daily_prediction_run,
     start_moneyline_daily_workflow_attempt,
 )
-from sportsmodel.ingest.mlb_schedule import sync_mlb_schedule
+from sportsmodel.ingest.mlb_schedule import (
+    ScheduleSyncDateSummary,
+    ScheduleSyncSummary,
+    sync_mlb_schedule,
+)
 from sportsmodel.ingest.mlb_stats import fetch_historical_results
 from sportsmodel.ingest.odds_api import fetch_live_odds
 from sportsmodel.predictions.moneyline_service import (
@@ -252,6 +256,70 @@ def _determine_pregame_resume_stage(
     return "evaluation"
 
 
+def _validate_schedule_sync_for_required_dates(
+    *,
+    schedule_summary: ScheduleSyncSummary,
+    required_dates: frozenset[date],
+) -> tuple[ScheduleSyncDateSummary, ...]:
+    """
+    Fail closed for required dates and return ancillary failures.
+
+    Pregame currently requires only its target date. The wider schedule
+    horizon preloads canonical games for later workflows and must not make an
+    otherwise valid current-date official card depend on an unrelated future
+    provider response.
+    """
+
+    summaries_by_date = {
+        item.schedule_date: item
+        for item in schedule_summary.date_summaries
+    }
+    missing_required_dates = sorted(
+        required_dates - summaries_by_date.keys()
+    )
+
+    if missing_required_dates:
+        raise RuntimeError(
+            "MLB schedule synchronization did not report required date(s): "
+            + ", ".join(
+                item.isoformat()
+                for item in missing_required_dates
+            )
+            + "."
+        )
+
+    failed_required_dates = tuple(
+        summaries_by_date[item]
+        for item in sorted(required_dates)
+        if summaries_by_date[item].failed
+    )
+
+    if failed_required_dates:
+        raise RuntimeError(
+            "MLB schedule synchronization failed for required date(s): "
+            + _format_schedule_failures(
+                failed_required_dates
+            )
+            + "."
+        )
+
+    return tuple(
+        item
+        for item in schedule_summary.date_summaries
+        if item.failed
+        and item.schedule_date not in required_dates
+    )
+
+
+def _format_schedule_failures(
+    failures: tuple[ScheduleSyncDateSummary, ...],
+) -> str:
+    return ", ".join(
+        f"{item.schedule_date} ({item.error_message})"
+        for item in failures
+    )
+
+
 def _run_schedule_and_prediction(
     *,
     workflow_run_id: int,
@@ -266,10 +334,19 @@ def _run_schedule_and_prediction(
         days_ahead=schedule_days_ahead,
     )
 
-    if schedule_summary.dates_failed > 0:
-        raise RuntimeError(
-            "MLB schedule synchronization reported "
-            f"{schedule_summary.dates_failed} failed date(s)."
+    ancillary_failures = (
+        _validate_schedule_sync_for_required_dates(
+            schedule_summary=schedule_summary,
+            required_dates=frozenset({target_date}),
+        )
+    )
+
+    if ancillary_failures:
+        print(
+            "WARNING: MLB schedule synchronization was partial; "
+            f"required Pregame date {target_date} succeeded. "
+            "Continuing despite nonrequired future date failure(s): "
+            f"{_format_schedule_failures(ancillary_failures)}."
         )
 
     _update_workflow(
