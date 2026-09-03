@@ -409,13 +409,20 @@ def test_daily_wrappers_recheck_after_readiness_before_workflow(
         first_guard + 1,
     )
     workflow = wrapper.index("& $PythonPath $ScriptPath 2>&1", second_guard)
+    third_guard = wrapper.index(
+        "Assert-MoneylineScheduledExecutionValid",
+        second_guard + 1,
+    )
+    retry_call = wrapper.index("Invoke-MoneylineOperationWithRetry", third_guard)
 
     assert first_guard < readiness < second_guard < workflow
-    assert wrapper.count("Assert-MoneylineScheduledExecutionValid") == 2
+    assert workflow < third_guard < retry_call
+    assert wrapper.count("Assert-MoneylineScheduledExecutionValid") == 3
     assert f'-TaskIdentity "{task_identity}"' in wrapper
     assert ". $RetryHelperPath" in wrapper
     assert "Invoke-MoneylineOperationWithRetry" in wrapper
     assert "-MaxAttempts 4" in wrapper
+    assert "-RetryDeadlineProvider" in wrapper
 
     if task_identity == "moneyline_pregame":
         assert "-EnforceCanonicalPregameDeadline" not in wrapper[
@@ -423,6 +430,14 @@ def test_daily_wrappers_recheck_after_readiness_before_workflow(
         ]
         assert "-EnforceCanonicalPregameDeadline" in wrapper[
             second_guard:workflow
+        ]
+        deadline_provider = wrapper.index("$PregameRetryDeadlineProvider")
+        retry_call = wrapper.index(
+            "Invoke-MoneylineOperationWithRetry",
+            deadline_provider,
+        )
+        assert "-EnforceCanonicalPregameDeadline" in wrapper[
+            deadline_provider:retry_call
         ]
 
 
@@ -437,9 +452,15 @@ def test_snapshot_wrapper_rechecks_after_readiness_before_provider() -> None:
         first_guard + 1,
     )
     provider = wrapper.index("& $PythonPath `", second_guard)
+    third_guard = wrapper.index(
+        "Assert-MoneylineScheduledExecutionValid",
+        second_guard + 1,
+    )
+    retry_call = wrapper.index("Invoke-MoneylineOperationWithRetry", third_guard)
 
     assert first_guard < readiness < second_guard < provider
-    assert wrapper.count("Assert-MoneylineScheduledExecutionValid") == 2
+    assert provider < third_guard < retry_call
+    assert wrapper.count("Assert-MoneylineScheduledExecutionValid") == 3
     assert 'if ($SnapshotRole -in $ScheduledSnapshotRoles)' in wrapper
 
 
@@ -472,9 +493,15 @@ def test_preview_checks_before_wait_and_again_before_generation() -> None:
         first_guard + 1,
     )
     preview = wrapper.index("$PreviewOutput = & $PythonPath")
+    third_guard = wrapper.index(
+        "Assert-MoneylineScheduledExecutionValid",
+        second_guard + 1,
+    )
+    retry_call = wrapper.index("Invoke-MoneylineOperationWithRetry", third_guard)
 
     assert first_guard < readiness < opening_wait < second_guard < preview
-    assert wrapper.count("Assert-MoneylineScheduledExecutionValid") == 2
+    assert preview < third_guard < retry_call
+    assert wrapper.count("Assert-MoneylineScheduledExecutionValid") == 3
     assert 'if ($OpeningTask.State -eq "Running")' in wrapper[
         opening_wait:preview
     ]

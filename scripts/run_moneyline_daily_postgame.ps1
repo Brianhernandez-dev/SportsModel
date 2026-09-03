@@ -196,10 +196,20 @@ try {
         return $LASTEXITCODE
     }
 
+    $PostgameRetryDeadlineProvider = {
+        return Assert-MoneylineScheduledExecutionValid `
+            -PythonPath $PythonPath `
+            -SourcePath $SourcePath `
+            -TaskIdentity "moneyline_postgame" `
+            -ReturnValidity `
+            -Logger $ScheduledExecutionLogger
+    }
+
     Invoke-MoneylineOperationWithRetry `
         -OperationName "Daily Moneyline Postgame" `
         -Preflight $PostgamePreflight `
         -Operation $PostgameOperation `
+        -RetryDeadlineProvider $PostgameRetryDeadlineProvider `
         -MaxAttempts 4 `
         -RetryDelaySeconds 900 `
         -Logger $ScheduledExecutionLogger

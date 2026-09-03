@@ -74,6 +74,7 @@ def test_wrapper_retries_only_through_shared_retry_boundary() -> None:
     assert "Invoke-MoneylineOperationWithRetry" in wrapper
     assert "-MaxAttempts 4" in wrapper
     assert "-RetryDelaySeconds 900" in wrapper
+    assert "-RetryDeadlineProvider $PreviewRetryDeadlineProvider" in wrapper
     assert "return $PreviewExitCode" in wrapper
     assert "New-MoneylineRetryableException" in wrapper
 
@@ -140,6 +141,7 @@ def test_permanent_readiness_rejection_stops_before_opening_and_preview(
         "        [string]$OperationName,\n"
         "        [scriptblock]$Preflight,\n"
         "        [scriptblock]$Operation,\n"
+        "        [scriptblock]$RetryDeadlineProvider,\n"
         "        [int]$MaxAttempts,\n"
         "        [int]$RetryDelaySeconds,\n"
         "        [scriptblock]$Logger\n"

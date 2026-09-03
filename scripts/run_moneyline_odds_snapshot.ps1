@@ -319,6 +319,16 @@ try {
         return $LASTEXITCODE
     }
 
+    $SnapshotRetryDeadlineProvider = {
+        return Assert-MoneylineScheduledExecutionValid `
+            -PythonPath $PythonPath `
+            -SourcePath $SourcePath `
+            -TaskIdentity "moneyline_odds_snapshot" `
+            -SnapshotRole $SnapshotRole `
+            -ReturnValidity `
+            -Logger $ScheduledExecutionLogger
+    }
+
     if ($SnapshotRole -in $ScheduledSnapshotRoles) {
         $MaximumAttempts = 4
     }
@@ -330,6 +340,7 @@ try {
         -OperationName "Moneyline $SnapshotRole odds snapshot" `
         -Preflight $SnapshotPreflight `
         -Operation $SnapshotOperation `
+        -RetryDeadlineProvider $SnapshotRetryDeadlineProvider `
         -MaxAttempts $MaximumAttempts `
         -RetryDelaySeconds 900 `
         -Logger $ScheduledExecutionLogger

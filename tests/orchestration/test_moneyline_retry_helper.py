@@ -59,10 +59,16 @@ $Operation = {
     if ($script:Operations -eq 1) { return 75 }
     return 0
 }
+$RetryDeadlineProvider = {
+    [pscustomobject]@{
+        LatestValidStartTime = [DateTimeOffset]'2026-09-02T09:00:00-07:00'
+    }
+}
 Invoke-MoneylineOperationWithRetry `
     -OperationName 'Pregame' `
     -Preflight $Preflight `
     -Operation $Operation `
+    -RetryDeadlineProvider $RetryDeadlineProvider `
     -MaxAttempts 4 `
     -RetryDelaySeconds 900 `
     -NowProvider { [DateTimeOffset]'2026-09-02T08:00:00-07:00' } `
@@ -96,11 +102,18 @@ $Preflight = {
     }
 }
 $Operation = { $script:Operations++; return 0 }
+$RetryDeadlineProvider = {
+    [pscustomobject]@{
+        LatestValidStartTime = [DateTimeOffset]'2026-09-02T09:00:00-07:00'
+    }
+}
 Invoke-MoneylineOperationWithRetry `
     -OperationName 'Pregame' `
     -Preflight $Preflight `
     -Operation $Operation `
-    -RetryDelaySeconds 0 `
+    -RetryDeadlineProvider $RetryDeadlineProvider `
+    -RetryDelaySeconds 900 `
+    -NowProvider { [DateTimeOffset]'2026-09-02T08:00:00-07:00' } `
     -Sleeper { param([int]$Seconds) } `
     -Logger { param([string]$Message) Write-Output $Message }
 Write-Output "COUNTS=$script:Preflights,$script:Operations"
@@ -136,6 +149,7 @@ try {{
         -OperationName 'Pregame' `
         -Preflight $Preflight `
         -Operation $Operation `
+        -RetryDeadlineProvider {{ throw 'must not be called' }} `
         -RetryDelaySeconds 0 `
         -Sleeper {{ param([int]$Seconds) }} `
         -Logger {{ param([string]$Message) Write-Output $Message }}
@@ -154,10 +168,17 @@ catch {{
     assert "COUNTS=1,0" in output
 
 
-@pytest.mark.parametrize("operation_name", ["Pregame", "Morning snapshot"])
+@pytest.mark.parametrize(
+    ("operation_name", "deadline"),
+    [
+        ("Pregame", "2026-09-02T08:15:00-07:00"),
+        ("Morning snapshot", "2026-09-02T08:10:00-07:00"),
+    ],
+)
 def test_retry_that_would_cross_pit_deadline_is_refused(
     tmp_path: Path,
     operation_name: str,
+    deadline: str,
 ) -> None:
     result = _run_harness(
         tmp_path,
@@ -167,15 +188,21 @@ $script:Operations = 0
 $Preflight = {{
     $script:Preflights++
     [pscustomobject]@{{
-        LatestValidStartTime = [DateTimeOffset]'2026-09-02T08:10:00-07:00'
+        LatestValidStartTime = [DateTimeOffset]'{deadline}'
     }}
 }}
 $Operation = {{ $script:Operations++; return 75 }}
+$RetryDeadlineProvider = {{
+    [pscustomobject]@{{
+        LatestValidStartTime = [DateTimeOffset]'{deadline}'
+    }}
+}}
 try {{
     Invoke-MoneylineOperationWithRetry `
         -OperationName '{operation_name}' `
         -Preflight $Preflight `
         -Operation $Operation `
+        -RetryDeadlineProvider $RetryDeadlineProvider `
         -RetryDelaySeconds 900 `
         -NowProvider {{ [DateTimeOffset]'2026-09-02T08:00:00-07:00' }} `
         -Sleeper {{ param([int]$Seconds) }} `
@@ -207,6 +234,7 @@ Invoke-MoneylineOperationWithRetry `
     -OperationName 'Snapshot' `
     -Preflight $Preflight `
     -Operation $Operation `
+    -RetryDeadlineProvider { throw 'must not be called' } `
     -Sleeper { param([int]$Seconds) }
 Write-Output "COUNTS=$script:Preflights,$script:Operations"
 """,
@@ -227,13 +255,20 @@ $script:Preflights = 0
 $script:Operations = 0
 $Preflight = { $script:Preflights++ }
 $Operation = { $script:Operations++; return 75 }
+$RetryDeadlineProvider = {
+    [pscustomobject]@{
+        LatestValidStartTime = [DateTimeOffset]'2026-09-02T09:00:00-07:00'
+    }
+}
 try {
     Invoke-MoneylineOperationWithRetry `
         -OperationName 'Snapshot' `
         -Preflight $Preflight `
         -Operation $Operation `
+        -RetryDeadlineProvider $RetryDeadlineProvider `
         -MaxAttempts 2 `
         -RetryDelaySeconds 0 `
+        -NowProvider { [DateTimeOffset]'2026-09-02T08:00:00-07:00' } `
         -Sleeper { param([int]$Seconds) }
 }
 catch {
@@ -248,3 +283,103 @@ catch {
     assert result.returncode == 1
     assert "exhausted 2 attempts" in output
     assert "COUNTS=2,2" in output
+
+
+@pytest.mark.parametrize(
+    ("operation_name", "failure_message"),
+    [
+        ("Morning snapshot", "database readiness timed out"),
+        ("Daily Moneyline Pregame", "database readiness timed out"),
+        ("Tomorrow Preview", "Opening snapshot is still running"),
+    ],
+)
+def test_transient_preflight_failure_does_not_sleep_across_deadline(
+    tmp_path: Path,
+    operation_name: str,
+    failure_message: str,
+) -> None:
+    result = _run_harness(
+        tmp_path,
+        f"""
+$script:Preflights = 0
+$script:Operations = 0
+$script:DeadlineChecks = 0
+$script:Sleeps = 0
+$Preflight = {{
+    $script:Preflights++
+    throw (New-MoneylineRetryableException -Message '{failure_message}')
+}}
+$Operation = {{ $script:Operations++; return 0 }}
+$RetryDeadlineProvider = {{
+    $script:DeadlineChecks++
+    [pscustomobject]@{{
+        LatestValidStartTime = [DateTimeOffset]'2026-09-02T08:05:00-07:00'
+    }}
+}}
+try {{
+    Invoke-MoneylineOperationWithRetry `
+        -OperationName '{operation_name}' `
+        -Preflight $Preflight `
+        -Operation $Operation `
+        -RetryDeadlineProvider $RetryDeadlineProvider `
+        -RetryDelaySeconds 900 `
+        -NowProvider {{ [DateTimeOffset]'2026-09-02T08:00:00-07:00' }} `
+        -Sleeper {{ param([int]$Seconds) $script:Sleeps++ }} `
+        -Logger {{ param([string]$Message) Write-Output $Message }}
+}}
+catch {{
+    Write-Output $_.Exception.Message
+    Write-Output (
+        "COUNTS=$script:Preflights,$script:Operations," +
+        "$script:DeadlineChecks,$script:Sleeps"
+    )
+    exit 1
+}}
+""",
+    )
+
+    output = result.stdout + result.stderr
+    assert result.returncode == 1
+    assert "Classification: transient" in output
+    assert "would reach or cross the PIT deadline" in output
+    assert "COUNTS=1,0,1,0" in output
+
+
+def test_transient_preflight_failure_retries_when_deadline_allows(
+    tmp_path: Path,
+) -> None:
+    result = _run_harness(
+        tmp_path,
+        """
+$script:Preflights = 0
+$script:Operations = 0
+$script:Sleeps = 0
+$Preflight = {
+    $script:Preflights++
+    if ($script:Preflights -eq 1) {
+        throw (New-MoneylineRetryableException -Message 'database unavailable')
+    }
+}
+$Operation = { $script:Operations++; return 0 }
+$RetryDeadlineProvider = {
+    [pscustomobject]@{
+        LatestValidStartTime = [DateTimeOffset]'2026-09-02T09:00:00-07:00'
+    }
+}
+Invoke-MoneylineOperationWithRetry `
+    -OperationName 'Morning snapshot' `
+    -Preflight $Preflight `
+    -Operation $Operation `
+    -RetryDeadlineProvider $RetryDeadlineProvider `
+    -RetryDelaySeconds 900 `
+    -NowProvider { [DateTimeOffset]'2026-09-02T08:00:00-07:00' } `
+    -Sleeper { param([int]$Seconds) $script:Sleeps++ } `
+    -Logger { param([string]$Message) Write-Output $Message }
+Write-Output "COUNTS=$script:Preflights,$script:Operations,$script:Sleeps"
+""",
+    )
+
+    output = result.stdout + result.stderr
+    assert result.returncode == 0, output
+    assert "next retry" in output
+    assert "COUNTS=2,1,1" in output

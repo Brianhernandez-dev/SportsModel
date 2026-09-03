@@ -55,6 +55,7 @@ def test_live_snapshot_uses_bounded_shared_retry() -> None:
     assert "Invoke-MoneylineOperationWithRetry" in wrapper
     assert "-MaxAttempts $MaximumAttempts" in wrapper
     assert "-RetryDelaySeconds 900" in wrapper
+    assert "-RetryDeadlineProvider $SnapshotRetryDeadlineProvider" in wrapper
     assert "return $LASTEXITCODE" in wrapper
 
 

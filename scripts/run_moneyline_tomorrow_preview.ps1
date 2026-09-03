@@ -215,10 +215,20 @@ try {
         return $PreviewExitCode
     }
 
+    $PreviewRetryDeadlineProvider = {
+        return Assert-MoneylineScheduledExecutionValid `
+            -PythonPath $PythonPath `
+            -SourcePath $SourcePath `
+            -TaskIdentity "moneyline_tomorrow_preview" `
+            -ReturnValidity `
+            -Logger $ScheduledExecutionLogger
+    }
+
     Invoke-MoneylineOperationWithRetry `
         -OperationName "Tomorrow Preview" `
         -Preflight $PreviewPreflight `
         -Operation $PreviewOperation `
+        -RetryDeadlineProvider $PreviewRetryDeadlineProvider `
         -MaxAttempts 4 `
         -RetryDelaySeconds 900 `
         -Logger $ScheduledExecutionLogger

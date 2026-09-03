@@ -46,6 +46,9 @@ function Invoke-MoneylineOperationWithRetry {
         [Parameter(Mandatory)]
         [scriptblock]$Operation,
 
+        [Parameter(Mandatory)]
+        [scriptblock]$RetryDeadlineProvider,
+
         [int]$MaxAttempts = 4,
 
         [int]$RetryDelaySeconds = 900,
@@ -152,43 +155,48 @@ function Invoke-MoneylineOperationWithRetry {
             )
         }
 
-        $Now = & $NowProvider
-        $NextRetryTime = $Now.AddSeconds($RetryDelaySeconds)
-        $LatestValidStartTime = $null
+        try {
+            $DeadlineResult = & $RetryDeadlineProvider
+        }
+        catch {
+            throw (
+                "$OperationName retry refused after a transient failure " +
+                "because its effective scheduled/PIT deadline could not " +
+                "be determined. $($_.Exception.Message)"
+            )
+        }
 
         if (
-            $null -ne $PreflightResult -and
-            $null -ne $PreflightResult.PSObject.Properties[
+            $null -eq $DeadlineResult -or
+            $null -eq $DeadlineResult.PSObject.Properties[
                 "LatestValidStartTime"
-            ]
+            ] -or
+            $null -eq $DeadlineResult.LatestValidStartTime
         ) {
-            $LatestValidStartTime = (
-                $PreflightResult.LatestValidStartTime
+            throw (
+                "$OperationName retry refused after a transient failure " +
+                "because its effective scheduled/PIT deadline was not " +
+                "provided."
             )
         }
 
-        if ($null -ne $LatestValidStartTime) {
-            $RemainingWindow = $LatestValidStartTime - $Now
-            Write-RetryLog (
-                "Remaining PIT window: " +
-                "$([math]::Max(0, [int]$RemainingWindow.TotalSeconds)) " +
-                "seconds; latest valid start " +
+        $Now = & $NowProvider
+        $NextRetryTime = $Now.AddSeconds($RetryDelaySeconds)
+        $LatestValidStartTime = $DeadlineResult.LatestValidStartTime
+        $RemainingWindow = $LatestValidStartTime - $Now
+        Write-RetryLog (
+            "Remaining PIT window: " +
+            "$([math]::Max(0, [int]$RemainingWindow.TotalSeconds)) " +
+            "seconds; latest valid start " +
+            "$($LatestValidStartTime.ToString('o'))."
+        )
+
+        if ($NextRetryTime -ge $LatestValidStartTime) {
+            throw (
+                "$OperationName retry refused because the next " +
+                "attempt at $($NextRetryTime.ToString('o')) would " +
+                "reach or cross the PIT deadline " +
                 "$($LatestValidStartTime.ToString('o'))."
-            )
-
-            if ($NextRetryTime -ge $LatestValidStartTime) {
-                throw (
-                    "$OperationName retry refused because the next " +
-                    "attempt at $($NextRetryTime.ToString('o')) would " +
-                    "reach or cross the PIT deadline " +
-                    "$($LatestValidStartTime.ToString('o'))."
-                )
-            }
-        }
-        else {
-            Write-RetryLog (
-                "Remaining PIT window: unavailable from the failed " +
-                "preflight; validity will be re-evaluated before retry."
             )
         }
 
