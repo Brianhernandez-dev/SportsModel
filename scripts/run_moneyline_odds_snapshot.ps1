@@ -31,6 +31,9 @@ $DatabaseReadinessPath = Join-Path `
 $ScheduledExecutionGuardPath = Join-Path `
     $ProjectRoot `
     "scripts\assert_moneyline_scheduled_execution.ps1"
+$RetryHelperPath = Join-Path `
+    $ProjectRoot `
+    "scripts\invoke_moneyline_retry.ps1"
 $LogDirectory = Join-Path `
     $ProjectRoot `
     "logs\moneyline_odds_snapshots"
@@ -143,6 +146,10 @@ try {
         )
     }
 
+    if (-not (Test-Path $RetryHelperPath)) {
+        throw "Moneyline retry helper was not found: $RetryHelperPath"
+    }
+
     Set-Location $ProjectRoot
 
     $env:SPORTSMODEL_ENV_FILE = $EnvironmentPath
@@ -246,6 +253,7 @@ try {
 
     . $DatabaseReadinessPath
     . $ScheduledExecutionGuardPath
+    . $RetryHelperPath
 
     $ScheduledExecutionLogger = {
         param([string]$Message)
@@ -260,60 +268,71 @@ try {
         "afternoon"
     )
 
-    if ($SnapshotRole -in $ScheduledSnapshotRoles) {
-        Assert-MoneylineScheduledExecutionValid `
-            -PythonPath $PythonPath `
-            -SourcePath $SourcePath `
-            -TaskIdentity "moneyline_odds_snapshot" `
-            -SnapshotRole $SnapshotRole `
-            -Logger $ScheduledExecutionLogger
-    }
-
-    Write-Log "Checking SportsModel database readiness."
-
     $DatabaseLogger = {
         param([string]$Message)
         Write-Log $Message
     }
 
-    Wait-SportsModelDatabaseReady `
-        -PythonPath $PythonPath `
-        -SourcePath $SourcePath `
-        -TimeoutSeconds 600 `
-        -PollSeconds 15 `
-        -Logger $DatabaseLogger
-
-    Write-Log "Database readiness check completed."
-
-    if ($SnapshotRole -in $ScheduledSnapshotRoles) {
-        Assert-MoneylineScheduledExecutionValid `
-            -PythonPath $PythonPath `
-            -SourcePath $SourcePath `
-            -TaskIdentity "moneyline_odds_snapshot" `
-            -SnapshotRole $SnapshotRole `
-            -Logger $ScheduledExecutionLogger
-    }
-
-    & $PythonPath `
-        $ScriptPath `
-        --snapshot-role $SnapshotRole `
-        --target-date $NormalizedTargetDate 2>&1 |
-        ForEach-Object {
-            $Line = $_.ToString()
-            Write-Host $Line
-            Add-Content `
-                -Path $LogPath `
-                -Value $Line
+    $SnapshotPreflight = {
+        if ($SnapshotRole -in $ScheduledSnapshotRoles) {
+            $null = Assert-MoneylineScheduledExecutionValid `
+                -PythonPath $PythonPath `
+                -SourcePath $SourcePath `
+                -TaskIdentity "moneyline_odds_snapshot" `
+                -SnapshotRole $SnapshotRole `
+                -Logger $ScheduledExecutionLogger
         }
 
-    $PythonExitCode = $LASTEXITCODE
+        Write-Log "Checking SportsModel database readiness."
+        Wait-SportsModelDatabaseReady `
+            -PythonPath $PythonPath `
+            -SourcePath $SourcePath `
+            -TimeoutSeconds 600 `
+            -PollSeconds 15 `
+            -Logger $DatabaseLogger
+        Write-Log "Database readiness check completed."
 
-    if ($PythonExitCode -ne 0) {
-        throw (
-            "Odds snapshot ingestion exited with code " +
-            "$PythonExitCode."
-        )
+        if ($SnapshotRole -in $ScheduledSnapshotRoles) {
+            return Assert-MoneylineScheduledExecutionValid `
+                -PythonPath $PythonPath `
+                -SourcePath $SourcePath `
+                -TaskIdentity "moneyline_odds_snapshot" `
+                -SnapshotRole $SnapshotRole `
+                -ReturnValidity `
+                -Logger $ScheduledExecutionLogger
+        }
     }
+
+    $SnapshotOperation = {
+        & $PythonPath `
+            $ScriptPath `
+            --snapshot-role $SnapshotRole `
+            --target-date $NormalizedTargetDate 2>&1 |
+            ForEach-Object {
+                $Line = $_.ToString()
+                Write-Host $Line
+                Add-Content `
+                    -Path $LogPath `
+                    -Value $Line
+            }
+
+        return $LASTEXITCODE
+    }
+
+    if ($SnapshotRole -in $ScheduledSnapshotRoles) {
+        $MaximumAttempts = 4
+    }
+    else {
+        $MaximumAttempts = 1
+    }
+
+    Invoke-MoneylineOperationWithRetry `
+        -OperationName "Moneyline $SnapshotRole odds snapshot" `
+        -Preflight $SnapshotPreflight `
+        -Operation $SnapshotOperation `
+        -MaxAttempts $MaximumAttempts `
+        -RetryDelaySeconds 900 `
+        -Logger $ScheduledExecutionLogger
 
     Write-Log "Moneyline odds snapshot completed successfully."
     Write-Log "Log file: $LogPath"

@@ -47,12 +47,23 @@ validity guard does not itself schedule retries.
 | Late Night snapshot | 11:00 PM | Next Pacific date |
 
 The wrappers check once before readiness or task-dependency waits and again
-immediately before provider or workflow execution. An expired run exits
+immediately before provider or workflow execution. Fixed scheduled writers
+make at most four application-controlled attempts, separated by 15 minutes,
+but only when the Python entry point reports the dedicated proven-transient
+exit code. Provider timeouts, connection failures, HTTP 408/425/429, and HTTP
+5xx responses are transient. Configuration, data-integrity, dependency,
+schema, database-identity, unknown-timing, and other unclassified failures are
+not retried.
+
+Every retry repeats the scheduled/PIT guard and native database readiness
+check. Pregame also reloads its canonical first-pitch deadline, and Tomorrow
+Preview revalidates Opening. A retry is refused before sleeping when its next
+start would reach or cross the last verified PIT deadline. An expired run exits
 nonzero, records its intended schedule, target date, validity window, and
 refusal reason in the task log, and must remain a point-in-time gap. Do not
 backfill an expired snapshot or prediction with later evidence. `near_close`
-remains an explicitly invoked, game-relative capture and is not one of these
-fixed scheduled roles.
+remains an explicitly invoked, game-relative capture and is not retried as a
+fixed scheduled role.
 
 Pregame's second check also reads the earliest canonical MLB start for the
 current Pacific target date. Its effective deadline is the earlier of that
@@ -75,6 +86,16 @@ date with a successful task result. Preview cannot generate output from a
 missing, failed, or still-running Opening capture. This dependency permits a
 normal Opening retry at or after 6:45 PM without allowing Preview to overtake
 it; no separate static 6:45 PM Opening cutoff is applied.
+
+Postgame retains both normal 7:15 AM and 1:15 PM executions. Each execution
+may retry a proven transient provider failure inside its own one-hour window;
+ordinary not-yet-final games remain pending rather than being treated as an
+error. Results persistence, settlement, and audit paths remain idempotent.
+
+Windows Task Scheduler restart settings are retained as defense-in-depth, but
+the production recovery contract does not rely on them: a completed
+PowerShell task with exit code 1 has not been observed to relaunch. The
+application retry boundary and its logs are authoritative.
 
 ### 1. Synchronize the schedule
 

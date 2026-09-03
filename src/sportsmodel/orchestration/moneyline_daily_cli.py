@@ -7,6 +7,7 @@ from sportsmodel.orchestration.moneyline_daily import (
     DEFAULT_SCHEDULE_DAYS_AHEAD,
     run_moneyline_daily_pregame,
 )
+from sportsmodel.utils.transient_errors import operational_failure_exit_code
 
 
 def main(
@@ -31,7 +32,7 @@ def main(
             "Daily Moneyline pregame run failed: "
             f"{type(error).__name__}: {error}"
         )
-        return 1
+        return operational_failure_exit_code(error)
 
     print("=" * 76)
     print(

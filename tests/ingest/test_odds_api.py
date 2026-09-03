@@ -6,6 +6,7 @@ from sportsmodel.ingest import odds_api
 from sportsmodel.ingest.odds_provenance import (
     ProviderSportsbookIdentity,
 )
+from sportsmodel.utils.transient_errors import RetryableOperationalError
 
 
 def test_evening_roles_are_live_scheduled_snapshots() -> None:
@@ -61,6 +62,48 @@ class FakeResponse:
 
     def json(self) -> list[object]:
         return []
+
+
+def test_http_502_is_recorded_and_raised_as_retryable(monkeypatch) -> None:
+    connection = FakeConnection()
+    failed_arguments = {}
+
+    class BadGatewayResponse(FakeResponse):
+        status_code = 502
+        text = "bad gateway"
+
+    monkeypatch.setenv("ODDS_API_KEY", "test-key")
+    monkeypatch.setattr(odds_api, "get_connection", lambda: connection)
+    monkeypatch.setattr(
+        odds_api,
+        "create_ingestion_run",
+        lambda *unused_args, **unused_kwargs: 182,
+    )
+    monkeypatch.setattr(
+        odds_api,
+        "record_ingestion_response",
+        lambda *unused_args, **unused_kwargs: datetime.now(timezone.utc),
+    )
+    monkeypatch.setattr(
+        odds_api,
+        "mark_ingestion_run_failed",
+        lambda *unused_args, **arguments: failed_arguments.update(arguments),
+    )
+    monkeypatch.setattr(
+        odds_api.requests,
+        "get",
+        lambda *unused_args, **unused_kwargs: BadGatewayResponse(),
+    )
+
+    with pytest.raises(RetryableOperationalError, match="status 502"):
+        odds_api.fetch_live_odds(
+            target_date=date(2026, 8, 7),
+            snapshot_role="morning",
+        )
+
+    assert connection.rollbacks == 1
+    assert failed_arguments["ingestion_run_id"] == 182
+    assert failed_arguments["status_code"] == 502
 
 
 def test_create_ingestion_run_rejects_duplicate_snapshot(

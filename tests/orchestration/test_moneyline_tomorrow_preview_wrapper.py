@@ -48,7 +48,7 @@ def test_wrapper_checks_opening_before_preview_generation() -> None:
     assert opening_check < last_run_check < preview_call
     assert result_check < preview_call
     assert "Start-Sleep -Seconds 30" in wrapper
-    assert "Attempt $Attempt/20" in wrapper
+    assert "Attempt $OpeningAttempt/20" in wrapper
 
 
 def test_wrapper_runs_shared_readiness_before_opening_and_preview() -> None:
@@ -65,6 +65,17 @@ def test_wrapper_runs_shared_readiness_before_opening_and_preview() -> None:
     assert "$DatabaseReadinessPath" in wrapper
     assert ". $DatabaseReadinessPath" in wrapper
     assert first_guard < readiness < opening_check < second_guard < preview_call
+
+
+def test_wrapper_retries_only_through_shared_retry_boundary() -> None:
+    wrapper = _wrapper()
+
+    assert ". $RetryHelperPath" in wrapper
+    assert "Invoke-MoneylineOperationWithRetry" in wrapper
+    assert "-MaxAttempts 4" in wrapper
+    assert "-RetryDelaySeconds 900" in wrapper
+    assert "return $PreviewExitCode" in wrapper
+    assert "New-MoneylineRetryableException" in wrapper
 
 
 def test_permanent_readiness_rejection_stops_before_opening_and_preview(
@@ -120,6 +131,20 @@ def test_permanent_readiness_rejection_stops_before_opening_and_preview(
         "        [scriptblock]$Logger\n"
         "    )\n"
         "    throw 'Database readiness failed permanently: migration 029 absent.'\n"
+        "}\n",
+        encoding="ascii",
+    )
+    (scripts / "invoke_moneyline_retry.ps1").write_text(
+        "function Invoke-MoneylineOperationWithRetry {\n"
+        "    param(\n"
+        "        [string]$OperationName,\n"
+        "        [scriptblock]$Preflight,\n"
+        "        [scriptblock]$Operation,\n"
+        "        [int]$MaxAttempts,\n"
+        "        [int]$RetryDelaySeconds,\n"
+        "        [scriptblock]$Logger\n"
+        "    )\n"
+        "    & $Preflight\n"
         "}\n",
         encoding="ascii",
     )
@@ -180,5 +205,6 @@ def test_wrapper_passes_same_pacific_target_date_and_propagates_failure() -> Non
     assert 'FindSystemTimeZoneById(\n    "Pacific Standard Time"' in wrapper
     assert "--target-date $TargetDate" in wrapper[preview_call:]
     assert "$PreviewExitCode = $LASTEXITCODE" in wrapper[preview_call:]
-    assert "if ($PreviewExitCode -ne 0)" in wrapper[preview_call:]
+    assert "return $PreviewExitCode" in wrapper[preview_call:]
+    assert "Invoke-MoneylineOperationWithRetry" in wrapper[preview_call:]
     assert "exit 1" in wrapper[preview_call:]

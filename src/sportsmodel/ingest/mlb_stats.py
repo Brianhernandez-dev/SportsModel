@@ -14,6 +14,7 @@ from sportsmodel.ingest.game_matching import (
     get_or_create_canonical_game,
 )
 from sportsmodel.ingest.team_identity import normalize_team_name
+from sportsmodel.utils.transient_errors import is_retryable_provider_error
 
 
 SOURCE_NAME = "mlb_stats"
@@ -87,6 +88,10 @@ class HistoricalResultsDateSummary:
     schedule_error: str | None = None
 
     database_error: str | None = None
+
+    retryable_failures: int = 0
+
+    nonretryable_failures: int = 0
 
     @property
     def failed(self) -> bool:
@@ -163,6 +168,18 @@ class HistoricalResultsBackfillSummary:
             summary.boxscores_failed
             for summary in self.date_summaries
         )
+
+    @property
+    def failures_are_retryable(self) -> bool:
+        retryable = sum(
+            summary.retryable_failures
+            for summary in self.date_summaries
+        )
+        nonretryable = sum(
+            summary.nonretryable_failures
+            for summary in self.date_summaries
+        )
+        return retryable > 0 and nonretryable == 0
 
 
 def daterange(
@@ -410,6 +427,7 @@ def _process_schedule_date(
             schedule_date
         )
     except Exception as error:
+        retryable = is_retryable_provider_error(error)
         return HistoricalResultsDateSummary(
             schedule_date=schedule_date,
             schedule_games_received=0,
@@ -419,6 +437,8 @@ def _process_schedule_date(
             boxscores_skipped_complete=0,
             boxscores_failed=0,
             schedule_error=_format_error(error),
+            retryable_failures=int(retryable),
+            nonretryable_failures=int(not retryable),
         )
 
     schedule_games = _extract_schedule_games(
@@ -442,6 +462,7 @@ def _process_schedule_date(
             boxscores_skipped_complete=0,
             boxscores_failed=0,
             database_error=_format_error(error),
+            nonretryable_failures=1,
         )
 
     try:
@@ -514,6 +535,7 @@ def _process_schedule_date(
             boxscores_skipped_complete=0,
             boxscores_failed=0,
             database_error=_format_error(error),
+            nonretryable_failures=1,
         )
 
     finally:
@@ -546,11 +568,14 @@ def _process_schedule_date(
                     "Box-score completeness check failed: "
                     + _format_error(error)
                 ),
+                nonretryable_failures=1,
             )
 
     boxscores_processed = 0
     boxscores_skipped_complete = 0
     boxscores_failed = 0
+    retryable_failures = 0
+    nonretryable_failures = 0
 
     for reference in references:
         if reference.game_id in complete_game_ids:
@@ -565,8 +590,12 @@ def _process_schedule_date(
 
             boxscores_processed += 1
 
-        except Exception:
+        except Exception as error:
             boxscores_failed += 1
+            if is_retryable_provider_error(error):
+                retryable_failures += 1
+            else:
+                nonretryable_failures += 1
 
     return HistoricalResultsDateSummary(
         schedule_date=schedule_date,
@@ -578,6 +607,8 @@ def _process_schedule_date(
             boxscores_skipped_complete
         ),
         boxscores_failed=boxscores_failed,
+        retryable_failures=retryable_failures,
+        nonretryable_failures=nonretryable_failures,
     )
 
 

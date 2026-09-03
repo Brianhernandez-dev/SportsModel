@@ -47,6 +47,17 @@ def test_live_snapshot_uses_shared_database_readiness() -> None:
     assert "Wait-SportsModelDatabaseReady" in wrapper
 
 
+def test_live_snapshot_uses_bounded_shared_retry() -> None:
+    wrapper = WRAPPER_PATH.read_text(encoding="utf-8-sig")
+
+    assert '"scripts\\invoke_moneyline_retry.ps1"' in wrapper
+    assert ". $RetryHelperPath" in wrapper
+    assert "Invoke-MoneylineOperationWithRetry" in wrapper
+    assert "-MaxAttempts $MaximumAttempts" in wrapper
+    assert "-RetryDelaySeconds 900" in wrapper
+    assert "return $LASTEXITCODE" in wrapper
+
+
 def test_non_live_modes_exit_before_database_readiness() -> None:
     wrapper = WRAPPER_PATH.read_text(encoding="utf-8-sig")
 

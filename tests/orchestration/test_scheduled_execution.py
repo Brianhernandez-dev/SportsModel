@@ -413,6 +413,9 @@ def test_daily_wrappers_recheck_after_readiness_before_workflow(
     assert first_guard < readiness < second_guard < workflow
     assert wrapper.count("Assert-MoneylineScheduledExecutionValid") == 2
     assert f'-TaskIdentity "{task_identity}"' in wrapper
+    assert ". $RetryHelperPath" in wrapper
+    assert "Invoke-MoneylineOperationWithRetry" in wrapper
+    assert "-MaxAttempts 4" in wrapper
 
     if task_identity == "moneyline_pregame":
         assert "-EnforceCanonicalPregameDeadline" not in wrapper[

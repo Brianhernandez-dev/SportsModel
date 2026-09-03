@@ -6,6 +6,7 @@ from typing import Any
 from sportsmodel.ingest.odds_api import (
     fetch_live_odds,
 )
+from sportsmodel.utils.transient_errors import operational_failure_exit_code
 
 
 AUXILIARY_SNAPSHOT_ROLES = (
@@ -87,7 +88,7 @@ def main(
             "MLB Moneyline odds ingestion failed: "
             f"{type(error).__name__}: {error}"
         )
-        return 1
+        return operational_failure_exit_code(error)
 
     print("=" * 72)
     print("SportsModel MLB Moneyline Odds Snapshot")

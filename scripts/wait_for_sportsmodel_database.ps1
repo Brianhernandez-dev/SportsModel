@@ -61,6 +61,21 @@ function Wait-SportsModelDatabaseReady {
     }
 
 
+    function New-ReadinessException {
+        param(
+            [Parameter(Mandatory)]
+            [string]$Status,
+
+            [Parameter(Mandatory)]
+            [string]$Message
+        )
+
+        $Exception = [InvalidOperationException]::new($Message)
+        $Exception.Data["SportsModelFailureClassification"] = $Status
+        return $Exception
+    }
+
+
     function Test-SportsModelNativePostgreSQLIdentity {
         try {
             $Service = Get-CimInstance `
@@ -357,11 +372,11 @@ function Wait-SportsModelDatabaseReady {
         $IdentityResult = Test-SportsModelNativePostgreSQLIdentity
 
         if ($IdentityResult.Status -eq "permanent") {
-            throw (
+            throw (New-ReadinessException -Status "permanent" -Message (
                 "SportsModel database readiness failed permanently: " +
                 "$($IdentityResult.Message) No database service was " +
                 "started automatically."
-            )
+            ))
         }
 
         if ($IdentityResult.Status -eq "ready") {
@@ -377,11 +392,11 @@ function Wait-SportsModelDatabaseReady {
             }
 
             if ($DatabaseResult.Status -eq "permanent") {
-                throw (
+                throw (New-ReadinessException -Status "permanent" -Message (
                     "SportsModel database readiness failed permanently: " +
                     "$($DatabaseResult.Message) No database service was " +
                     "started automatically."
-                )
+                ))
             }
 
             $LastTransientMessage = $DatabaseResult.Message
@@ -430,11 +445,11 @@ function Wait-SportsModelDatabaseReady {
 
     $Timer.Stop()
 
-    throw (
+    throw (New-ReadinessException -Status "transient" -Message (
         "SportsModel native PostgreSQL did not become ready within " +
         "$TimeoutSeconds seconds. Last condition: " +
         "$LastTransientMessage Verify Windows service " +
         "'$ExpectedServiceName' and localhost:$ExpectedPort. No " +
         "database service was started automatically."
-    )
+    ))
 }

@@ -6,6 +6,7 @@ from typing import Any
 from sportsmodel.orchestration.moneyline_daily import (
     run_moneyline_daily_postgame,
 )
+from sportsmodel.utils.transient_errors import operational_failure_exit_code
 
 
 DEFAULT_TARGET_DATE = date.today() - timedelta(days=1)
@@ -30,7 +31,7 @@ def main(
             "Daily Moneyline postgame run failed: "
             f"{type(error).__name__}: {error}"
         )
-        return 1
+        return operational_failure_exit_code(error)
 
     print("=" * 76)
     print(

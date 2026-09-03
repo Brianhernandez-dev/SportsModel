@@ -20,6 +20,9 @@ $ScheduledExecutionGuardPath = Join-Path `
 $DatabaseReadinessPath = Join-Path `
     $ProjectRoot `
     "scripts\wait_for_sportsmodel_database.ps1"
+$RetryHelperPath = Join-Path `
+    $ProjectRoot `
+    "scripts\invoke_moneyline_retry.ps1"
 $OpeningTaskName = "SportsModel - Moneyline Opening Snapshot"
 $LogDirectory = Join-Path `
     $ProjectRoot `
@@ -69,6 +72,7 @@ try {
         $PreviewScriptPath,
         $PreviewModulePath,
         $DatabaseReadinessPath,
+        $RetryHelperPath,
         $ScheduledExecutionGuardPath
     )) {
         if (-not (Test-Path $RequiredPath)) {
@@ -119,98 +123,105 @@ try {
 
     . $DatabaseReadinessPath
     . $ScheduledExecutionGuardPath
+    . $RetryHelperPath
 
     $ScheduledExecutionLogger = {
         param([string]$Message)
         Write-Log $Message
     }
 
-    Assert-MoneylineScheduledExecutionValid `
-        -PythonPath $PythonPath `
-        -SourcePath $SourcePath `
-        -TaskIdentity "moneyline_tomorrow_preview" `
-        -Logger $ScheduledExecutionLogger
-
-    Write-Log "Checking SportsModel database readiness."
-
     $DatabaseLogger = {
         param([string]$Message)
         Write-Log $Message
     }
 
-    Wait-SportsModelDatabaseReady `
-        -PythonPath $PythonPath `
-        -SourcePath $SourcePath `
-        -TimeoutSeconds 600 `
-        -PollSeconds 15 `
-        -Logger $DatabaseLogger
+    $PreviewPreflight = {
+        $null = Assert-MoneylineScheduledExecutionValid `
+            -PythonPath $PythonPath `
+            -SourcePath $SourcePath `
+            -TaskIdentity "moneyline_tomorrow_preview" `
+            -Logger $ScheduledExecutionLogger
 
-    Write-Log "Database readiness check completed."
+        Write-Log "Checking SportsModel database readiness."
+        Wait-SportsModelDatabaseReady `
+            -PythonPath $PythonPath `
+            -SourcePath $SourcePath `
+            -TimeoutSeconds 600 `
+            -PollSeconds 15 `
+            -Logger $DatabaseLogger
+        Write-Log "Database readiness check completed."
+        Write-Log "Checking opening snapshot task."
 
-    Write-Log "Checking opening snapshot task."
+        for ($OpeningAttempt = 1; $OpeningAttempt -le 20; $OpeningAttempt++) {
+            $OpeningTask = Get-ScheduledTask -TaskName $OpeningTaskName
 
-    for ($Attempt = 1; $Attempt -le 20; $Attempt++) {
-        $OpeningTask = Get-ScheduledTask -TaskName $OpeningTaskName
+            if ($OpeningTask.State -ne "Running") {
+                break
+            }
 
-        if ($OpeningTask.State -ne "Running") {
-            break
+            Write-Log (
+                "Opening snapshot is still running. Waiting 30 seconds. " +
+                "Attempt $OpeningAttempt/20."
+            )
+            Start-Sleep -Seconds 30
         }
 
-        Write-Log (
-            "Opening snapshot is still running. Waiting 30 seconds. " +
-            "Attempt $Attempt/20."
-        )
-        Start-Sleep -Seconds 30
+        $OpeningTask = Get-ScheduledTask -TaskName $OpeningTaskName
+
+        if ($OpeningTask.State -eq "Running") {
+            throw (New-MoneylineRetryableException -Message (
+                "Opening snapshot did not finish before preview timeout."
+            ))
+        }
+
+        $OpeningInfo = Get-ScheduledTaskInfo -TaskName $OpeningTaskName
+
+        if ($OpeningInfo.LastRunTime.Date -ne $PacificNow.Date) {
+            throw (
+                "Opening snapshot has not run today. Last run: " +
+                "$($OpeningInfo.LastRunTime)."
+            )
+        }
+
+        if ($OpeningInfo.LastTaskResult -ne 0) {
+            throw (
+                "Opening snapshot task failed with result " +
+                "$($OpeningInfo.LastTaskResult)."
+            )
+        }
+
+        Write-Log "Opening snapshot verified successfully."
+
+        return Assert-MoneylineScheduledExecutionValid `
+            -PythonPath $PythonPath `
+            -SourcePath $SourcePath `
+            -TaskIdentity "moneyline_tomorrow_preview" `
+            -ReturnValidity `
+            -Logger $ScheduledExecutionLogger
     }
 
-    $OpeningTask = Get-ScheduledTask -TaskName $OpeningTaskName
+    $PreviewOperation = {
+        Write-Log "Starting Tomorrow Preview generation."
+        $PreviewOutput = & $PythonPath `
+            $PreviewScriptPath `
+            --target-date $TargetDate `
+            2>&1
+        $PreviewExitCode = $LASTEXITCODE
 
-    if ($OpeningTask.State -eq "Running") {
-        throw "Opening snapshot did not finish before preview timeout."
+        foreach ($OutputLine in $PreviewOutput) {
+            Write-Log "$OutputLine"
+        }
+
+        return $PreviewExitCode
     }
 
-    $OpeningInfo = Get-ScheduledTaskInfo -TaskName $OpeningTaskName
-
-    if ($OpeningInfo.LastRunTime.Date -ne $PacificNow.Date) {
-        throw (
-            "Opening snapshot has not run today. Last run: " +
-            "$($OpeningInfo.LastRunTime)."
-        )
-    }
-
-    if ($OpeningInfo.LastTaskResult -ne 0) {
-        throw (
-            "Opening snapshot task failed with result " +
-            "$($OpeningInfo.LastTaskResult)."
-        )
-    }
-
-    Write-Log "Opening snapshot verified successfully."
-
-    Assert-MoneylineScheduledExecutionValid `
-        -PythonPath $PythonPath `
-        -SourcePath $SourcePath `
-        -TaskIdentity "moneyline_tomorrow_preview" `
+    Invoke-MoneylineOperationWithRetry `
+        -OperationName "Tomorrow Preview" `
+        -Preflight $PreviewPreflight `
+        -Operation $PreviewOperation `
+        -MaxAttempts 4 `
+        -RetryDelaySeconds 900 `
         -Logger $ScheduledExecutionLogger
-
-    Write-Log "Starting Tomorrow Preview generation."
-
-    $PreviewOutput = & $PythonPath `
-        $PreviewScriptPath `
-        --target-date $TargetDate `
-        2>&1
-    $PreviewExitCode = $LASTEXITCODE
-
-    foreach ($OutputLine in $PreviewOutput) {
-        Write-Log "$OutputLine"
-    }
-
-    if ($PreviewExitCode -ne 0) {
-        throw (
-            "Tomorrow Preview failed with exit code " +
-            "$PreviewExitCode."
-        )
-    }
 
     Write-Log "Tomorrow Preview completed successfully for $TargetDate."
     exit 0

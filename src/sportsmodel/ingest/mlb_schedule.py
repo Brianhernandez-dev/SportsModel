@@ -12,6 +12,7 @@ from sportsmodel.ingest.mlb_stats import (
     get_team_id,
     parse_game_datetime,
 )
+from sportsmodel.utils.transient_errors import is_retryable_provider_error
 
 
 SOURCE_NAME = "mlb_stats"
@@ -59,6 +60,8 @@ class ScheduleSyncDateSummary:
     games_skipped: int
 
     error_message: str | None = None
+
+    failure_is_retryable: bool = False
 
     @property
     def failed(self) -> bool:
@@ -244,6 +247,7 @@ def _sync_schedule_date(
             games_synchronized=0,
             games_skipped=0,
             error_message=_format_error(error),
+            failure_is_retryable=is_retryable_provider_error(error),
         )
 
     schedule_games = _extract_schedule_games(
@@ -259,6 +263,7 @@ def _sync_schedule_date(
             games_synchronized=0,
             games_skipped=0,
             error_message=_format_error(error),
+            failure_is_retryable=False,
         )
 
     games_synchronized = 0
@@ -320,6 +325,7 @@ def _sync_schedule_date(
             games_synchronized=0,
             games_skipped=games_skipped,
             error_message=_format_error(error),
+            failure_is_retryable=False,
         )
 
     finally:

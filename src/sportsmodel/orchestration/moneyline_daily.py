@@ -38,6 +38,7 @@ from sportsmodel.settlement.moneyline_paper_service import (
 from sportsmodel.settlement.moneyline_early_entry_service import (
     settle_moneyline_early_entry,
 )
+from sportsmodel.utils.transient_errors import RetryableOperationalError
 
 
 DEFAULT_SCHEDULE_DAYS_AHEAD = 7
@@ -295,7 +296,15 @@ def _validate_schedule_sync_for_required_dates(
     )
 
     if failed_required_dates:
-        raise RuntimeError(
+        error_type = (
+            RetryableOperationalError
+            if all(
+                item.failure_is_retryable
+                for item in failed_required_dates
+            )
+            else RuntimeError
+        )
+        raise error_type(
             "MLB schedule synchronization failed for required date(s): "
             + _format_schedule_failures(
                 failed_required_dates
@@ -706,7 +715,16 @@ def _run_postgame_results_ingestion(
         results_summary.dates_failed > 0
         or results_summary.boxscores_failed > 0
     ):
-        raise RuntimeError(
+        error_type = (
+            RetryableOperationalError
+            if getattr(
+                results_summary,
+                "failures_are_retryable",
+                False,
+            )
+            else RuntimeError
+        )
+        raise error_type(
             "MLB results ingestion reported failures: "
             f"dates={results_summary.dates_failed}, "
             f"boxscores={results_summary.boxscores_failed}."

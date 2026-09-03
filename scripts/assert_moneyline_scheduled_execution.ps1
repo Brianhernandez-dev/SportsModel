@@ -27,6 +27,8 @@ function Assert-MoneylineScheduledExecutionValid {
 
         [switch]$EnforceCanonicalPregameDeadline,
 
+        [switch]$ReturnValidity,
+
         [scriptblock]$Logger
     )
 
@@ -80,5 +82,33 @@ function Assert-MoneylineScheduledExecutionValid {
             "Scheduled execution validity check refused task " +
             "$TaskIdentity before live workflow or provider execution."
         )
+    }
+
+    if ($ReturnValidity) {
+        $WindowLine = @(
+            $ValidityOutput |
+                ForEach-Object { $_.ToString() } |
+                Where-Object { $_ -like "Valid start window:*" }
+        ) | Select-Object -Last 1
+        $WindowMatch = [regex]::Match(
+            [string]$WindowLine,
+            ",\s*(?<deadline>[^)]+)\)$"
+        )
+
+        if (-not $WindowMatch.Success) {
+            throw "Scheduled execution deadline was not parseable."
+        }
+
+        $LatestValidStartTime = [DateTimeOffset]::MinValue
+        if (-not [DateTimeOffset]::TryParse(
+            $WindowMatch.Groups["deadline"].Value,
+            [ref]$LatestValidStartTime
+        )) {
+            throw "Scheduled execution deadline was not parseable."
+        }
+
+        return [pscustomobject]@{
+            LatestValidStartTime = $LatestValidStartTime
+        }
     }
 }

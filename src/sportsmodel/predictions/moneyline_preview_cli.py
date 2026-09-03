@@ -7,6 +7,7 @@ from sportsmodel.predictions.moneyline_service import (
     DEFAULT_MODEL_DIRECTORY,
     run_moneyline_predictions,
 )
+from sportsmodel.utils.transient_errors import operational_failure_exit_code
 
 
 PACIFIC_TIME_ZONE = ZoneInfo("America/Los_Angeles")
@@ -26,7 +27,7 @@ def main(argv: list[str] | None = None) -> int:
             "Tomorrow Preview failed: "
             f"{type(error).__name__}: {error}"
         )
-        return 1
+        return operational_failure_exit_code(error)
 
     print("=" * 84)
     print("SPORTSMODEL MLB MONEYLINE — TOMORROW PREVIEW")

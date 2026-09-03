@@ -11,6 +11,7 @@ $ScriptPath = Join-Path $ProjectRoot "scripts\run_moneyline_daily_pregame.py"
 $SourcePath = Join-Path $ProjectRoot "src"
 $DatabaseReadinessPath = Join-Path $ProjectRoot "scripts\wait_for_sportsmodel_database.ps1"
 $ScheduledExecutionGuardPath = Join-Path $ProjectRoot "scripts\assert_moneyline_scheduled_execution.ps1"
+$RetryHelperPath = Join-Path $ProjectRoot "scripts\invoke_moneyline_retry.ps1"
 $LogDirectory = Join-Path $ProjectRoot "logs\moneyline_daily_pregame"
 
 if (-not (Test-Path $LogDirectory)) {
@@ -69,6 +70,10 @@ try {
             "Scheduled execution guard was not found: " +
             $ScheduledExecutionGuardPath
         )
+    }
+
+    if (-not (Test-Path $RetryHelperPath)) {
+        throw "Moneyline retry helper was not found: $RetryHelperPath"
     }
 
     Set-Location $ProjectRoot
@@ -144,53 +149,61 @@ try {
 
     . $DatabaseReadinessPath
     . $ScheduledExecutionGuardPath
+    . $RetryHelperPath
 
     $ScheduledExecutionLogger = {
         param([string]$Message)
         Write-Log $Message
     }
 
-    Assert-MoneylineScheduledExecutionValid `
-        -PythonPath $PythonPath `
-        -SourcePath $SourcePath `
-        -TaskIdentity "moneyline_pregame" `
-        -Logger $ScheduledExecutionLogger
-
-    Write-Log "Checking SportsModel database readiness."
-
     $DatabaseLogger = {
         param([string]$Message)
         Write-Log $Message
     }
 
-    Wait-SportsModelDatabaseReady `
-        -PythonPath $PythonPath `
-        -SourcePath $SourcePath `
-        -TimeoutSeconds 600 `
-        -PollSeconds 15 `
-        -Logger $DatabaseLogger
+    $PregamePreflight = {
+        $null = Assert-MoneylineScheduledExecutionValid `
+            -PythonPath $PythonPath `
+            -SourcePath $SourcePath `
+            -TaskIdentity "moneyline_pregame" `
+            -Logger $ScheduledExecutionLogger
 
-    Write-Log "Database readiness check completed."
+        Write-Log "Checking SportsModel database readiness."
+        Wait-SportsModelDatabaseReady `
+            -PythonPath $PythonPath `
+            -SourcePath $SourcePath `
+            -TimeoutSeconds 600 `
+            -PollSeconds 15 `
+            -Logger $DatabaseLogger
+        Write-Log "Database readiness check completed."
 
-    Assert-MoneylineScheduledExecutionValid `
-        -PythonPath $PythonPath `
-        -SourcePath $SourcePath `
-        -TaskIdentity "moneyline_pregame" `
-        -EnforceCanonicalPregameDeadline `
-        -Logger $ScheduledExecutionLogger
-
-    & $PythonPath $ScriptPath 2>&1 |
-        ForEach-Object {
-            $Line = $_.ToString()
-            Write-Host $Line
-            Add-Content -Path $LogPath -Value $Line
-        }
-
-    $PythonExitCode = $LASTEXITCODE
-
-    if ($PythonExitCode -ne 0) {
-        throw "Daily pregame workflow exited with code $PythonExitCode."
+        return Assert-MoneylineScheduledExecutionValid `
+            -PythonPath $PythonPath `
+            -SourcePath $SourcePath `
+            -TaskIdentity "moneyline_pregame" `
+            -EnforceCanonicalPregameDeadline `
+            -ReturnValidity `
+            -Logger $ScheduledExecutionLogger
     }
+
+    $PregameOperation = {
+        & $PythonPath $ScriptPath 2>&1 |
+            ForEach-Object {
+                $Line = $_.ToString()
+                Write-Host $Line
+                Add-Content -Path $LogPath -Value $Line
+            }
+
+        return $LASTEXITCODE
+    }
+
+    Invoke-MoneylineOperationWithRetry `
+        -OperationName "Daily Moneyline Pregame" `
+        -Preflight $PregamePreflight `
+        -Operation $PregameOperation `
+        -MaxAttempts 4 `
+        -RetryDelaySeconds 900 `
+        -Logger $ScheduledExecutionLogger
 
     Write-Log "Daily Moneyline pregame workflow completed successfully."
     Write-Log "Log file: $LogPath"

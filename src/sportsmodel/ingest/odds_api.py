@@ -19,6 +19,7 @@ from sportsmodel.ingest.odds_provenance import (
     resolve_provider_sportsbook,
 )
 from sportsmodel.ingest.team_identity import normalize_team_name
+from sportsmodel.utils.transient_errors import RetryableOperationalError
 
 
 SPORT = ODDS_API_MLB_SPORT_KEY
@@ -614,10 +615,13 @@ def fetch_live_odds(
         )
 
         if status_code != 200:
-            raise RuntimeError(
-                f"Odds API request failed with status "
+            error_message = (
+                "Odds API request failed with status "
                 f"{status_code}: {response.text}"
             )
+            if status_code in {408, 425, 429} or 500 <= status_code <= 599:
+                raise RetryableOperationalError(error_message)
+            raise RuntimeError(error_message)
 
         raw_games = response.json()
         games = parse_odds_api_h2h_response(
