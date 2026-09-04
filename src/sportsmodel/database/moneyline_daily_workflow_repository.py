@@ -1,9 +1,16 @@
 ﻿from datetime import date
+from dataclasses import dataclass
 from typing import Any
 
 from sportsmodel.models.moneyline_daily_workflow import (
     MoneylineDailyWorkflowRun,
 )
+
+
+@dataclass(frozen=True)
+class MoneylineDailyOfficialEvidenceCounts:
+    prediction_runs: int
+    entry_odds_runs: int
 
 
 _WORKFLOW_COLUMNS = """
@@ -64,6 +71,50 @@ def get_or_create_moneyline_daily_workflow_run(
         )
 
     return _build_workflow_run(row)
+
+
+def load_moneyline_daily_official_evidence_counts(
+    cursor: Any,
+    *,
+    target_date: date,
+    sport: str,
+) -> MoneylineDailyOfficialEvidenceCounts:
+    """Count independently persisted official evidence for one date."""
+
+    cursor.execute(
+        """
+        SELECT
+            (
+                SELECT COUNT(*)
+                FROM moneyline_prediction_runs
+                WHERE target_date = %s
+                  AND run_type = 'official'
+            ),
+            (
+                SELECT COUNT(*)
+                FROM odds_ingestion_runs
+                WHERE target_date = %s
+                  AND snapshot_role = 'entry'
+                  AND sport = %s
+            );
+        """,
+        (
+            target_date,
+            target_date,
+            sport,
+        ),
+    )
+    row = cursor.fetchone()
+
+    if row is None:
+        raise RuntimeError(
+            "Official Moneyline evidence count query returned no row."
+        )
+
+    return MoneylineDailyOfficialEvidenceCounts(
+        prediction_runs=row[0],
+        entry_odds_runs=row[1],
+    )
 
 
 def _build_workflow_run(

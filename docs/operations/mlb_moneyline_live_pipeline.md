@@ -147,6 +147,14 @@ There should be no duplicates or integrity issues.
 
 The same date can safely be rerun when some games or box scores are not yet available.
 
+If Pregame failed before creating any official prediction or entry-odds
+evidence and its PIT window was intentionally allowed to expire, Postgame still
+ingests canonical results. It records an explicit no-official-card outcome,
+skips official candidate settlement and audit, and reconciles any independently
+persisted Early Entry cohort. This path is allowed only for a failed early-stage
+Pregame workflow with no linked or independently persisted official evidence;
+missing linkage in later workflow stages remains an integrity failure.
+
 ### 7. Settle paper candidates
 
     D:\SportsModel\.venv\Scripts\python.exe .\scripts\settle_moneyline_paper_candidates.py --prediction-run-id PREDICTION_RUN_ID --odds-run-id ODDS_RUN_ID

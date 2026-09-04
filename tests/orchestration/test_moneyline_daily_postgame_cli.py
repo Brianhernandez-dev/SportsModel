@@ -91,6 +91,28 @@ def test_returns_failure_when_postgame_raises(
     assert "Results unavailable." in output
 
 
+def test_reports_intentional_no_card_completion(capsys) -> None:
+    exit_code = main(
+        ["--target-date", "2026-09-02"],
+        postgame_runner=lambda **arguments: SimpleNamespace(
+            workflow_run_id=148,
+            target_date=arguments["target_date"],
+            prediction_run_id=None,
+            odds_ingestion_run_id=None,
+            games_processed=12,
+            boxscores_processed=12,
+            settlements_saved=0,
+            pending_candidates=0,
+            pipeline_state="no_official_card",
+        ),
+    )
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "Official card:      ABSENT" in output
+    assert "official settlement skipped" in output
+
+
 def test_defaults_postgame_to_yesterday() -> None:
     calls = []
 

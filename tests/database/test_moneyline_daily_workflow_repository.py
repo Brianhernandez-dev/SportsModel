@@ -5,6 +5,7 @@ import pytest
 from sportsmodel.database.moneyline_daily_workflow_repository import (
     advance_moneyline_daily_workflow_stage,
     get_or_create_moneyline_daily_workflow_run,
+    load_moneyline_daily_official_evidence_counts,
     mark_moneyline_daily_workflow_awaiting_results,
     mark_moneyline_daily_postgame_pending,
     mark_moneyline_daily_settlement_completed,
@@ -101,6 +102,27 @@ def test_raises_when_upsert_returns_no_row() -> None:
             cursor,
             target_date=TARGET_DATE,
         )
+
+
+def test_loads_official_evidence_counts_for_date_and_sport() -> None:
+    cursor = FakeCursor(returned_row=(0, 0))
+
+    counts = load_moneyline_daily_official_evidence_counts(
+        cursor,
+        target_date=TARGET_DATE,
+        sport="baseball_mlb",
+    )
+
+    assert counts.prediction_runs == 0
+    assert counts.entry_odds_runs == 0
+    assert "run_type = 'official'" in cursor.executed_query
+    assert "snapshot_role = 'entry'" in cursor.executed_query
+    assert "sport = %s" in cursor.executed_query
+    assert cursor.executed_parameters == (
+        TARGET_DATE,
+        TARGET_DATE,
+        "baseball_mlb",
+    )
 
 
 

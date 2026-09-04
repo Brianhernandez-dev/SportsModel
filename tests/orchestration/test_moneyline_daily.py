@@ -1260,6 +1260,195 @@ def test_rejects_missing_postgame_run_ids(
         )
 
 
+def _no_card_workflow(**overrides):
+    values = {
+        "moneyline_daily_workflow_run_id": 148,
+        "target_date": date(2026, 9, 2),
+        "status": "failed",
+        "current_stage": "schedule_sync",
+        "moneyline_prediction_run_id": None,
+        "odds_ingestion_run_id": None,
+        "pregame_completed_at": None,
+        "error_message": "Required schedule synchronization failed.",
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def _no_official_evidence(**overrides):
+    values = {
+        "prediction_runs": 0,
+        "entry_odds_runs": 0,
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def test_postgame_completes_legitimate_no_card_day(
+    monkeypatch,
+    capsys,
+) -> None:
+    calls = []
+    summary = SimpleNamespace(
+        dates_failed=0,
+        boxscores_failed=0,
+        games_processed=12,
+        boxscores_processed=12,
+    )
+
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_get_or_create_workflow",
+        lambda **arguments: _no_card_workflow(),
+    )
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_load_postgame_official_evidence_counts",
+        lambda **arguments: _no_official_evidence(),
+    )
+
+    def unexpected_official_call(**arguments):
+        raise AssertionError("Official settlement/audit must not run.")
+
+    result = moneyline_daily.run_moneyline_daily_postgame(
+        target_date=date(2026, 9, 2),
+        connection_factory=lambda: None,
+        results_fetcher=lambda **arguments: (
+            calls.append(("results", arguments)) or summary
+        ),
+        settlement_runner=unexpected_official_call,
+        early_entry_settlement_runner=lambda **arguments: (
+            calls.append(("early_entry", arguments))
+            or SimpleNamespace(
+                cohort_settlements=(),
+                performance=SimpleNamespace(pending=0),
+            )
+        ),
+        pipeline_auditor=unexpected_official_call,
+    )
+
+    assert [item[0] for item in calls] == ["results", "early_entry"]
+    assert calls[0][1] == {
+        "start_date": date(2026, 9, 2),
+        "end_date": date(2026, 9, 2),
+    }
+    assert result.prediction_run_id is None
+    assert result.odds_ingestion_run_id is None
+    assert result.games_processed == 12
+    assert result.boxscores_processed == 12
+    assert result.settlements_saved == 0
+    assert result.pending_candidates == 0
+    assert result.pipeline_state == "no_official_card"
+
+    output = capsys.readouterr().out
+    assert "completed without an official card" in output
+    assert "official candidate settlement was skipped" in output
+    assert "Early Entry evidence was reconciled independently" in output
+
+
+@pytest.mark.parametrize(
+    ("workflow_overrides", "evidence_overrides"),
+    [
+        ({"status": "awaiting_results"}, {}),
+        ({"current_stage": "odds_ingestion"}, {}),
+        ({}, {"prediction_runs": 1}),
+        ({}, {"entry_odds_runs": 1}),
+    ],
+)
+def test_postgame_rejects_unexpected_missing_official_linkage(
+    monkeypatch,
+    workflow_overrides,
+    evidence_overrides,
+) -> None:
+    results_calls = []
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_get_or_create_workflow",
+        lambda **arguments: _no_card_workflow(**workflow_overrides),
+    )
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_load_postgame_official_evidence_counts",
+        lambda **arguments: _no_official_evidence(**evidence_overrides),
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="outside the legitimate no-card state",
+    ):
+        moneyline_daily.run_moneyline_daily_postgame(
+            target_date=date(2026, 9, 2),
+            connection_factory=lambda: None,
+            results_fetcher=lambda **arguments: results_calls.append(
+                arguments
+            ),
+        )
+
+    assert results_calls == []
+
+
+def test_repeated_no_card_postgame_remains_idempotent(
+    monkeypatch,
+) -> None:
+    persisted_results = set()
+    persisted_early_entry_settlements = set()
+    official_settlement_calls = []
+
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_get_or_create_workflow",
+        lambda **arguments: _no_card_workflow(),
+    )
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_load_postgame_official_evidence_counts",
+        lambda **arguments: _no_official_evidence(),
+    )
+
+    def ingest_results(**arguments):
+        persisted_results.add((arguments["start_date"], 1))
+        return SimpleNamespace(
+            dates_failed=0,
+            boxscores_failed=0,
+            games_processed=1,
+            boxscores_processed=1,
+        )
+
+    def settle_early_entry(**arguments):
+        persisted_early_entry_settlements.add(
+            (arguments["target_date"], 77)
+        )
+        return SimpleNamespace(
+            cohort_settlements=(),
+            performance=SimpleNamespace(pending=0),
+        )
+
+    def settle_official(**arguments):
+        official_settlement_calls.append(arguments)
+        raise AssertionError("No official candidate settlement is valid.")
+
+    results = [
+        moneyline_daily.run_moneyline_daily_postgame(
+            target_date=date(2026, 9, 2),
+            connection_factory=lambda: None,
+            results_fetcher=ingest_results,
+            settlement_runner=settle_official,
+            early_entry_settlement_runner=settle_early_entry,
+        )
+        for _ in range(2)
+    ]
+
+    assert persisted_results == {(date(2026, 9, 2), 1)}
+    assert persisted_early_entry_settlements == {
+        (date(2026, 9, 2), 77)
+    }
+    assert official_settlement_calls == []
+    assert [result.pipeline_state for result in results] == [
+        "no_official_card",
+        "no_official_card",
+    ]
+
+
 def test_runs_postgame_results_ingestion(
     monkeypatch,
 ) -> None:

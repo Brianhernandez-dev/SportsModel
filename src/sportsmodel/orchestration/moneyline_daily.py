@@ -13,6 +13,7 @@ from sportsmodel.database.connection import get_connection
 from sportsmodel.database.moneyline_daily_workflow_repository import (
     advance_moneyline_daily_workflow_stage,
     get_or_create_moneyline_daily_workflow_run,
+    load_moneyline_daily_official_evidence_counts,
     mark_moneyline_daily_workflow_awaiting_results,
     mark_moneyline_daily_workflow_completed,
     mark_moneyline_daily_workflow_failed,
@@ -29,6 +30,7 @@ from sportsmodel.ingest.mlb_schedule import (
 )
 from sportsmodel.ingest.mlb_stats import fetch_historical_results
 from sportsmodel.ingest.odds_api import fetch_live_odds
+from sportsmodel.ingest.odds_api_parser import ODDS_API_MLB_SPORT_KEY
 from sportsmodel.predictions.moneyline_service import (
     run_moneyline_predictions,
 )
@@ -61,8 +63,8 @@ EarlyEntrySettlementRunner = Callable[..., Any]
 class MoneylineDailyPostgameResult:
     workflow_run_id: int
     target_date: date
-    prediction_run_id: int
-    odds_ingestion_run_id: int
+    prediction_run_id: int | None
+    odds_ingestion_run_id: int | None
     games_processed: int
     boxscores_processed: int
     settlements_saved: int
@@ -699,11 +701,44 @@ def _get_postgame_run_ids(
     )
 
 
-def _run_postgame_results_ingestion(
+def _load_postgame_official_evidence_counts(
     *,
-    workflow_run_id: int,
     target_date: date,
     connection_factory: ConnectionFactory,
+):
+    connection = connection_factory()
+
+    try:
+        with connection.cursor() as cursor:
+            return load_moneyline_daily_official_evidence_counts(
+                cursor,
+                target_date=target_date,
+                sport=ODDS_API_MLB_SPORT_KEY,
+            )
+    finally:
+        connection.close()
+
+
+def _is_legitimate_no_card_workflow(
+    *,
+    workflow: Any,
+    official_evidence_counts: Any,
+) -> bool:
+    return (
+        workflow.status == "failed"
+        and workflow.current_stage in {"schedule_sync", "prediction"}
+        and workflow.moneyline_prediction_run_id is None
+        and workflow.odds_ingestion_run_id is None
+        and workflow.pregame_completed_at is None
+        and bool((workflow.error_message or "").strip())
+        and official_evidence_counts.prediction_runs == 0
+        and official_evidence_counts.entry_odds_runs == 0
+    )
+
+
+def _fetch_and_validate_postgame_results(
+    *,
+    target_date: date,
     results_fetcher: ResultsFetcher,
 ):
     results_summary = results_fetcher(
@@ -730,6 +765,21 @@ def _run_postgame_results_ingestion(
             f"boxscores={results_summary.boxscores_failed}."
         )
 
+    return results_summary
+
+
+def _run_postgame_results_ingestion(
+    *,
+    workflow_run_id: int,
+    target_date: date,
+    connection_factory: ConnectionFactory,
+    results_fetcher: ResultsFetcher,
+):
+    results_summary = _fetch_and_validate_postgame_results(
+        target_date=target_date,
+        results_fetcher=results_fetcher,
+    )
+
     _update_workflow(
         connection_factory=connection_factory,
         updater=advance_moneyline_daily_workflow_stage,
@@ -738,6 +788,46 @@ def _run_postgame_results_ingestion(
     )
 
     return results_summary
+
+
+def _run_no_card_postgame(
+    *,
+    workflow: Any,
+    target_date: date,
+    connection_factory: ConnectionFactory,
+    results_fetcher: ResultsFetcher,
+    early_entry_settlement_runner: EarlyEntrySettlementRunner,
+) -> MoneylineDailyPostgameResult:
+    results_summary = _fetch_and_validate_postgame_results(
+        target_date=target_date,
+        results_fetcher=results_fetcher,
+    )
+    early_entry_result = early_entry_settlement_runner(
+        target_date=target_date,
+        connection_factory=connection_factory,
+    )
+
+    print(
+        "Daily Moneyline Postgame completed without an official card for "
+        f"{target_date}: the failed pregame workflow has no official "
+        "prediction or entry-odds evidence. Canonical results were "
+        "ingested, official candidate settlement was skipped, and "
+        "existing Early Entry evidence was reconciled independently. "
+        "Early Entry pending candidates: "
+        f"{early_entry_result.performance.pending}."
+    )
+
+    return MoneylineDailyPostgameResult(
+        workflow_run_id=workflow.moneyline_daily_workflow_run_id,
+        target_date=workflow.target_date,
+        prediction_run_id=None,
+        odds_ingestion_run_id=None,
+        games_processed=results_summary.games_processed,
+        boxscores_processed=results_summary.boxscores_processed,
+        settlements_saved=0,
+        pending_candidates=0,
+        pipeline_state="no_official_card",
+    )
 
 
 def _run_postgame_settlement(
@@ -836,6 +926,44 @@ def run_moneyline_daily_postgame(
         target_date=target_date,
         connection_factory=connection_factory,
     )
+
+    if (
+        workflow.moneyline_prediction_run_id is None
+        or workflow.odds_ingestion_run_id is None
+    ):
+        official_evidence_counts = (
+            _load_postgame_official_evidence_counts(
+                target_date=target_date,
+                connection_factory=connection_factory,
+            )
+        )
+
+        if _is_legitimate_no_card_workflow(
+            workflow=workflow,
+            official_evidence_counts=official_evidence_counts,
+        ):
+            return _run_no_card_postgame(
+                workflow=workflow,
+                target_date=target_date,
+                connection_factory=connection_factory,
+                results_fetcher=results_fetcher,
+                early_entry_settlement_runner=(
+                    early_entry_settlement_runner
+                ),
+            )
+
+        raise RuntimeError(
+            "Daily workflow is missing required official run linkage "
+            "outside the legitimate no-card state: "
+            f"status={workflow.status}, stage={workflow.current_stage}, "
+            "prediction_run_id="
+            f"{workflow.moneyline_prediction_run_id}, "
+            f"odds_ingestion_run_id={workflow.odds_ingestion_run_id}, "
+            "persisted_official_prediction_runs="
+            f"{official_evidence_counts.prediction_runs}, "
+            "persisted_entry_odds_runs="
+            f"{official_evidence_counts.entry_odds_runs}."
+        )
 
     prediction_run_id, odds_ingestion_run_id = (
         _get_postgame_run_ids(workflow)
