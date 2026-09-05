@@ -16,6 +16,9 @@ LAUNCHER_PATH = SCRIPTS_DIRECTORY / "run_dashboard.ps1"
 HEALTH_PATH = SCRIPTS_DIRECTORY / "dashboard_health.ps1"
 HEALTH_CHECK_PATH = SCRIPTS_DIRECTORY / "check_dashboard_health.ps1"
 REGISTRATION_PATH = SCRIPTS_DIRECTORY / "register_dashboard_task.ps1"
+STARTUP_EVIDENCE_PATH = (
+    SCRIPTS_DIRECTORY / "dashboard_startup_evidence.ps1"
+)
 
 
 def _read(path: Path) -> str:
@@ -121,6 +124,91 @@ def test_launcher_watchdog_converts_exit_or_http_failure_to_task_failure() -> No
     assert "CloseHandle($jobHandle)" in launcher
     assert "$childExitCode -eq 0) { 1 } else { $childExitCode }" in launcher
     assert "exit $wrapperExitCode" in launcher
+
+
+def test_launcher_orders_readiness_probe_and_http_success() -> None:
+    launcher = _read(LAUNCHER_PATH)
+
+    readiness = launcher.index("Wait-SportsModelDatabaseReady")
+    read_probe = launcher.index(
+        "-m sportsmodel.dashboard.startup_probe"
+    )
+    streamlit_launch = launcher.index("$childProcess = Start-Process")
+    healthy = launcher.index("if ($health.Healthy)")
+    success = launcher.index('"Final startup success."')
+
+    assert readiness < read_probe < streamlit_launch < healthy < success
+    assert "if ($readProbeExitCode -ne 0)" in launcher
+    assert "Stage=$startupStage" in launcher
+    assert "exit 1" in launcher[readiness:streamlit_launch]
+    assert "Database readiness check failed." in launcher
+    assert "Production read probe failed; exit code=" in launcher
+
+
+def test_launcher_uses_persistent_attempt_evidence_without_secrets() -> None:
+    launcher = _read(LAUNCHER_PATH)
+
+    assert '"logs\\dashboard"' in launcher
+    assert "New-SportsModelDashboardStartupEvidence" in launcher
+    assert "Write-SportsModelDashboardStartupEvidence" in launcher
+    assert "Database readiness check succeeded." in launcher
+    assert "Production read probe succeeded." in launcher
+    assert "Streamlit PID=" in launcher
+    assert "HTTP health succeeded." in launcher
+    assert "POSTGRES_PASSWORD" not in launcher
+    assert "DATABASE_URL" not in launcher
+
+
+def test_startup_evidence_logs_append_and_distinguish_attempts(
+    tmp_path: Path,
+) -> None:
+    helper_path = str(STARTUP_EVIDENCE_PATH).replace("'", "''")
+    log_directory = str(tmp_path).replace("'", "''")
+    command = rf"""
+. '{helper_path}'
+$clock = [DateTimeOffset]::Parse('2026-09-05T18:00:00+00:00')
+$first = New-SportsModelDashboardStartupEvidence `
+    -LogDirectory '{log_directory}' `
+    -UtcNow $clock `
+    -ProcessId 123 `
+    -AttemptNonce 'first'
+Write-SportsModelDashboardStartupEvidence `
+    -Evidence $first `
+    -UtcNow $clock `
+    -Message 'Launcher invocation started.'
+Write-SportsModelDashboardStartupEvidence `
+    -Evidence $first `
+    -UtcNow ($clock.AddSeconds(1)) `
+    -Message 'Final startup success.'
+$second = New-SportsModelDashboardStartupEvidence `
+    -LogDirectory '{log_directory}' `
+    -UtcNow $clock `
+    -ProcessId 123 `
+    -AttemptNonce 'second'
+Write-SportsModelDashboardStartupEvidence `
+    -Evidence $second `
+    -UtcNow $clock `
+    -Message 'Final startup failure.'
+"""
+
+    result = subprocess.run(
+        [_powershell(), "-NoProfile", "-NonInteractive", "-Command", command],
+        cwd=REPOSITORY_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    logs = sorted(tmp_path.glob("dashboard_startup_*.log"))
+    assert len(logs) == 2
+    assert logs[0] != logs[1]
+    contents = [path.read_text(encoding="utf-8-sig") for path in logs]
+    assert sorted(content.count("attempt=") for content in contents) == [1, 2]
+    assert all("2026-09-05T18:00:00" in content for content in contents)
+    assert any("Final startup success." in content for content in contents)
+    assert any("Final startup failure." in content for content in contents)
 
 
 def test_registration_defines_one_idempotent_dashboard_task() -> None:

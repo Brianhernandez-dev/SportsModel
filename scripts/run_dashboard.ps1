@@ -6,10 +6,36 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-. (Join-Path $PSScriptRoot "dashboard_health.ps1")
+$repositoryRoot = Split-Path -Parent $PSScriptRoot
+$sourcePath = Join-Path $repositoryRoot "src"
+$appPath = Join-Path `
+    $sourcePath `
+    "sportsmodel\dashboard\app.py"
+$databaseReadinessPath = Join-Path `
+    $PSScriptRoot `
+    "wait_for_sportsmodel_database.ps1"
+$startupEvidencePath = Join-Path `
+    $PSScriptRoot `
+    "dashboard_startup_evidence.ps1"
+$logDirectory = Join-Path $repositoryRoot "logs\dashboard"
 
-if (-not ("SportsModel.DashboardJobObject" -as [type])) {
-    Add-Type -TypeDefinition @"
+. $startupEvidencePath
+
+$startupEvidence = New-SportsModelDashboardStartupEvidence `
+    -LogDirectory $logDirectory
+
+Write-SportsModelDashboardStartupEvidence `
+    -Evidence $startupEvidence `
+    -Message (
+        "Launcher invocation started. Launcher PID=$PID; port=$Port."
+    )
+
+try {
+    . (Join-Path $PSScriptRoot "dashboard_health.ps1")
+    . $databaseReadinessPath
+
+    if (-not ("SportsModel.DashboardJobObject" -as [type])) {
+        Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
 
@@ -104,6 +130,17 @@ namespace SportsModel {
     }
 }
 "@
+    }
+}
+catch {
+    Write-SportsModelDashboardStartupEvidence `
+        -Evidence $startupEvidence `
+        -Message (
+            "Final startup failure. Stage=launcher-initialization; " +
+            "error type=$($_.Exception.GetType().FullName)."
+        )
+    Write-Error -ErrorAction Continue $_
+    exit 1
 }
 
 function Stop-OwnedProcessTree {
@@ -158,85 +195,184 @@ function Test-KnownDashboardListener {
     )
 }
 
-$repositoryRoot = Split-Path `
-    -Parent `
-    $PSScriptRoot
+$startupStage = "python-resolution"
 
-$sourcePath = Join-Path `
-    $repositoryRoot `
-    "src"
+try {
+    $env:PYTHONPATH = $sourcePath
+    $env:SPORTSMODEL_ENV_FILE = Join-Path $repositoryRoot ".env"
 
-$appPath = Join-Path `
-    $sourcePath `
-    "sportsmodel\dashboard\app.py"
+    $pythonCandidates = @(
+        (
+            Join-Path `
+                $repositoryRoot `
+                ".venv\Scripts\python.exe"
+        ),
+        "D:\SportsModel\.venv\Scripts\python.exe"
+    )
 
-$existingListeners = @(
-    Get-NetTCPConnection `
+    $pythonPath = $pythonCandidates |
+        Where-Object {
+            Test-Path $_
+        } |
+        Select-Object -First 1
+
+    if (-not $pythonPath) {
+        $pythonCommand = Get-Command `
+            python `
+            -ErrorAction SilentlyContinue
+
+        if (-not $pythonCommand) {
+            throw (
+                "Unable to locate a Python interpreter. " +
+                "Create a virtual environment or install Python."
+            )
+        }
+
+        $pythonPath = $pythonCommand.Source
+    }
+}
+catch {
+    Write-SportsModelDashboardStartupEvidence `
+        -Evidence $startupEvidence `
+        -Message (
+            "Final startup failure. Stage=$startupStage; " +
+            "error type=$($_.Exception.GetType().FullName)."
+        )
+    Write-Error -ErrorAction Continue $_
+    exit 1
+}
+
+$startupStage = "database-readiness"
+
+try {
+    Write-SportsModelDashboardStartupEvidence `
+        -Evidence $startupEvidence `
+        -Message "Database readiness check started."
+
+    $databaseLogger = {
+        param([string]$Message)
+        Write-SportsModelDashboardStartupEvidence `
+            -Evidence $startupEvidence `
+            -Message "Database readiness: $Message"
+    }
+
+    Wait-SportsModelDatabaseReady `
+        -PythonPath $pythonPath `
+        -SourcePath $sourcePath `
+        -TimeoutSeconds 600 `
+        -PollSeconds 15 `
+        -Logger $databaseLogger
+
+    Write-SportsModelDashboardStartupEvidence `
+        -Evidence $startupEvidence `
+        -Message "Database readiness check succeeded."
+
+    $startupStage = "production-read-probe"
+    Write-SportsModelDashboardStartupEvidence `
+        -Evidence $startupEvidence `
+        -Message "Production read probe started."
+
+    $readProbeOutput = @(
+        & $pythonPath `
+            -m sportsmodel.dashboard.startup_probe `
+            2>&1
+    )
+    $readProbeExitCode = $LASTEXITCODE
+
+    $readProbeMessage = @(
+        $readProbeOutput |
+            ForEach-Object { $_.ToString() } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    ) | Select-Object -Last 1
+
+    if ($readProbeExitCode -ne 0) {
+        Write-SportsModelDashboardStartupEvidence `
+            -Evidence $startupEvidence `
+            -Message (
+                "Production read probe failed; exit code=" +
+                "$readProbeExitCode."
+            )
+        throw (
+            "Dashboard production read probe failed with exit code " +
+            "$readProbeExitCode."
+        )
+    }
+
+    if (
+        [string]::IsNullOrWhiteSpace($readProbeMessage) `
+        -or $readProbeMessage -notlike (
+            "Dashboard production read probe: READY.*"
+        )
+    ) {
+        Write-SportsModelDashboardStartupEvidence `
+            -Evidence $startupEvidence `
+            -Message "Production read probe failed; invalid result."
+        throw "Dashboard production read probe returned an invalid result."
+    }
+
+    Write-SportsModelDashboardStartupEvidence `
+        -Evidence $startupEvidence `
+        -Message $readProbeMessage
+
+    Write-SportsModelDashboardStartupEvidence `
+        -Evidence $startupEvidence `
+        -Message "Production read probe succeeded."
+
+    $startupStage = "listener-validation"
+    $existingListeners = @(
+        Get-NetTCPConnection `
+            -LocalAddress "127.0.0.1" `
+            -LocalPort $Port `
+            -State Listen `
+            -ErrorAction SilentlyContinue
+    )
+
+    foreach ($listener in $existingListeners) {
+        if (-not (Test-KnownDashboardListener `
+            -ListenerProcessId $listener.OwningProcess `
+            -ExpectedAppPath $appPath `
+            -ExpectedPort $Port
+        )) {
+            throw (
+                "Port $Port is owned by an unverified process " +
+                "$($listener.OwningProcess). Refusing to terminate it."
+            )
+        }
+
+        Write-SportsModelDashboardStartupEvidence `
+            -Evidence $startupEvidence `
+            -Message (
+                "Stopping proven stale SportsModel dashboard listener " +
+                "PID=$($listener.OwningProcess); port=$Port."
+            )
+        Stop-OwnedProcessTree -OwnedProcessId $listener.OwningProcess
+    }
+
+    $remainingListener = Get-NetTCPConnection `
         -LocalAddress "127.0.0.1" `
         -LocalPort $Port `
         -State Listen `
         -ErrorAction SilentlyContinue
-)
 
-foreach ($listener in $existingListeners) {
-    if (-not (Test-KnownDashboardListener `
-        -ListenerProcessId $listener.OwningProcess `
-        -ExpectedAppPath $appPath `
-        -ExpectedPort $Port
-    )) {
-        throw (
-            "Port $Port is owned by an unverified process " +
-            "$($listener.OwningProcess). Refusing to terminate it."
-        )
+    if ($remainingListener) {
+        throw "Port $Port remained occupied after stale-listener cleanup."
+    }
+}
+catch {
+    if ($startupStage -eq "database-readiness") {
+        Write-SportsModelDashboardStartupEvidence `
+            -Evidence $startupEvidence `
+            -Message "Database readiness check failed."
     }
 
-    Write-Warning (
-        "Stopping proven stale SportsModel dashboard listener " +
-        "$($listener.OwningProcess) on port $Port."
-    )
-    Stop-OwnedProcessTree -OwnedProcessId $listener.OwningProcess
-}
-
-$remainingListener = Get-NetTCPConnection `
-    -LocalAddress "127.0.0.1" `
-    -LocalPort $Port `
-    -State Listen `
-    -ErrorAction SilentlyContinue
-
-if ($remainingListener) {
-    throw "Port $Port remained occupied after stale-listener cleanup."
-}
-
-$env:PYTHONPATH = $sourcePath
-
-$pythonCandidates = @(
-    (
-        Join-Path `
-            $repositoryRoot `
-            ".venv\Scripts\python.exe"
-    ),
-    "D:\SportsModel\.venv\Scripts\python.exe"
-)
-
-$pythonPath = $pythonCandidates |
-    Where-Object {
-        Test-Path $_
-    } |
-    Select-Object -First 1
-
-if (-not $pythonPath) {
-    $pythonCommand = Get-Command `
-        python `
-        -ErrorAction SilentlyContinue
-
-    if (-not $pythonCommand) {
-        throw (
-            "Unable to locate a Python interpreter. " +
-            "Create a virtual environment or install Python."
+    Write-SportsModelDashboardStartupEvidence `
+        -Evidence $startupEvidence `
+        -Message (
+            "Final startup failure. Stage=$startupStage; " +
+            "error type=$($_.Exception.GetType().FullName)."
         )
-    }
-
-    $pythonPath = $pythonCommand.Source
+    Write-Error -ErrorAction Continue $_
+    exit 1
 }
 
 Write-Host "SportsModel dashboard"
@@ -258,8 +394,10 @@ $jobHandle = [IntPtr]::Zero
 $childProcess = $null
 $wrapperExitCode = 1
 $assignedToJob = $false
+$startupSucceeded = $false
 
 try {
+    $startupStage = "streamlit-process-launch"
     $jobHandle = (
         [SportsModel.DashboardJobObject]::CreateKillOnCloseJob()
     )
@@ -282,10 +420,17 @@ try {
         throw "Unable to assign the dashboard child to its Windows job object."
     }
 
-    Write-Host "Owned PID:  $($childProcess.Id)"
+    Write-SportsModelDashboardStartupEvidence `
+        -Evidence $startupEvidence `
+        -Message (
+            "Streamlit process started and assigned to launcher-owned " +
+            "Job Object. Streamlit PID=$($childProcess.Id); " +
+            "launcher PID=$PID."
+        )
 
     $startupDeadline = [DateTime]::UtcNow.AddSeconds(60)
     $consecutiveHealthFailures = 0
+    $startupStage = "streamlit-http-health"
 
     while (-not $childProcess.WaitForExit(5000)) {
         $health = Get-SportsModelDashboardHealth `
@@ -294,6 +439,21 @@ try {
 
         if ($health.Healthy) {
             $consecutiveHealthFailures = 0
+
+            if (-not $startupSucceeded) {
+                Write-SportsModelDashboardStartupEvidence `
+                    -Evidence $startupEvidence `
+                    -Message (
+                        "HTTP health succeeded. Listener=True; " +
+                        "status=$($health.HttpStatusCode); " +
+                        "URL=$($health.HealthUrl)."
+                    )
+                Write-SportsModelDashboardStartupEvidence `
+                    -Evidence $startupEvidence `
+                    -Message "Final startup success."
+                $startupSucceeded = $true
+            }
+
             continue
         }
 
@@ -318,9 +478,21 @@ try {
     Write-Warning (
         "Dashboard process exited unexpectedly with code $childExitCode."
     )
+    Write-SportsModelDashboardStartupEvidence `
+        -Evidence $startupEvidence `
+        -Message (
+            "Final launcher failure. Streamlit exited unexpectedly; " +
+            "exit code=$childExitCode."
+        )
     $wrapperExitCode = if ($childExitCode -eq 0) { 1 } else { $childExitCode }
 }
 catch {
+    Write-SportsModelDashboardStartupEvidence `
+        -Evidence $startupEvidence `
+        -Message (
+            "Final startup failure. Stage=$startupStage; " +
+            "error type=$($_.Exception.GetType().FullName)."
+        )
     Write-Error -ErrorAction Continue $_
     $wrapperExitCode = 1
 }

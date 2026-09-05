@@ -80,6 +80,44 @@ after three consecutive unhealthy checks outside the grace period. Failing the
 wrapper closes the Job Object and returns a nonzero exit code, allowing Task
 Scheduler's restart policy to run the exact task again.
 
+Before Streamlit is launched, the launcher also uses the shared native
+PostgreSQL readiness helper. That helper verifies the configured production
+endpoint, Windows service and listener ownership, writable-primary state, and
+minimum compatible migration. It waits for a temporarily unavailable native
+service for up to ten minutes, but it neither starts a database service nor
+falls back to Docker. A permanent readiness error or timeout fails the
+Dashboard task before Streamlit starts.
+
+After readiness succeeds, the launcher runs a second read-only probe through
+the same repository boundary used to list persisted Daily Card Moneyline
+slates. The probe opens an explicitly read-only database session and requires
+at least one persisted slate. It reports only the slate count and latest
+prediction-run, odds-run, and target-date identifiers. It does not call a
+provider or execute a workflow.
+
+## Persistent startup evidence
+
+Each launcher attempt creates one append-only evidence file under:
+
+```text
+D:\SportsModel\logs\dashboard\dashboard_startup_<UTC>-pid<PID>-<nonce>.log
+```
+
+Every record contains an ISO-8601 UTC timestamp and the attempt identifier.
+Successful attempts record, in order:
+
+1. launcher invocation and launcher PID;
+2. shared database-readiness start and result;
+3. persisted Daily Card read-probe start and result;
+4. owned Streamlit PID and launcher Job Object ownership;
+5. loopback HTTP health result; and
+6. final startup success.
+
+Failures record the stage and exception type, then the launcher exits nonzero.
+Database credentials, environment values, connection strings, and exception
+messages are not written to this persistent log. Separate files distinguish
+the initial boot attempt from any Task Scheduler restart or logon fallback.
+
 ## Failure and recovery matrix
 
 | Scenario | Expected behavior |
@@ -140,10 +178,30 @@ approval, use this sequence from an elevated PowerShell session in
 
 A reboot test is a separate production operation and requires explicit approval.
 After deployment, perform one controlled reboot and do not log on during the
-startup window. After at least 75 seconds, verify remotely or from an authorized
-non-interactive monitor that the task ran, exactly one process owns
-`127.0.0.1:8501`, and the Streamlit health endpoint returns HTTP 200. Logging on
-must not create a second listener.
+startup window. If no remote monitor is configured, remain at the Windows
+sign-in screen for the approved observation period and inspect retained evidence
+immediately after logging in.
+
+Correlate these timestamps:
+
+- Windows System events for `SportsModelPostgreSQL16` startup;
+- Task Scheduler Operational events for the Dashboard boot-trigger instance;
+- the matching `logs\dashboard\dashboard_startup_*.log` attempt; and
+- the first interactive-login timestamp.
+
+The successful evidence attempt must begin before interactive login. Its
+database-readiness and production-read-probe success records must precede its
+owned Streamlit PID, HTTP-health, and final-success records. After login, verify
+that the same task instance remains running, exactly one process owns
+`127.0.0.1:8501`, HTTP health is 200, the shared readiness probe still returns
+READY, and a real Daily Card render succeeds. The logon fallback must not create
+a second listener.
+
+This evidence proves that the Dashboard task's pre-login S4U identity reached
+the intended native PostgreSQL primary and read persisted production Dashboard
+data before Streamlit was declared healthy. It does not claim that an
+interactive browser rendered every Streamlit component before login; Streamlit
+page rendering remains session-driven.
 
 ## Unexpected port owner
 
