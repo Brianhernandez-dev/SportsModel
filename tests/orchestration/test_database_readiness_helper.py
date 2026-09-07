@@ -220,6 +220,49 @@ catch {{
     return result, attempts, elapsed
 
 
+def _run_callback_readiness(
+    *,
+    status: str,
+    message: str,
+) -> subprocess.CompletedProcess[str]:
+    helper_path = str(HELPER_PATH).replace("'", "''")
+    command = rf"""
+$ErrorActionPreference = "Stop"
+{_identity_mocks(wrong_listener_owner=False, service_running=True)}
+. '{helper_path}'
+$probe = {{
+    [pscustomobject]@{{ Status = '{status}'; Message = '{message}' }}
+}}
+try {{
+    Wait-SportsModelDatabaseReady `
+        -DatabaseProbe $probe `
+        -TimeoutSeconds 1 `
+        -PollSeconds 1
+    exit 0
+}}
+catch {{
+    [Console]::Error.WriteLine($_.Exception.Message)
+    exit 1
+}}
+"""
+    return subprocess.run(
+        [
+            _powershell(),
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            command,
+        ],
+        cwd=REPOSITORY_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+
+
 def test_expected_native_identity_and_healthy_database_are_ready(
     tmp_path: Path,
 ) -> None:
@@ -230,6 +273,24 @@ def test_expected_native_identity_and_healthy_database_are_ready(
     assert "SportsModel database readiness: READY" in result.stdout
     assert "listener identity are valid" in result.stdout
     assert "production primary is ready" in result.stdout
+
+
+def test_supplied_read_only_probe_removes_python_and_source_dependency() -> None:
+    result = _run_callback_readiness(
+        status="ready",
+        message="Dedicated psql probe is ready.",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Dedicated psql probe is ready" in result.stdout
+
+
+def test_invalid_supplied_probe_result_fails_permanently() -> None:
+    result = _run_callback_readiness(status="unknown", message="invalid")
+
+    assert result.returncode == 1
+    assert "failed permanently" in result.stderr
+    assert "invalid result" in result.stderr
 
 
 def test_wrong_process_owns_5432_fails_closed(tmp_path: Path) -> None:

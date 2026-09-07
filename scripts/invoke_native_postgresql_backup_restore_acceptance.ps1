@@ -230,8 +230,10 @@ function Get-SourceConnection {
 
 
 function Get-PostgreSqlTools {
+    param([Parameter(Mandatory)][string[]]$Names)
+
     $Tools = @{}
-    foreach ($Name in @("pg_dump", "pg_restore", "psql", "createdb", "dropdb")) {
+    foreach ($Name in $Names) {
         $Path = Join-Path $PostgreSqlBinPath "$Name.exe"
         if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
             throw "Required PostgreSQL tool was not found: $Path"
@@ -538,27 +540,125 @@ function Assert-ContentMatches {
 }
 
 
+function Invoke-AcceptanceDatabaseReadinessProbe {
+    param(
+        [Parameter(Mandatory)][hashtable]$Tools,
+        [Parameter(Mandatory)][hashtable]$Connection
+    )
+
+    try {
+        $IdentityEvidence = Invoke-PsqlScalar `
+            -Tools $Tools `
+            -Connection $Connection `
+            -ReadOnly $false `
+            -Sql (
+                "SELECT concat_ws('|', current_database(), " +
+                "inet_server_port(), pg_is_in_recovery(), " +
+                "current_setting('transaction_read_only'), " +
+                "current_setting('default_transaction_read_only'), " +
+                "to_regclass('public.schema_migrations') IS NOT NULL);"
+            )
+    }
+    catch {
+        return [pscustomobject]@{
+            Status = "transient"
+            Message = "The native PostgreSQL database probe could not connect."
+        }
+    }
+
+    $IdentityParts = $IdentityEvidence.Split("|")
+    if (
+        $IdentityParts.Count -ne 6 `
+            -or $IdentityParts[0] -cne $ExpectedSourceDatabase `
+            -or $IdentityParts[1] -cne $ExpectedSourcePort.ToString() `
+            -or $IdentityParts[2] -cne "f" `
+            -or $IdentityParts[3] -cne "off" `
+            -or $IdentityParts[4] -cne "off"
+    ) {
+        return [pscustomobject]@{
+            Status = "permanent"
+            Message = "The native PostgreSQL database probe returned invalid identity evidence."
+        }
+    }
+    if ($IdentityParts[5] -cne "t") {
+        return [pscustomobject]@{
+            Status = "permanent"
+            Message = "The schema migration ledger is absent."
+        }
+    }
+
+    try {
+        $MigrationEvidence = Invoke-PsqlScalar `
+            -Tools $Tools `
+            -Connection $Connection `
+            -Sql (
+                "SELECT concat_ws('|', COALESCE(MAX(version), 0), " +
+                "bool_or(version = $MinimumCompatibleMigration)) " +
+                "FROM schema_migrations;"
+            )
+    }
+    catch {
+        return [pscustomobject]@{
+            Status = "permanent"
+            Message = "The schema migration state could not be verified."
+        }
+    }
+
+    $Parts = $MigrationEvidence.Split("|")
+    $ObservedMigration = 0
+    if (
+        $Parts.Count -ne 2 `
+            -or -not [int]::TryParse($Parts[0], [ref]$ObservedMigration)
+    ) {
+        return [pscustomobject]@{
+            Status = "permanent"
+            Message = "The native PostgreSQL migration state is invalid."
+        }
+    }
+    if (
+        $ObservedMigration -lt $MinimumCompatibleMigration `
+            -or $Parts[1] -cne "t"
+    ) {
+        return [pscustomobject]@{
+            Status = "permanent"
+            Message = (
+                "The native PostgreSQL identity or migration compatibility " +
+                "check failed."
+            )
+        }
+    }
+
+    return [pscustomobject]@{
+        Status = "ready"
+        Message = (
+            "Database identity is valid and required migration " +
+            "$MinimumCompatibleMigration is present (max $ObservedMigration)."
+        )
+    }
+}
+
+
 function Invoke-NativeReadinessPreflight {
+    param(
+        [Parameter(Mandatory)][hashtable]$Tools,
+        [Parameter(Mandatory)][hashtable]$Connection
+    )
+
     $HelperPath = Join-Path $PSScriptRoot "wait_for_sportsmodel_database.ps1"
     if (-not (Test-Path -LiteralPath $HelperPath -PathType Leaf)) {
         throw "Shared database readiness helper was not found: $HelperPath"
     }
 
-    $PreviousEnvironmentFile = $env:SPORTSMODEL_ENV_FILE
-    try {
-        $env:SPORTSMODEL_ENV_FILE = $EnvironmentPath
-        . $HelperPath
-        Wait-SportsModelDatabaseReady `
-            -PythonPath $PythonPath `
-            -SourcePath $SourcePath `
-            -TimeoutSeconds 30 `
-            -PollSeconds 2
+    . $HelperPath
+    $ReadinessProbe = {
+        Invoke-AcceptanceDatabaseReadinessProbe `
+            -Tools $Tools `
+            -Connection $Connection
     }
-    finally {
-        Set-ProcessEnvironmentValue `
-            -Name "SPORTSMODEL_ENV_FILE" `
-            -Value $PreviousEnvironmentFile
-    }
+    Wait-SportsModelDatabaseReady `
+        -DatabaseProbe $ReadinessProbe `
+        -TimeoutSeconds 30 `
+        -PollSeconds 2
 }
 
 
@@ -566,7 +666,7 @@ function Get-ToolVersions {
     param([Parameter(Mandatory)][hashtable]$Tools)
 
     $Versions = [ordered]@{}
-    foreach ($Name in @("pg_dump", "pg_restore", "psql", "createdb", "dropdb")) {
+    foreach ($Name in @($Tools.Keys | Sort-Object)) {
         $Output = @(& $Tools[$Name] --version 2>&1)
         if ($LASTEXITCODE -ne 0) {
             throw "Unable to read the version of $($Tools[$Name])."
@@ -580,8 +680,14 @@ function Get-ToolVersions {
 function Invoke-Preflight {
     Write-AcceptanceLog "Running read-only native PostgreSQL preflight."
     $Connection = Get-SourceConnection
-    $Tools = Get-PostgreSqlTools
-    Invoke-NativeReadinessPreflight
+    $Tools = Get-PostgreSqlTools -Names @(
+        "pg_dump",
+        "pg_restore",
+        "psql",
+        "createdb",
+        "dropdb"
+    )
+    Invoke-NativeReadinessPreflight -Tools $Tools -Connection $Connection
     Assert-DatabaseIdentity `
         -Tools $Tools `
         -Connection $Connection `
@@ -716,8 +822,8 @@ function Invoke-Backup {
     }
 
     $Connection = Get-SourceConnection
-    $Tools = Get-PostgreSqlTools
-    Invoke-NativeReadinessPreflight
+    $Tools = Get-PostgreSqlTools -Names @("pg_dump", "pg_restore", "psql")
+    Invoke-NativeReadinessPreflight -Tools $Tools -Connection $Connection
     Assert-DatabaseIdentity `
         -Tools $Tools `
         -Connection $Connection `
@@ -782,7 +888,7 @@ function Invoke-Backup {
 
 
 function Invoke-VerifyBackup {
-    $Tools = Get-PostgreSqlTools
+    $Tools = Get-PostgreSqlTools -Names @("pg_restore")
     $Manifest = Read-AcceptanceManifest
     Test-BackupArtifact -Tools $Tools -Manifest $Manifest
 }
@@ -862,7 +968,7 @@ function Invoke-CreateRestoreTarget {
         -Operation "Disposable restore database creation"
 
     $SourceConnection = Get-SourceConnection
-    $Tools = Get-PostgreSqlTools
+    $Tools = Get-PostgreSqlTools -Names @("psql", "createdb")
     $AdminConnection = Get-AdminConnection -SourceConnection $SourceConnection
     $AdminCapability = Invoke-PsqlScalar `
         -Tools $Tools `
@@ -910,7 +1016,7 @@ function Invoke-Restore {
         -Operation "Restore into disposable database"
 
     $SourceConnection = Get-SourceConnection
-    $Tools = Get-PostgreSqlTools
+    $Tools = Get-PostgreSqlTools -Names @("psql", "pg_restore")
     $Manifest = Read-AcceptanceManifest
     Test-BackupArtifact -Tools $Tools -Manifest $Manifest
 
@@ -956,7 +1062,7 @@ function Invoke-Restore {
 function Invoke-VerifyRestore {
     $SafeTarget = Assert-SafeRestoreTarget -DatabaseName $TargetDatabase
     $SourceConnection = Get-SourceConnection
-    $Tools = Get-PostgreSqlTools
+    $Tools = Get-PostgreSqlTools -Names @("psql", "pg_restore")
     $Manifest = Read-AcceptanceManifest
     Test-BackupArtifact -Tools $Tools -Manifest $Manifest
 
@@ -1021,7 +1127,7 @@ function Invoke-DropRestoreTarget {
         -Operation "Disposable restore database cleanup"
 
     $SourceConnection = Get-SourceConnection
-    $Tools = Get-PostgreSqlTools
+    $Tools = Get-PostgreSqlTools -Names @("psql", "dropdb")
     $AdminConnection = Get-AdminConnection -SourceConnection $SourceConnection
     if (
         -not (Test-DatabaseExists `

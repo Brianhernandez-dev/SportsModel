@@ -4,11 +4,11 @@
 function Wait-SportsModelDatabaseReady {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)]
         [string]$PythonPath,
 
-        [Parameter(Mandatory)]
         [string]$SourcePath,
+
+        [scriptblock]$DatabaseProbe,
 
         [int]$TimeoutSeconds = 600,
 
@@ -278,6 +278,35 @@ function Wait-SportsModelDatabaseReady {
 
 
     function Invoke-SportsModelDatabaseProbe {
+        if ($null -ne $DatabaseProbe) {
+            try {
+                $ProbeResult = & $DatabaseProbe
+            }
+            catch {
+                return New-ReadinessResult `
+                    -Status "transient" `
+                    -Message "The supplied database probe could not connect."
+            }
+
+            if (
+                $null -eq $ProbeResult `
+                    -or $ProbeResult.Status -notin @(
+                        "ready",
+                        "transient",
+                        "permanent"
+                    ) `
+                    -or [string]::IsNullOrWhiteSpace($ProbeResult.Message)
+            ) {
+                return New-ReadinessResult `
+                    -Status "permanent" `
+                    -Message "The supplied database probe returned an invalid result."
+            }
+
+            return New-ReadinessResult `
+                -Status $ProbeResult.Status `
+                -Message $ProbeResult.Message
+        }
+
         $PreviousPythonPath = $env:PYTHONPATH
         $PreviousErrorActionPreference = $ErrorActionPreference
 
@@ -338,12 +367,20 @@ function Wait-SportsModelDatabaseReady {
     }
 
 
-    if (-not (Test-Path $PythonPath)) {
-        throw "Python executable was not found: $PythonPath"
-    }
+    if ($null -eq $DatabaseProbe) {
+        if (
+            [string]::IsNullOrWhiteSpace($PythonPath) `
+                -or -not (Test-Path $PythonPath)
+        ) {
+            throw "Python executable was not found: $PythonPath"
+        }
 
-    if (-not (Test-Path $SourcePath)) {
-        throw "SportsModel source path was not found: $SourcePath"
+        if (
+            [string]::IsNullOrWhiteSpace($SourcePath) `
+                -or -not (Test-Path $SourcePath)
+        ) {
+            throw "SportsModel source path was not found: $SourcePath"
+        }
     }
 
     if ($TimeoutSeconds -le 0) {

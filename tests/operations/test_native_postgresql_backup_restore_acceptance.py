@@ -208,3 +208,73 @@ def test_postgresql_boolean_text_expectations_use_psql_representation() -> None:
 
     assert 'TargetWriteState -cne "f|off"' in script
     assert 'relkind::text ||' in script
+
+
+def _function_body(script: str, name: str, next_name: str) -> str:
+    start = script.index(f"function {name}")
+    end = script.index(f"function {next_name}", start)
+    return script[start:end]
+
+
+def test_recurring_actions_resolve_only_required_postgresql_tools() -> None:
+    script = SCRIPT_PATH.read_text(encoding="utf-8")
+    backup = _function_body(script, "Invoke-Backup", "Invoke-VerifyBackup")
+    verify = _function_body(script, "Invoke-VerifyBackup", "Get-AdminConnection")
+
+    assert 'Get-PostgreSqlTools -Names @("pg_dump", "pg_restore", "psql")' in backup
+    assert 'Get-PostgreSqlTools -Names @("pg_restore")' in verify
+    assert "createdb" not in backup + verify
+    assert "dropdb" not in backup + verify
+
+
+def test_operator_restore_actions_retain_action_specific_tools_and_guards() -> None:
+    script = SCRIPT_PATH.read_text(encoding="utf-8")
+    preflight = _function_body(script, "Invoke-Preflight", "Assert-BackupInputs")
+    create = _function_body(script, "Invoke-CreateRestoreTarget", "Invoke-Restore")
+    restore = _function_body(script, "Invoke-Restore", "Invoke-VerifyRestore")
+    drop_start = script.index("function Invoke-DropRestoreTarget")
+    drop_end = script.index("if ($Action -in", drop_start)
+    drop = script[drop_start:drop_end]
+
+    assert '"createdb"' in preflight
+    assert '"dropdb"' in preflight
+    assert 'Get-PostgreSqlTools -Names @("psql", "createdb")' in create
+    assert "ApproveCreateRestoreTarget" in create
+    assert 'Get-PostgreSqlTools -Names @("psql", "pg_restore")' in restore
+    assert "ApproveRestore" in restore
+    assert 'Get-PostgreSqlTools -Names @("psql", "dropdb")' in drop
+    assert "ApproveDropRestoreTarget" in drop
+    assert "Assert-RestoreTargetMarker" in create + restore + drop
+
+
+def test_backup_readiness_uses_shared_helper_without_python_runtime() -> None:
+    script = SCRIPT_PATH.read_text(encoding="utf-8")
+    readiness = _function_body(
+        script,
+        "Invoke-NativeReadinessPreflight",
+        "Get-ToolVersions",
+    )
+
+    assert "wait_for_sportsmodel_database.ps1" in readiness
+    assert "-DatabaseProbe $ReadinessProbe" in readiness
+    assert "-PythonPath" not in readiness
+    assert "-SourcePath" not in readiness
+    assert "Start-Service" not in readiness
+    assert "docker" not in readiness.lower()
+
+
+def test_readiness_probe_requires_exact_database_and_migration_row() -> None:
+    script = SCRIPT_PATH.read_text(encoding="utf-8")
+    probe = _function_body(
+        script,
+        "Invoke-AcceptanceDatabaseReadinessProbe",
+        "Invoke-NativeReadinessPreflight",
+    )
+
+    assert "bool_or(version = $MinimumCompatibleMigration)" in probe
+    assert "-ReadOnly $false" in probe
+    assert "current_setting('transaction_read_only')" in probe
+    assert "current_setting('default_transaction_read_only')" in probe
+    assert "$ObservedMigration -lt $MinimumCompatibleMigration" in probe
+    assert '$Parts[1] -cne "t"' in probe
+    assert 'Status = "permanent"' in probe
