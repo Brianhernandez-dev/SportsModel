@@ -547,6 +547,10 @@ function Invoke-AcceptanceDatabaseReadinessProbe {
     )
 
     try {
+        # This probe must observe the server's actual writable-primary state.
+        # Forcing transaction_read_only here would invalidate that check. The
+        # SQL below is hardcoded and SELECT-only; future changes must preserve
+        # both that property and the intentional -ReadOnly $false setting.
         $IdentityEvidence = Invoke-PsqlScalar `
             -Tools $Tools `
             -Connection $Connection `

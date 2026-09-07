@@ -190,8 +190,21 @@ foreach ($sid in @($system, $admins)) {
 }
 [IO.Directory]::SetAccessControl((Join-Path $Runtime "config"), $configAcl)
 foreach ($file in Get-ChildItem -LiteralPath $Runtime -File) {
-    $fileAcl = [IO.File]::GetAccessControl($file.FullName)
+    $fileAcl = [Security.AccessControl.FileSecurity]::new()
     $fileAcl.SetOwner($admins)
+    $fileAcl.SetAccessRuleProtection($true, $false)
+    $fileAcl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+        $identity.User,
+        [Security.AccessControl.FileSystemRights]::ReadAndExecute,
+        $allow
+    ))
+    foreach ($sid in @($system, $admins)) {
+        $fileAcl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+            $sid,
+            [Security.AccessControl.FileSystemRights]::FullControl,
+            $allow
+        ))
+    }
     [IO.File]::SetAccessControl($file.FullName, $fileAcl)
 }
 
@@ -225,8 +238,6 @@ foreach ($sid in @($system, $admins)) {
         text=True,
         check=False,
     )
-    if result.returncode != 0 and "unauthorized" in result.stderr.lower():
-        pytest.skip("Protected-runtime ACL integration requires elevation.")
     assert result.returncode == 0, result.stderr
 
 
@@ -345,6 +356,8 @@ def _arguments(paths: dict[str, Path], utc_now: str) -> list[str]:
         str(paths["acceptance_tool"]),
         "-UtcNow",
         utc_now,
+        "-TestOnlyExpectedRuntimeDirectory",
+        str(paths["runtime_directory"]),
     ]
 
 
@@ -356,6 +369,7 @@ def _run(
 ) -> subprocess.CompletedProcess[str]:
     process_environment = os.environ.copy()
     process_environment["FAKE_ACCEPTANCE_TRACE"] = str(paths["trace_path"])
+    process_environment["SPORTSMODEL_BACKUP_TEST_MODE"] = "1"
     if environment:
         process_environment.update(environment)
     return subprocess.run(
@@ -422,7 +436,8 @@ def test_verification_failure_prevents_retention(tmp_path: Path) -> None:
     assert result.returncode != 0
     assert all(backup.exists() and manifest.exists() for backup, manifest in old_pairs)
     log_text = _logs(paths)[0].read_text(encoding="utf-8-sig")
-    assert "Stage=verification" in log_text
+    assert "result=backup_verification_failed" in log_text
+    assert "current_backup_verified=false" in log_text
     assert "Retention completed" not in log_text
 
 
@@ -516,7 +531,10 @@ def test_malformed_or_unpaired_managed_artifact_refuses_all_retention_deletion(
     assert result.returncode != 0
     assert problem.read_bytes() == b"must-not-delete"
     assert all(backup.exists() and manifest.exists() for backup, manifest in old_pairs)
-    assert "Stage=retention" in _logs(paths)[0].read_text(encoding="utf-8-sig")
+    log_text = _logs(paths)[0].read_text(encoding="utf-8-sig")
+    assert "result=retention_blocked_after_verified_backup" in log_text
+    assert "current_backup_verified=true" in log_text
+    assert "Current backup verified" in log_text
 
 
 def test_existing_timestamped_artifact_is_never_overwritten(tmp_path: Path) -> None:
@@ -548,7 +566,8 @@ def test_backup_engine_failure_propagates_nonzero_without_retention(
     assert len(actions) == 1
     assert actions[0].startswith("Backup|")
     log_text = _logs(paths)[0].read_text(encoding="utf-8-sig")
-    assert "Stage=backup" in log_text
+    assert "result=backup_creation_failed" in log_text
+    assert "current_backup_verified=false" in log_text
     assert "Retention completed" not in log_text
 
 
@@ -564,7 +583,7 @@ def test_engine_output_and_exception_details_are_not_persisted(
     assert "password" not in log_text
     assert "secret" not in log_text
     assert "connection" not in log_text
-    assert "stage=backup" in log_text
+    assert "result=backup_creation_failed" in log_text
 
 
 def test_overlapping_wrapper_with_alternate_log_directory_is_refused(
@@ -574,6 +593,7 @@ def test_overlapping_wrapper_with_alternate_log_directory_is_refused(
     first_environment = os.environ.copy()
     first_environment["FAKE_ACCEPTANCE_TRACE"] = str(paths["trace_path"])
     first_environment["FAKE_BACKUP_DELAY_MS"] = "2500"
+    first_environment["SPORTSMODEL_BACKUP_TEST_MODE"] = "1"
     first = subprocess.Popen(
         _arguments(paths, "2026-09-06T08:00:00+00:00"),
         cwd=REPOSITORY_ROOT,
@@ -710,7 +730,10 @@ def test_unexpected_protected_config_entry_is_refused_before_backup(
     assert not paths["trace_path"].exists()
 
 
-@pytest.mark.parametrize("unsafe_path", ["runtime", "config", "credential"])
+@pytest.mark.parametrize(
+    "unsafe_path",
+    ["runtime", "config", "credential", "runtime_file", "manifest"],
+)
 def test_unsafe_runtime_or_credential_acl_is_refused_before_backup(
     tmp_path: Path,
     unsafe_path: str,
@@ -718,6 +741,12 @@ def test_unsafe_runtime_or_credential_acl_is_refused_before_backup(
     paths = _fixture_paths(tmp_path)
     if unsafe_path == "credential":
         _add_unsafe_file_acl(paths["environment_path"])
+    elif unsafe_path == "runtime_file":
+        _add_unsafe_file_acl(paths["wrapper_path"])
+    elif unsafe_path == "manifest":
+        _add_unsafe_file_acl(
+            paths["runtime_directory"] / "runtime-manifest.json"
+        )
     else:
         directory = paths["runtime_directory"]
         if unsafe_path == "config":
@@ -734,11 +763,84 @@ def test_unsafe_runtime_or_credential_acl_is_refused_before_backup(
 def test_runtime_and_credentials_are_not_loaded_from_live_repository() -> None:
     script = WRAPPER_PATH.read_text(encoding="utf-8")
 
+    assert '"D:\\SportsModelOps\\native_postgresql_backup"' in script
+    assert "$CanonicalRuntimeDirectory" in script
+    assert "TestOnlyExpectedRuntimeDirectory" in script
+    assert "SPORTSMODEL_BACKUP_TEST_MODE" in script
     assert 'Join-Path $RuntimeDirectory "config\\backup.env"' in script
     assert "$RepositoryRoot" not in script
     assert '"wait_for_sportsmodel_database.ps1"' in script
     assert "Assert-ProtectedRuntime" in script
     assert "Assert-ProtectedCredentialFile" in script
+
+
+def test_runtime_path_is_canonical_unless_explicit_temp_test_mode(
+    tmp_path: Path,
+) -> None:
+    paths = _fixture_paths(tmp_path)
+    arguments = _arguments(paths, "2026-09-06T08:00:00+00:00")
+    del arguments[-2:]
+    environment = os.environ.copy()
+    environment["FAKE_ACCEPTANCE_TRACE"] = str(paths["trace_path"])
+
+    result = subprocess.run(
+        arguments,
+        cwd=REPOSITORY_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "expected protected runtime" in result.stderr
+    assert not paths["trace_path"].exists()
+
+
+def test_test_runtime_override_requires_explicit_test_mode(tmp_path: Path) -> None:
+    paths = _fixture_paths(tmp_path)
+    environment = os.environ.copy()
+    environment["FAKE_ACCEPTANCE_TRACE"] = str(paths["trace_path"])
+
+    result = subprocess.run(
+        _arguments(paths, "2026-09-06T08:00:00+00:00"),
+        cwd=REPOSITORY_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "refused outside explicit backup test mode" in result.stderr
+    assert not paths["trace_path"].exists()
+
+
+def test_test_runtime_override_refuses_path_outside_temp_root(
+    tmp_path: Path,
+) -> None:
+    paths = _fixture_paths(tmp_path)
+    arguments = _arguments(paths, "2026-09-06T08:00:00+00:00")
+    arguments[-1] = str(REPOSITORY_ROOT)
+    environment = os.environ.copy()
+    environment["FAKE_ACCEPTANCE_TRACE"] = str(paths["trace_path"])
+    environment["SPORTSMODEL_BACKUP_TEST_MODE"] = "1"
+
+    result = subprocess.run(
+        arguments,
+        cwd=REPOSITORY_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "must remain under the temporary root" in result.stderr
+    assert not paths["trace_path"].exists()
 
 
 def test_wrapper_exposes_only_backup_and_verify_actions() -> None:

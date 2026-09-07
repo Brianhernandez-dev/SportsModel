@@ -33,6 +33,9 @@ engine unless each directory has the exact protected ACL described below. The
 scheduled identity must also have read-only access to the protected runtime and
 credential and Modify access to the backup and log directories. The recurring
 path has no dependency on `D:\SportsModel` or `D:\SportsModel\.env`.
+The wrapper also compares its executing directory with the explicit canonical
+runtime path `D:\SportsModelOps\native_postgresql_backup` and fails closed if
+launched from any other location.
 
 Do not let new production dump files inherit broad drive or parent-directory
 access. During a separately approved deployment, create the two still-empty
@@ -148,8 +151,18 @@ excluded. Do not copy PostgreSQL executables into the protected runtime.
 
 The protected runtime owner is `BUILTIN\Administrators`, inheritance is
 disabled, and the only allow entries are `AI-BETO\Brian` Read/Execute plus
-`SYSTEM` and `Administrators` Full Control, inherited by runtime children.
-The staging helper creates this runtime only with explicit `-Action Stage` and
+`SYSTEM` and `Administrators` Full Control. The immediate parent
+`D:\SportsModelOps` must already exist, must be owned by Administrators or
+SYSTEM, must not be a reparse point, and must grant no other identity write,
+delete, ownership, or permission-management rights. Read/traverse-only inherited
+entries on that parent are tolerated; broad Modify access is not. The staging
+helper never creates this parent hierarchy.
+
+The helper creates the runtime and config directories, protects and verifies
+their ACLs, then copies the three scripts. It explicitly protects and verifies
+each copied file before computing its SHA-256. Only then does it create and
+protect the manifest. A final complete ACL validation occurs before staging
+returns success. The helper runs only with explicit `-Action Stage` and
 `-ApproveProtectedRuntimeStage`; its default is a non-mutating plan. It refuses
 an existing target and never copies a credential:
 
@@ -181,7 +194,13 @@ The recurring `Backup` action resolves only `pg_dump.exe`, `pg_restore.exe`,
 and `psql.exe`; `VerifyBackup` resolves only `pg_restore.exe`. The separate
 operator `Preflight` continues to require all five accepted tools, and the
 create/restore/drop actions resolve `createdb.exe`, `pg_restore.exe`, or
-`dropdb.exe` only where their existing approved operation requires them.
+`dropdb.exe` only where their existing approved operation requires them. This
+action-specific resolution is an application-level restriction, not an OS
+execution boundary. Brian's Read/Execute access to the installed PostgreSQL
+`bin` directory can execute other client utilities located there. The actual
+production boundary is the protected Scheduled Task action and runtime, the
+Limited token, and the reviewed filesystem ACLs. Do not copy PostgreSQL client
+binaries into the protected runtime as a substitute for that boundary.
 
 Before `pg_dump`, the engine proves the native service, listener, database,
 writable-primary state, required migration, and representative database
@@ -214,6 +233,14 @@ directory. Two invocations targeting the same backup set therefore conflict
 even if they use different log directories. It is an open file handle with
 exclusive sharing; Windows releases it if the wrapper exits or is terminated,
 so a stale lock filename does not block a later run.
+
+Failure logs include an explicit result. `backup_creation_failed` means the
+accepted creation action did not complete; `backup_verification_failed` means
+the new artifact did not pass the separate verification action; and
+`retention_blocked_after_verified_backup` means the current backup was already
+verified but historical-artifact validation or deletion blocked retention. The
+last case remains nonzero and requires review even though the log explicitly
+records `current_backup_verified=true`.
 
 ## Retention
 
@@ -314,8 +341,11 @@ powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass `
     -ManifestPath "$backup.manifest.json"
 ```
 
-`VerifyBackup` checks the manifest hash and size and requires `pg_restore
---list` to accept the archive. Full restore proof remains the separate,
+`VerifyBackup` checks the manifest hash and size, proving that the file still
+matches the artifact recorded after creation, and requires `pg_restore --list`
+to accept and produce a readable archive catalog/TOC. This does not prove that
+every data block can be restored and is not equivalent to a full restore. Full
+restore proof remains the stronger, separate,
 explicitly approved manual procedure in
 `docs/operations/native_postgresql_backup_restore_acceptance.md`. The recurring
 wrapper never exposes or performs restore-target creation, restore,
@@ -337,3 +367,15 @@ only the new task, preserve its logs and dump/manifest pairs for review, and
 retire the protected runtime only through a separately approved file operation.
 Do not automatically remove the credential, runtime, storage, or PostgreSQL
 client ACL entries from the wrapper or staging helper.
+
+## Residual risk and maturity criteria
+
+This candidate provides no separate backup-store identity, immutable storage,
+or offsite copy. Brian owns and can modify the local backup store, so this local
+layer is not ransomware-immutable. That is a conscious residual risk and a
+future resilience enhancement, not a property supplied by this design.
+
+Before the backup system is declared operationally mature, define and approve
+a recurring restore-acceptance cadence, responsible operator, evidence-retention
+period, and failure-escalation path. The daily catalog/hash verification is not
+a replacement for that controlled full-restore acceptance.

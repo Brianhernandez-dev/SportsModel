@@ -11,13 +11,18 @@ param(
     [ValidateRange(1, 1000)]
     [int]$RetentionCount = 30,
 
-    [DateTimeOffset]$UtcNow = [DateTimeOffset]::UtcNow
+    [DateTimeOffset]$UtcNow = [DateTimeOffset]::UtcNow,
+
+    [string]$TestOnlyExpectedRuntimeDirectory
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $RuntimeDirectory = [IO.Path]::GetFullPath($PSScriptRoot)
+$CanonicalRuntimeDirectory = [IO.Path]::GetFullPath(
+    "D:\SportsModelOps\native_postgresql_backup"
+)
 $ProtectedStorageRoot = "D:\SportsModelBackups\PostgreSQL"
 $RuntimeManifestName = "runtime-manifest.json"
 $RequiredRuntimeFiles = @(
@@ -295,17 +300,15 @@ function Assert-ProtectedRuntimePath {
     ) {
         throw "$Purpose owner is not Administrators or SYSTEM."
     }
-    if ($IsDirectory -or $CredentialFile) {
-        if (-not $Acl.AreAccessRulesProtected) {
-            throw "$Purpose ACL inheritance is not protected."
-        }
+    if (-not $Acl.AreAccessRulesProtected) {
+        throw "$Purpose ACL inheritance is not protected."
     }
 
     $RightsBySid = Get-AclRightsBySid `
         -Acl $Acl `
         -AllowedSids $Context.AllowedSids `
         -Purpose $Purpose `
-        -RequireExplicitRules:($IsDirectory -or $CredentialFile)
+        -RequireExplicitRules $true
 
     if ($CredentialFile) {
         $CurrentRequired = [Security.AccessControl.FileSystemRights]::Read
@@ -351,6 +354,26 @@ function Assert-ProtectedRuntimePath {
                     )
             ) {
                 throw "$Purpose ACL entries must apply to children."
+            }
+        }
+    }
+    else {
+        foreach (
+            $Rule in $Acl.GetAccessRules(
+                $true,
+                $false,
+                [Security.Principal.SecurityIdentifier]
+            )
+        ) {
+            if (
+                $Rule.InheritanceFlags -ne (
+                    [Security.AccessControl.InheritanceFlags]::None
+                ) `
+                    -or $Rule.PropagationFlags -ne (
+                        [Security.AccessControl.PropagationFlags]::None
+                    )
+            ) {
+                throw "$Purpose file ACL contains unexpected inheritance flags."
             }
         }
     }
@@ -483,8 +506,35 @@ $LogDirectory = [IO.Path]::GetFullPath($LogDirectory)
 $EnvironmentPath = [IO.Path]::GetFullPath($EnvironmentPath)
 $AcceptanceToolPath = [IO.Path]::GetFullPath($AcceptanceToolPath)
 
-if ($RuntimeDirectory -cne [IO.Path]::GetFullPath($PSScriptRoot)) {
-    throw "The backup wrapper must execute from its protected runtime."
+if (-not [string]::IsNullOrWhiteSpace($TestOnlyExpectedRuntimeDirectory)) {
+    if ($env:SPORTSMODEL_BACKUP_TEST_MODE -cne "1") {
+        throw (
+            "TestOnlyExpectedRuntimeDirectory is refused outside explicit " +
+            "backup test mode."
+        )
+    }
+    $TestExpected = [IO.Path]::GetFullPath($TestOnlyExpectedRuntimeDirectory)
+    $TemporaryRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
+    if (-not $TestExpected.StartsWith(
+        $TemporaryRoot,
+        [StringComparison]::OrdinalIgnoreCase
+    )) {
+        throw "The test-only runtime override must remain under the temporary root."
+    }
+    $ExpectedRuntimeDirectory = $TestExpected
+}
+else {
+    $ExpectedRuntimeDirectory = $CanonicalRuntimeDirectory
+}
+if (-not [string]::Equals(
+    $RuntimeDirectory,
+    $ExpectedRuntimeDirectory,
+    [StringComparison]::OrdinalIgnoreCase
+)) {
+    throw (
+        "The backup wrapper must execute from the expected protected runtime: " +
+        "$ExpectedRuntimeDirectory"
+    )
 }
 $ExpectedAcceptanceToolPath = Join-Path `
     $RuntimeDirectory `
@@ -741,12 +791,15 @@ $LockPath = Join-Path `
 
 $LockStream = $null
 $Stage = "initialization"
+$Result = "initialization_failed"
+$CurrentBackupVerified = $false
 $ExitCode = 1
 
 try {
     Write-BackupLog "Backup wrapper started."
 
     $Stage = "overlap-protection"
+    $Result = "overlap_protection_failed"
     try {
         $LockStream = [IO.File]::Open(
             $LockPath,
@@ -763,6 +816,7 @@ try {
     Write-BackupLog "Exclusive backup-wrapper lock acquired."
 
     $Stage = "artifact-preflight"
+    $Result = "artifact_preflight_failed"
     if (
         (Test-Path -LiteralPath $BackupPath) `
         -or (Test-Path -LiteralPath $ManifestPath)
@@ -776,6 +830,7 @@ try {
     )
 
     $Stage = "backup"
+    $Result = "backup_creation_failed"
     Write-BackupLog "Accepted backup engine action Backup started."
     $null = Invoke-AcceptedBackupAction `
         -Action "Backup" `
@@ -784,17 +839,25 @@ try {
     Write-BackupLog "Accepted backup engine action Backup completed."
 
     $Stage = "verification"
+    $Result = "backup_verification_failed"
     Write-BackupLog "Accepted backup engine action VerifyBackup started."
     $null = Invoke-AcceptedBackupAction `
         -Action "VerifyBackup" `
         -ArtifactPath $BackupPath `
         -ArtifactManifestPath $ManifestPath
     Write-BackupLog "Accepted backup engine action VerifyBackup completed."
-
+    $CurrentBackupVerified = $true
     $Stage = "retention"
+    $Result = "retention_blocked_after_verified_backup"
+    Write-BackupLog (
+        "Current backup verified. current_backup_verified=true; " +
+        "retention phase starting."
+    )
+
     Invoke-VerifiedPairRetention -CurrentBackupPath $BackupPath
 
     $Stage = "complete"
+    $Result = "success"
     Write-BackupLog (
         "FINAL SUCCESS. Backup and manifest were created, verified, and " +
         "retention completed."
@@ -804,7 +867,8 @@ try {
 catch {
     try {
         Write-BackupLog (
-            "FINAL FAILURE. Stage=$Stage; " +
+            "FINAL FAILURE. Stage=$Stage; result=$Result; " +
+            "current_backup_verified=$($CurrentBackupVerified.ToString().ToLowerInvariant()); " +
             "error_type=$($_.Exception.GetType().FullName)."
         )
     }
@@ -814,7 +878,8 @@ catch {
 
     Write-Error `
         -ErrorAction Continue `
-        "SportsModel native PostgreSQL backup failed. Stage=$Stage. " +
+        "SportsModel native PostgreSQL backup failed. Stage=$Stage; " +
+        "result=$Result. " +
         "Review the durable wrapper log."
     $ExitCode = 1
 }

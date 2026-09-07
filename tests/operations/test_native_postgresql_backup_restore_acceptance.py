@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import hashlib
+import json
 import shutil
 import subprocess
 
@@ -227,6 +229,43 @@ def test_recurring_actions_resolve_only_required_postgresql_tools() -> None:
     assert "dropdb" not in backup + verify
 
 
+def test_verify_backup_rejects_truncated_custom_format_archive(
+    tmp_path: Path,
+) -> None:
+    postgresql_bin = Path(r"D:\PostgreSQL\16\server\bin")
+    assert (postgresql_bin / "pg_restore.exe").is_file()
+    backup = tmp_path / "sportsmodel-native-20260907t120000z.dump"
+    backup.write_bytes(b"PGDMP\x01\x0f\x00")
+    manifest = Path(f"{backup}.manifest.json")
+    manifest.write_text(
+        json.dumps(
+            {
+                "BackupSha256": hashlib.sha256(backup.read_bytes())
+                .hexdigest()
+                .upper(),
+                "BackupSizeBytes": backup.stat().st_size,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run(
+        "-Action",
+        "VerifyBackup",
+        "-PostgreSqlBinPath",
+        str(postgresql_bin),
+        "-BackupPath",
+        str(backup),
+        "-ManifestPath",
+        str(manifest),
+    )
+
+    assert result.returncode != 0
+    combined = result.stdout + result.stderr
+    assert "pg_restore" in combined
+    assert "end of file" in combined
+
+
 def test_operator_restore_actions_retain_action_specific_tools_and_guards() -> None:
     script = SCRIPT_PATH.read_text(encoding="utf-8")
     preflight = _function_body(script, "Invoke-Preflight", "Assert-BackupInputs")
@@ -273,6 +312,8 @@ def test_readiness_probe_requires_exact_database_and_migration_row() -> None:
 
     assert "bool_or(version = $MinimumCompatibleMigration)" in probe
     assert "-ReadOnly $false" in probe
+    assert "must observe the server's actual writable-primary state" in probe
+    assert "hardcoded and SELECT-only" in probe
     assert "current_setting('transaction_read_only')" in probe
     assert "current_setting('default_transaction_read_only')" in probe
     assert "$ObservedMigration -lt $MinimumCompatibleMigration" in probe
