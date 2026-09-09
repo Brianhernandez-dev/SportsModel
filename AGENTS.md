@@ -39,6 +39,7 @@
 - Run destructive database tests only against the repository's disposable test-database fixture with all required safety acknowledgements. The test database URL must be explicitly configured, must differ from the production URL, and must never resolve to production.
 - Prefer offline fixtures and mocked clients for provider testing. Do not make a live Odds API or other provider request unless explicitly authorized; live odds calls consume quota and must not be repeated merely as a test or casual retry.
 - Use the documented preflight/dry-run mode before consequential production workflows when one exists. After an authorized write, validate transaction outcome, idempotency, audit lineage, and the absence of partial state.
+- Treat production backup and recovery changes as consequential. Verify the actual backup artifact, manifest/integrity evidence, restore path, and source/target separation before declaring recoverability. A successful backup command alone is not proof that production data can be restored.
 
 ## Secrets and configuration
 
