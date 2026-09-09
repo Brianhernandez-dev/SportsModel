@@ -41,10 +41,11 @@ scored evidence and is never replaced because data or circumstances change.
 Additional intentional observations use `preview`; each remains a separate
 append-only row.
 
-An official run must select at least one target. The service rejects an empty
-official slate before creating a run, and the database independently rejects
-an official run with `target_count = 0`. Preview runs and dry runs may represent
-an empty slate; dry runs always write nothing.
+An official run must select at least one canonical, unplayed 2026+ target whose
+season type is explicitly `regular` or `postseason`; preseason is excluded. The
+service rejects an empty official slate before creating a run, and the database
+independently rejects an official run with `target_count = 0`. Preview runs and
+dry runs may represent an empty slate; dry runs always write nothing.
 
 Prediction rows reject `UPDATE` and `DELETE`, parent deletion is rejected, and
 all evidence foreign keys use `ON DELETE RESTRICT`. There is no prediction
@@ -55,9 +56,12 @@ upsert path.
 The database trigger replaces any caller timestamp with `clock_timestamp()`
 and requires `prediction_created_at < target_kickoff`. It locks and verifies
 the canonical game still exists, is unplayed, and has the exact persisted
-kickoff, participants, season, and neutral-site identity. Service preflight
-also checks every selected target with database time; the trigger remains the
-final authority.
+kickoff, participants, season, and neutral-site identity. Official preflight
+uses the PostgreSQL clock to require the half-open operating window `[earliest
+canonical kickoff - 120 minutes, earliest canonical kickoff - 60 minutes)`.
+The official write transaction revalidates that window so elapsed time after
+preflight cannot bypass it. The trigger remains the final before-kickoff
+authority.
 
 The canonical NFL row and its game row are held with PostgreSQL `FOR SHARE`
 locks until the prediction transaction commits. This is the minimum row-level

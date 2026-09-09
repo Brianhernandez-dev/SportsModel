@@ -22,9 +22,15 @@ def list_nfl_prediction_targets(
     season: int,
     slate_start_time: datetime,
     slate_end_time: datetime,
+    official_eligible_only: bool,
 ) -> tuple[NflGame, ...]:
+    season_type_clause = (
+        "AND nfl.season_type IN ('regular', 'postseason')"
+        if official_eligible_only
+        else ""
+    )
     cursor.execute(
-        """
+        f"""
         SELECT nfl.game_id, nfl.season, nfl.season_type, nfl.week,
                nfl.week_label, nfl.scheduled_start_time, game.home_team_id,
                game.away_team_id, nfl.status, nfl.home_score, nfl.away_score,
@@ -33,6 +39,7 @@ def list_nfl_prediction_targets(
         JOIN games game ON game.game_id = nfl.game_id
         WHERE nfl.season = %s
           AND nfl.season >= 2026
+          {season_type_clause}
           AND nfl.status = 'unplayed'
           AND nfl.scheduled_start_time >= %s
           AND nfl.scheduled_start_time < %s

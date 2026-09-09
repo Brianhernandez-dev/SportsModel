@@ -32,7 +32,12 @@ def test_nfl_forward_prediction_constraints_and_append_only_evidence(
 ) -> None:
     connection = psycopg2.connect(initialized_nfl_test_database)
     try:
-        game_id, home_id, away_id = _create_game(connection)
+        kickoff, slate_start, slate_end = _database_relative_official_timing(
+            connection
+        )
+        game_id, home_id, away_id = _create_game(
+            connection, kickoff=kickoff,
+        )
         with connection.cursor() as cursor:
             cursor.execute(
                 "SELECT (SELECT COUNT(*) FROM nfl_moneyline_prediction_runs), "
@@ -41,9 +46,9 @@ def test_nfl_forward_prediction_constraints_and_append_only_evidence(
             before_dry_run = cursor.fetchone()
         dry_run = _execute_nfl_moneyline_prediction_run(
             season=2026,
-            target_date=date(2099, 9, 10),
-            slate_start_time=datetime(2099, 9, 10, tzinfo=timezone.utc),
-            slate_end_time=datetime(2099, 9, 11, tzinfo=timezone.utc),
+            target_date=kickoff.date(),
+            slate_start_time=slate_start,
+            slate_end_time=slate_end,
             run_type=NFLMoneylinePredictionRunType.OFFICIAL,
             run_key=None,
             dry_run=True,
@@ -61,9 +66,13 @@ def test_nfl_forward_prediction_constraints_and_append_only_evidence(
         assert len(dry_run.inference_results) == 1
         assert before_dry_run == after_dry_run == (0, 0)
 
-        official_run = _create_run(connection, "official")
+        official_run = _create_run(
+            connection, "official", slate_start=slate_start, slate_end=slate_end,
+            target_date=kickoff.date(),
+        )
         prediction_id = _insert_prediction(
-            connection, official_run, game_id, home_id, away_id, "official"
+            connection, official_run, game_id, home_id, away_id, "official",
+            kickoff=kickoff,
         )
         with connection.cursor() as cursor:
             cursor.execute(
@@ -103,22 +112,33 @@ def test_nfl_forward_prediction_constraints_and_append_only_evidence(
         assert vector_sha == "3" * 64
         assert pregame is True
 
-        second_official_run = _create_run(connection, "official")
+        second_official_run = _create_run(
+            connection, "official", slate_start=slate_start, slate_end=slate_end,
+            target_date=kickoff.date(),
+        )
         with pytest.raises(psycopg2.errors.UniqueViolation):
             _insert_prediction(
                 connection, second_official_run, game_id,
-                home_id, away_id, "official",
+                home_id, away_id, "official", kickoff=kickoff,
             )
         connection.rollback()
 
-        preview_one = _create_run(connection, "preview")
+        preview_one = _create_run(
+            connection, "preview", slate_start=slate_start, slate_end=slate_end,
+            target_date=kickoff.date(),
+        )
         _insert_prediction(
-            connection, preview_one, game_id, home_id, away_id, "preview"
+            connection, preview_one, game_id, home_id, away_id, "preview",
+            kickoff=kickoff,
         )
         connection.commit()
-        preview_two = _create_run(connection, "preview")
+        preview_two = _create_run(
+            connection, "preview", slate_start=slate_start, slate_end=slate_end,
+            target_date=kickoff.date(),
+        )
         _insert_prediction(
-            connection, preview_two, game_id, home_id, away_id, "preview"
+            connection, preview_two, game_id, home_id, away_id, "preview",
+            kickoff=kickoff,
         )
         connection.commit()
 
@@ -130,7 +150,10 @@ def test_nfl_forward_prediction_constraints_and_append_only_evidence(
             )
             assert cursor.fetchone()[0] == 2
 
-        threshold_run = _create_run(connection, "preview")
+        threshold_run = _create_run(
+            connection, "preview", slate_start=slate_start, slate_end=slate_end,
+            target_date=kickoff.date(),
+        )
         threshold_prediction = _insert_prediction(
             connection,
             threshold_run,
@@ -138,6 +161,7 @@ def test_nfl_forward_prediction_constraints_and_append_only_evidence(
             home_id,
             away_id,
             "preview",
+            kickoff=kickoff,
             probability=Decimal("0.4999999999999999"),
         )
         connection.commit()
@@ -437,7 +461,8 @@ def test_concurrent_identical_run_key_returns_one_completed_evidence_set(
 ) -> None:
     setup = psycopg2.connect(initialized_nfl_test_database)
     try:
-        game_id, _, _ = _create_game(setup)
+        kickoff, slate_start, slate_end = _database_relative_official_timing(setup)
+        game_id, _, _ = _create_game(setup, kickoff=kickoff)
     finally:
         setup.close()
     run_key = uuid4()
@@ -447,9 +472,9 @@ def test_concurrent_identical_run_key_returns_one_completed_evidence_set(
         barrier.wait()
         return _execute_nfl_moneyline_prediction_run(
             season=2026,
-            target_date=date(2099, 9, 10),
-            slate_start_time=datetime(2099, 9, 10, tzinfo=timezone.utc),
-            slate_end_time=datetime(2099, 9, 11, tzinfo=timezone.utc),
+            target_date=kickoff.date(),
+            slate_start_time=slate_start,
+            slate_end_time=slate_end,
             run_type=NFLMoneylinePredictionRunType.OFFICIAL,
             run_key=run_key,
             dry_run=False,
@@ -466,9 +491,9 @@ def test_concurrent_identical_run_key_returns_one_completed_evidence_set(
     assert results[0].run.prediction_run_id == results[1].run.prediction_run_id
     blocked_preflight = _execute_nfl_moneyline_prediction_run(
         season=2026,
-        target_date=date(2099, 9, 10),
-        slate_start_time=datetime(2099, 9, 10, tzinfo=timezone.utc),
-        slate_end_time=datetime(2099, 9, 11, tzinfo=timezone.utc),
+        target_date=kickoff.date(),
+        slate_start_time=slate_start,
+        slate_end_time=slate_end,
         run_type=NFLMoneylinePredictionRunType.OFFICIAL,
         run_key=None,
         dry_run=True,
@@ -538,8 +563,9 @@ def test_partial_official_transaction_rolls_back_all_children(
 ) -> None:
     setup = psycopg2.connect(initialized_nfl_test_database)
     try:
-        _create_game(setup)
-        _create_game(setup)
+        kickoff, slate_start, slate_end = _database_relative_official_timing(setup)
+        _create_game(setup, kickoff=kickoff)
+        _create_game(setup, kickoff=kickoff)
     finally:
         setup.close()
 
@@ -563,9 +589,9 @@ def test_partial_official_transaction_rolls_back_all_children(
     with pytest.raises(RuntimeError, match="forced second prediction failure"):
         _execute_nfl_moneyline_prediction_run(
             season=2026,
-            target_date=date(2099, 9, 10),
-            slate_start_time=datetime(2099, 9, 10, tzinfo=timezone.utc),
-            slate_end_time=datetime(2099, 9, 11, tzinfo=timezone.utc),
+            target_date=kickoff.date(),
+            slate_start_time=slate_start,
+            slate_end_time=slate_end,
             run_type=NFLMoneylinePredictionRunType.OFFICIAL,
             run_key=run_key,
             dry_run=False,
@@ -726,7 +752,23 @@ def _insert_direct_terminal_run(cursor, status):
     )
 
 
-def _create_game(connection):
+def _database_relative_official_timing(connection):
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            WITH authoritative_time AS (
+                SELECT clock_timestamp() AS database_now
+            )
+            SELECT database_now + INTERVAL '90 minutes',
+                   database_now + INTERVAL '89 minutes',
+                   database_now + INTERVAL '91 minutes'
+            FROM authoritative_time;
+            """
+        )
+        return cursor.fetchone()
+
+
+def _create_game(connection, *, kickoff=None):
     with connection.cursor() as cursor:
         cursor.execute(
             "INSERT INTO teams (team_name) VALUES (%s) RETURNING team_id;",
@@ -738,7 +780,7 @@ def _create_game(connection):
             (f"Away {uuid4()}",),
         )
         away_id = cursor.fetchone()[0]
-        kickoff = datetime(2099, 9, 10, 20, tzinfo=timezone.utc)
+        kickoff = kickoff or datetime(2099, 9, 10, 20, tzinfo=timezone.utc)
         cursor.execute(
             """
             INSERT INTO games (game_date, home_team_id, away_team_id)
@@ -766,6 +808,7 @@ def _create_run(
     connection, run_type, *, season=2026, target_count=1,
     slate_start=datetime(2099, 9, 10, tzinfo=timezone.utc),
     slate_end=datetime(2099, 9, 11, tzinfo=timezone.utc),
+    target_date=date(2099, 9, 10),
 ):
     with connection.cursor() as cursor:
         cursor.execute(
@@ -781,13 +824,13 @@ def _create_run(
                 mature_model_fingerprint, target_count
             ) VALUES (
                 %s, %s, %s, 'test-protocol', 'test-routing', %s,
-                '2099-09-10', %s, %s, %s,
+                %s, %s, %s, %s,
                 'early-model', 'early-schema', %s, %s,
                 'mature-model', 'mature-schema', %s, %s, %s
             ) RETURNING nfl_moneyline_prediction_run_id;
             """,
             (
-                uuid4(), "0" * 64, run_type, season,
+                uuid4(), "0" * 64, run_type, season, target_date,
                 slate_start, slate_end, "1" * 64,
                 "2" * 64, "4" * 64, "8" * 64, "a" * 64, target_count,
             ),

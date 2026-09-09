@@ -87,6 +87,32 @@ def test_cli_blocks_existing_official_observation(monkeypatch, capsys) -> None:
     assert output.rstrip().endswith("OFFICIAL RUN BLOCKED")
 
 
+def test_cli_prints_operating_window_blocker_without_ready(monkeypatch, capsys) -> None:
+    message = (
+        "official NFL prediction attempt is too early; "
+        "database_time=2026-09-10T18:59:59.000000Z; "
+        "earliest_canonical_kickoff=2026-09-10T21:00:00.000000Z; "
+        "allowed_window=[2026-09-10T19:00:00.000000Z, "
+        "2026-09-10T20:00:00.000000Z)"
+    )
+    monkeypatch.setattr(
+        cli,
+        "execute_nfl_moneyline_prediction_run",
+        lambda **values: (_ for _ in ()).throw(ValueError(message)),
+    )
+
+    assert cli.main([
+        "--season", "2026",
+        "--slate-start", "2026-09-10T00:00:00Z",
+        "--slate-end", "2026-09-11T00:00:00Z",
+        "--official", "--preflight",
+    ]) == 2
+    output = capsys.readouterr().out
+    assert f"BLOCKER: {message}" in output
+    assert "READY FOR OFFICIAL RUN" not in output
+    assert output.rstrip().endswith("OFFICIAL RUN BLOCKED")
+
+
 def test_cli_generates_and_prints_run_key(monkeypatch, capsys) -> None:
     calls = []
     generated = UUID(RUN_KEY)

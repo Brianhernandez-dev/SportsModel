@@ -20,12 +20,14 @@ UTC bounds from the current canonical schedule and verify its source provenance:
 2. Normally use a separate window for an early standalone game and one window
    for the main Sunday-Monday slate. Give international, Saturday, holiday, or
    other exceptional games their own explicit window when that reduces risk.
-3. Run preflight 60-120 minutes before the first kickoff in the window, review
-   every target, then execute immediately. Never proceed if the first kickoff is
-   imminent enough that review cannot finish safely.
-4. Games must be canonical, unplayed, season 2026 or later, and strictly before
-   kickoff. One official observation is allowed per protocol/game. Preview rows
-   never satisfy or replace this requirement.
+3. The enforced official operating window is exactly `[first canonical kickoff
+   - 120 minutes, first canonical kickoff - 60 minutes)`, using the PostgreSQL
+   clock. Exactly 120 minutes before is allowed; exactly 60 minutes before is
+   blocked. Run preflight, review every target, and execute within that window.
+4. Games must be canonical, unplayed, season 2026 or later, and explicitly
+   `regular` or `postseason`; preseason is unsupported. One official observation
+   is allowed per protocol/game. Preview rows never satisfy or replace this
+   requirement.
 
 Before live use, obtain the real UTC bounds from the canonical schedule. Do not
 copy the illustrative timestamps below without verifying them.
@@ -63,6 +65,10 @@ Preflight runs inference in a read-only repeatable snapshot and writes zero rows
 Review target count, every away/home team and kickoff, prior-game counts, route,
 frozen model/schema, probability, predicted side, and blockers. Continue only
 when the final line is `READY FOR OFFICIAL RUN`.
+
+The service rechecks the same PostgreSQL-clock operating window in the official
+write transaction. A preflight result cannot authorize a write after the window
+has closed; the write fails without inserting predictions.
 
 Create and retain a UUID in the operator log or transcript:
 

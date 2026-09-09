@@ -92,7 +92,7 @@ class FakeConnection:
 def test_dry_run_infers_and_performs_zero_writes(monkeypatch) -> None:
     connections = []
     monkeypatch.setattr(service, "list_nfl_prediction_targets", lambda *a, **k: (_game(1),))
-    monkeypatch.setattr(service, "database_clock", lambda cursor: START - timedelta(days=1))
+    monkeypatch.setattr(service, "database_clock", lambda cursor: START - timedelta(minutes=30))
     monkeypatch.setattr(service, "list_existing_official_nfl_game_ids", lambda *a, **k: ())
     monkeypatch.setattr(service, "list_nfl_team_abbreviations", lambda *a, **k: ())
     monkeypatch.setattr(
@@ -149,7 +149,7 @@ def test_write_run_uses_repeatable_read_and_persists_atomically(
     monkeypatch.setattr(service, "load_nfl_prediction_run_by_key", lambda *a, **k: None)
     monkeypatch.setattr(service, "create_nfl_prediction_run", lambda *a, **k: running)
     monkeypatch.setattr(service, "lock_nfl_prediction_run", lambda *a, **k: running)
-    monkeypatch.setattr(service, "database_clock", lambda cursor: START - timedelta(days=1))
+    monkeypatch.setattr(service, "database_clock", lambda cursor: START - timedelta(minutes=30))
     monkeypatch.setattr(service, "list_existing_official_nfl_game_ids", lambda *a, **k: ())
     monkeypatch.setattr(
         service, "insert_nfl_game_prediction",
@@ -219,7 +219,7 @@ def test_target_routing_and_feature_pit_reads_share_repeatable_read_snapshot(
     monkeypatch.setattr(service, "load_nfl_prediction_run_by_key", lambda *a, **k: None)
     monkeypatch.setattr(service, "create_nfl_prediction_run", lambda *a, **k: running)
     monkeypatch.setattr(service, "lock_nfl_prediction_run", lambda *a, **k: running)
-    monkeypatch.setattr(service, "database_clock", lambda cursor: START - timedelta(days=1))
+    monkeypatch.setattr(service, "database_clock", lambda cursor: START - timedelta(minutes=30))
     monkeypatch.setattr(service, "list_existing_official_nfl_game_ids", lambda *a, **k: ())
     monkeypatch.setattr(
         service,
@@ -265,7 +265,7 @@ def test_partial_slate_failure_rolls_back_children_and_retains_failed_run(
     monkeypatch.setattr(service, "load_nfl_prediction_run_by_key", lambda *a, **k: None)
     monkeypatch.setattr(service, "create_nfl_prediction_run", lambda *a, **k: running)
     monkeypatch.setattr(service, "lock_nfl_prediction_run", lambda *a, **k: running)
-    monkeypatch.setattr(service, "database_clock", lambda cursor: START - timedelta(days=1))
+    monkeypatch.setattr(service, "database_clock", lambda cursor: START - timedelta(minutes=30))
     monkeypatch.setattr(service, "list_existing_official_nfl_game_ids", lambda *a, **k: ())
     monkeypatch.setattr(
         service, "insert_nfl_game_prediction",
@@ -420,7 +420,7 @@ def test_running_identical_run_key_recovers_only_with_no_children(monkeypatch) -
         service, "list_nfl_prediction_targets",
         lambda *a, **k: target_reads.append(True) or targets,
     )
-    monkeypatch.setattr(service, "database_clock", lambda cursor: START - timedelta(days=1))
+    monkeypatch.setattr(service, "database_clock", lambda cursor: START - timedelta(minutes=30))
     monkeypatch.setattr(service, "list_existing_official_nfl_game_ids", lambda *a, **k: ())
     monkeypatch.setattr(
         service, "insert_nfl_game_prediction",
@@ -476,6 +476,11 @@ def test_serialization_failure_restarts_and_returns_winning_completed_run(
         ),
     )
     monkeypatch.setattr(service, "create_nfl_prediction_run", lambda *a, **k: running)
+    monkeypatch.setattr(
+        service,
+        "database_clock",
+        lambda cursor: targets[0].scheduled_start_time - timedelta(minutes=90),
+    )
     monkeypatch.setattr(
         service, "lock_nfl_prediction_run",
         lambda *a, **k: (_ for _ in ()).throw(SerializationFailure()),
@@ -553,6 +558,125 @@ def test_empty_official_write_is_rejected_before_run_creation(monkeypatch) -> No
             connection_factory=FakeConnection,
             inference_runner=_inference,
         )
+
+
+@pytest.mark.parametrize(
+    ("offset", "allowed", "timing"),
+    [
+        (timedelta(minutes=120), True, None),
+        (timedelta(minutes=120, microseconds=1), False, "too early"),
+        (timedelta(minutes=90), True, None),
+        (timedelta(minutes=60), False, "too late"),
+        (timedelta(minutes=59, seconds=59), False, "too late"),
+    ],
+)
+def test_official_operating_window_boundaries(offset, allowed, timing) -> None:
+    game = _game(1)
+    database_now = game.scheduled_start_time - offset
+
+    if allowed:
+        service._require_official_operating_window(
+            database_now=database_now,
+            targets=(game,),
+        )
+        return
+
+    with pytest.raises(service.OfficialNflOperatingWindowError) as captured:
+        service._require_official_operating_window(
+            database_now=database_now,
+            targets=(game,),
+        )
+    message = str(captured.value)
+    assert timing in message
+    assert f"database_time={service._utc_text(database_now)}" in message
+    assert (
+        f"earliest_canonical_kickoff={service._utc_text(game.scheduled_start_time)}"
+        in message
+    )
+    assert "allowed_window=[" in message
+
+
+def test_official_preflight_uses_database_clock_and_blocks_before_inference(
+    monkeypatch,
+) -> None:
+    game = _game(1)
+    database_now = game.scheduled_start_time - timedelta(minutes=121)
+
+    class MisleadingLocalClock:
+        @classmethod
+        def now(cls, tz=None):
+            return game.scheduled_start_time - timedelta(minutes=90)
+
+    monkeypatch.setattr(service, "datetime", MisleadingLocalClock)
+    monkeypatch.setattr(
+        service, "list_nfl_prediction_targets", lambda *a, **k: (game,),
+    )
+    monkeypatch.setattr(service, "database_clock", lambda cursor: database_now)
+    monkeypatch.setattr(
+        service,
+        "_infer_targets",
+        lambda **kwargs: pytest.fail("blocked database time reached inference"),
+    )
+
+    with pytest.raises(service.OfficialNflOperatingWindowError, match="too early"):
+        service._execute_nfl_moneyline_prediction_run(
+            season=2026,
+            target_date=date(2026, 9, 10),
+            slate_start_time=START,
+            slate_end_time=END,
+            run_type=NFLMoneylinePredictionRunType.OFFICIAL,
+            run_key=None,
+            dry_run=True,
+            connection_factory=FakeConnection,
+            inference_runner=_inference,
+        )
+
+
+def test_official_write_revalidates_database_time_inside_write_transaction(
+    monkeypatch,
+) -> None:
+    connections = []
+    game = _game(1)
+    running = _run()
+    database_times = iter((
+        game.scheduled_start_time - timedelta(minutes=90),
+        game.scheduled_start_time - timedelta(minutes=60),
+    ))
+    failure_updates = []
+    monkeypatch.setattr(
+        service, "list_nfl_prediction_targets", lambda *a, **k: (game,),
+    )
+    monkeypatch.setattr(service, "load_nfl_prediction_run_by_key", lambda *a, **k: None)
+    monkeypatch.setattr(service, "create_nfl_prediction_run", lambda *a, **k: running)
+    monkeypatch.setattr(service, "lock_nfl_prediction_run", lambda *a, **k: running)
+    monkeypatch.setattr(service, "database_clock", lambda cursor: next(database_times))
+    monkeypatch.setattr(
+        service,
+        "insert_nfl_game_prediction",
+        lambda *a, **k: pytest.fail("late official write inserted a prediction"),
+    )
+    monkeypatch.setattr(
+        service,
+        "fail_nfl_prediction_run",
+        lambda *a, **values: failure_updates.append(values),
+    )
+
+    with pytest.raises(service.OfficialNflOperatingWindowError, match="too late"):
+        service._execute_nfl_moneyline_prediction_run(
+            season=2026,
+            target_date=date(2026, 9, 10),
+            slate_start_time=START,
+            slate_end_time=END,
+            run_type=NFLMoneylinePredictionRunType.OFFICIAL,
+            run_key=RUN_KEY,
+            dry_run=False,
+            connection_factory=lambda: _connection(connections),
+            inference_runner=_inference,
+        )
+
+    assert connections[0].commits == 1
+    assert connections[1].rollbacks == 1
+    assert failure_updates[0]["prediction_run_id"] == running.prediction_run_id
 
 
 def test_public_execution_path_exposes_no_model_substitution_hooks() -> None:

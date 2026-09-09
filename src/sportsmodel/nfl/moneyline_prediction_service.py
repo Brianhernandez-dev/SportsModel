@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Callable
 from uuid import UUID
@@ -56,6 +56,12 @@ ArtifactLoader = Callable[[], FrozenNFLMoneylineArtifact]
 InferenceRunner = Callable[..., NFLMoneylineInferenceResult]
 _MAX_CONCURRENCY_ATTEMPTS = 3
 _RETRYABLE_CONCURRENCY_ERRORS = (SerializationFailure, DeadlockDetected)
+_OFFICIAL_WINDOW_OPEN_BEFORE_KICKOFF = timedelta(minutes=120)
+_OFFICIAL_WINDOW_CLOSE_BEFORE_KICKOFF = timedelta(minutes=60)
+
+
+class OfficialNflOperatingWindowError(ValueError):
+    """An official operation was attempted outside its database-time window."""
 
 
 @dataclass(frozen=True)
@@ -205,6 +211,9 @@ def _execute_nfl_moneyline_prediction_run_once(
                     season=season,
                     slate_start_time=slate_start_time,
                     slate_end_time=slate_end_time,
+                    official_eligible_only=(
+                        run_type is NFLMoneylinePredictionRunType.OFFICIAL
+                    ),
                 )
                 expected_slate_fingerprint = _slate_fingerprint(targets)
                 expected_target_count = len(targets)
@@ -214,6 +223,11 @@ def _execute_nfl_moneyline_prediction_run_once(
                 ):
                     raise ValueError(
                         "official NFL prediction slate must contain at least one target"
+                    )
+                if run_type is NFLMoneylinePredictionRunType.OFFICIAL:
+                    _require_official_operating_window(
+                        database_now=database_clock(cursor),
+                        targets=targets,
                     )
                 request_sha = _request_fingerprint(
                     season=season,
@@ -341,6 +355,9 @@ def _execute_write_transaction(
                 season=season,
                 slate_start_time=slate_start_time,
                 slate_end_time=slate_end_time,
+                official_eligible_only=(
+                    run_type is NFLMoneylinePredictionRunType.OFFICIAL
+                ),
             )
             slate_sha = _slate_fingerprint(targets)
             if (
@@ -351,6 +368,11 @@ def _execute_write_transaction(
                     "canonical NFL slate changed after run creation"
                 )
             now = database_clock(cursor)
+            if run_type is NFLMoneylinePredictionRunType.OFFICIAL:
+                _require_official_operating_window(
+                    database_now=now,
+                    targets=targets,
+                )
             late_ids = tuple(
                 game.game_id
                 for game in targets
@@ -484,8 +506,16 @@ def _execute_dry_run(
                 season=season,
                 slate_start_time=slate_start_time,
                 slate_end_time=slate_end_time,
+                official_eligible_only=(
+                    run_type is NFLMoneylinePredictionRunType.OFFICIAL
+                ),
             )
             now = database_clock(cursor)
+            if run_type is NFLMoneylinePredictionRunType.OFFICIAL:
+                _require_official_operating_window(
+                    database_now=now,
+                    targets=targets,
+                )
             if any(game.scheduled_start_time <= now for game in targets):
                 raise ValueError(
                     "NFL predictions must be created strictly before kickoff"
@@ -533,6 +563,25 @@ def _execute_dry_run(
         )
     finally:
         connection.close()
+
+
+def _require_official_operating_window(
+    *, database_now: datetime, targets: tuple[Any, ...],
+) -> None:
+    if not targets:
+        return
+    earliest_kickoff = min(game.scheduled_start_time for game in targets)
+    window_start = earliest_kickoff - _OFFICIAL_WINDOW_OPEN_BEFORE_KICKOFF
+    window_end = earliest_kickoff - _OFFICIAL_WINDOW_CLOSE_BEFORE_KICKOFF
+    if window_start <= database_now < window_end:
+        return
+    timing = "too early" if database_now < window_start else "too late"
+    raise OfficialNflOperatingWindowError(
+        "official NFL prediction attempt is "
+        f"{timing}; database_time={_utc_text(database_now)}; "
+        f"earliest_canonical_kickoff={_utc_text(earliest_kickoff)}; "
+        f"allowed_window=[{_utc_text(window_start)}, {_utc_text(window_end)})"
+    )
 
 
 def _infer_targets(

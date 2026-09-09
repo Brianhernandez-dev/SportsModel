@@ -54,6 +54,27 @@ class _FakeCursor:
         return False
 
 
+class _ScheduleCursor(_FakeCursor):
+    def __init__(self, rows) -> None:
+        self.rows = rows
+        self.queries = []
+
+    def execute(self, query, parameters=None) -> None:
+        self.queries.append((query, parameters))
+
+    def fetchall(self):
+        return self.rows
+
+
+class _ScheduleConnection(_FakeConnection):
+    def __init__(self, rows) -> None:
+        super().__init__()
+        self.schedule_cursor = _ScheduleCursor(rows)
+
+    def cursor(self):
+        return self.schedule_cursor
+
+
 def _response(body=None) -> capture.NflProviderResponse:
     fixture = json.loads(FIXTURE.read_text(encoding="utf-8"))
     return capture.NflProviderResponse(
@@ -169,6 +190,51 @@ def test_duplicate_reservation_stops_before_provider_call(monkeypatch) -> None:
         )
 
     assert calls == []
+
+
+@pytest.mark.parametrize(
+    "unsupported_row",
+    [
+        (17, 2026, "preseason"),
+        (18, 2025, "regular"),
+    ],
+)
+def test_unsupported_capture_slate_stops_before_reservation_and_provider(
+    monkeypatch,
+    unsupported_row,
+) -> None:
+    connection = _ScheduleConnection((unsupported_row,))
+    calls = []
+    monkeypatch.setattr(capture, "validate_nfl_capture_schema", lambda cursor: 30)
+
+    with pytest.raises(capture.NflCaptureScheduleError, match="unsupported"):
+        capture.execute_manual_nfl_capture(
+            connection,
+            target_date=TARGET_DATE,
+            provider_call=lambda request: calls.append(request),
+        )
+
+    assert calls == []
+    assert connection.commits == 0
+    assert not any(
+        "INSERT INTO odds_ingestion_runs" in query
+        for query, _ in connection.schedule_cursor.queries
+    )
+
+
+@pytest.mark.parametrize("season_type", ["regular", "postseason"])
+def test_capture_schedule_accepts_supported_2026_plus_season_types(season_type) -> None:
+    cursor = _ScheduleCursor(((21, 2026, season_type),))
+    start, end = capture.utc_target_date_window(TARGET_DATE)
+
+    assert capture.validate_nfl_capture_schedule(
+        cursor,
+        commence_time_from=start,
+        commence_time_to=end,
+    ) == (21,)
+    query = cursor.queries[0][0]
+    assert "JOIN games AS game" in query
+    assert "game.home_team_id <> game.away_team_id" in query
 
 
 def test_parser_failure_has_no_hidden_second_call(monkeypatch) -> None:

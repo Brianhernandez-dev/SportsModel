@@ -292,8 +292,10 @@ operator interface is `python -m sportsmodel.nfl.manual_odds_capture_cli`.
 With no mode flag it is a no-network, no-write dry run. Mock mode requires an
 explicit fixture, target UTC date, disposable test database URL, and destructive
 test-database guard. Live mode requires `--live`, `--confirm-one-request`, a
-target UTC date, `ODDS_API_KEY`, schema 030 or newer, a future unplayed canonical
-NFL schedule in the requested window, and successful run reservation. Sport,
+target UTC date, `ODDS_API_KEY`, schema 030 or newer, and a future unplayed
+canonical NFL schedule in the requested window. The schedule preflight
+requires 2026+ `regular` or `postseason` games and rejects preseason or older
+slates before ingestion-run reservation or provider transport. Sport,
 region, market, and odds format are fixed to `americanfootball_nfl`, `us`,
 `h2h`, and `american`; both reservation and transport reject any other request
 contract.

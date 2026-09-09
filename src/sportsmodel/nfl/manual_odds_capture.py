@@ -194,7 +194,7 @@ def validate_nfl_capture_schedule(
         raise ValueError("NFL capture window must be a non-empty half-open interval")
     cursor.execute(
         """
-        SELECT nfl.game_id
+        SELECT nfl.game_id, nfl.season, nfl.season_type
         FROM nfl_games AS nfl
         JOIN games AS game ON game.game_id = nfl.game_id
         WHERE nfl.status = 'unplayed'
@@ -206,11 +206,23 @@ def validate_nfl_capture_schedule(
         """,
         (commence_time_from, commence_time_to),
     )
-    game_ids = tuple(int(row[0]) for row in cursor.fetchall())
-    if not game_ids:
+    games = tuple(cursor.fetchall())
+    if not games:
         raise NflCaptureScheduleError(
             "no future unplayed canonical NFL games exist in the requested UTC window"
         )
+    unsupported_ids = tuple(
+        int(game_id)
+        for game_id, season, season_type in games
+        if int(season) < 2026 or season_type not in ("regular", "postseason")
+    )
+    if unsupported_ids:
+        raise NflCaptureScheduleError(
+            "unsupported NFL capture slate; canonical game IDs "
+            f"{unsupported_ids} must be season 2026+ regular/postseason games; "
+            "preseason is not supported"
+        )
+    game_ids = tuple(int(row[0]) for row in games)
     return game_ids
 
 
