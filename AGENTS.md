@@ -14,10 +14,17 @@
 - Do not stage or discard unrelated changes. Before completion, report the branch/status and the files changed for the task, and review the relevant diff.
 - Run `git diff --check` after modifying tracked files and report any whitespace errors. Check new untracked files for the same problems before handing them off.
 
+## Work classification and authorization
+
+- Distinguish investigation, implementation, and production verification before acting. Investigation is read-only diagnosis and evidence gathering; implementation may change repository files within the requested scope; production verification observes the effective live system and does not authorize production writes, provider calls, task changes, or configuration changes unless the user separately and explicitly authorizes them.
+- Do not treat a request to inspect, review, diagnose, verify, or report as authorization to implement a fix or mutate external state. If investigation reveals that implementation or a consequential production action is required, stop and report the evidence and required authorization rather than silently broadening the task.
+- For mixed requests, identify the boundary between each class of work and apply the strictest applicable safety rules to every production-facing step.
+
 ## Architecture and data integrity
 
 - Preserve the established separation between domain models, analytics, services, persistence, and operational entry points. Keep database access isolated at the repository/service boundary and keep analytical transformations pure and deterministic where the existing design does so.
 - Point-in-time correctness and prevention of data leakage are first-class requirements. Every prediction input must have been available at its prediction cutoff. Check joins, aggregates, rolling windows, corrections, market observations, labels, and derived features for accidental future information.
+- Apply the same leakage discipline to research, policy design, thresholds, model selection, and operational decision rules. Evidence already observed from a forward or holdout period is exposed and must not be reused as if it were independent confirmation. Declare any future confirmation cohort, evaluation boundary, decision rule, and permitted analyses prospectively before observing its outcomes; keep exploratory findings clearly separated from confirmatory claims.
 - Use explicit timezone-aware timestamps and the repository's documented interval semantics. Where a workflow defines a UTC half-open window, preserve `[start, end)` behavior and do not substitute descriptive labels such as week numbers for the authoritative selector.
 - Preserve canonical identity and source provenance. Validate provider/source identity and canonical mappings, and fail clearly on missing, ambiguous, or conflicting mappings. Do not use an odds or market feed to invent canonical teams or games when the workflow requires existing canonical records.
 - Preserve deterministic ordering, hashes, fingerprints, version identifiers, and immutable evidence contracts where present. Do not mutate frozen model artifacts or versioned protocols in place; make any authorized successor explicit and separately identifiable.
@@ -32,13 +39,16 @@
 ## Database, migrations, and production safety
 
 - Treat production databases, live provider calls, and scheduled-task changes as consequential. Perform them only when explicitly authorized and only within the approved boundary. Do not modify production scheduled tasks or run destructive production database operations without an explicit instruction that identifies the intended operation.
-- Audit actual production state before work that depends on it. Verify the database target, applied migration state, required columns/tables/indexes/triggers, and other prerequisites; running-code expectations are not proof that production is compatible.
+- Audit actual production state before work that depends on it. Resolve the effective live database target through the same configuration-loading paths used by the executable workflow, then verify the connected server, port, database, role, and storage/topology identity using current runtime or service/container evidence. Do not rely on remembered paths, prior reports, a single environment variable, or running-code expectations as proof of production identity or compatibility. Also verify applied migration state, required columns/tables/indexes/triggers, and other prerequisites.
 - The standard migration runner discovers and applies all pending migration files. When authorization is limited to a specific migration boundary, first enumerate the discovered and applied versions, then use a controlled/version-capped path that cannot cross that boundary. Do not blindly run the standard all-pending path.
 - Never edit the meaning of an already-applied migration. Add a new ordered migration, preserve existing data and unrelated protections, use transactional behavior where supported, and verify safe rerun/idempotency behavior where the migration or operational procedure requires it.
 - When implementing or modifying a production workflow that depends on a minimum schema version, require a clear schema-compatibility preflight before live ingestion or processing. If the required version is absent, the workflow must fail before performing live work. Do not assume existing workflows already provide this protection; verify the implementation.
-- Run destructive database tests only against the repository's disposable test-database fixture with all required safety acknowledgements. The test database URL must be explicitly configured, must differ from the production URL, and must never resolve to production.
+- Run destructive database tests only against a positively identified disposable test database with all required safety acknowledgements. Resolve both the test target and the effective production target through every configuration path supported by the repository, including URL-based and component-based settings, and compare normalized connected identities plus storage/topology evidence where available. Fail closed if either identity is missing, cannot be resolved, is ambiguous, aliases the same server/database/storage, or otherwise cannot be proven isolated. A guard that compares only one optional configuration variable is insufficient.
 - Prefer offline fixtures and mocked clients for provider testing. Do not make a live Odds API or other provider request unless explicitly authorized; live odds calls consume quota and must not be repeated merely as a test or casual retry.
+- After a live provider request may have been attempted, do not blindly retry. First determine whether the request was sent or accepted, whether local or remote state was persisted, and whether the workflow's documented retry, uniqueness, and idempotency rules permit another attempt. If that evidence is unavailable or ambiguous, fail closed and preserve the original attempt for investigation.
 - Use the documented preflight/dry-run mode before consequential production workflows when one exists. After an authorized write, validate transaction outcome, idempotency, audit lineage, and the absence of partial state.
+- For point-in-time-sensitive workflows, resolve the authoritative deadline from current canonical data and the workflow's trusted clock before the first attempt and before every retry. Refuse a retry that would begin or could complete outside the permitted window. If the deadline, current time, or remaining safe execution budget cannot be resolved reliably, fail closed.
+- For scheduled-task changes or verification, capture the relevant task definition, identity, triggers, action, settings, and runtime state before and after the authorized operation. Verify the underlying application, database, endpoint, or service health separately; a scheduler status such as `Ready` or `Running` is not proof that the workload is healthy.
 - Treat production backup and recovery changes as consequential. Verify the actual backup artifact, manifest/integrity evidence, restore path, and source/target separation before declaring recoverability. A successful backup command alone is not proof that production data can be restored.
 
 ## Secrets and configuration
@@ -57,6 +67,7 @@
 
 - Update the relevant architecture, source-contract, or operations documentation when a change alters a durable contract or runbook. Keep transient execution status and one-time plans out of durable architecture and repository instruction files.
 - Make examples safe by default: use placeholders for sensitive values, clearly distinguish test from production targets, and do not present destructive or quota-consuming commands as routine validation.
+- At stable milestones, preserve raw review and execution evidence outside the repository together with a manifest recording hashes, command/context, source revision, timestamps, environment identity with secrets redacted, and validation outcomes. Keep raw exports immutable enough for independent review. Promote evidence into maintained repository artifacts only when intentionally authorized; otherwise do not clutter the working tree with transient evidence packages.
 
 ## Completion report
 
@@ -67,4 +78,5 @@ At the end of a Codex task, report:
 3. Tests and validation run, with exact results and any skips.
 4. Final Git branch/status and relevant diff checks.
 5. Production impact, including whether any database, provider, evidence, or scheduled-task state changed.
-6. Unresolved risks and work intentionally left incomplete.
+6. Production-health assessment for production-facing work, based on separately verified application/service health and not merely command, process, container, or scheduler status.
+7. Unresolved risks and work intentionally left incomplete.
