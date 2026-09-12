@@ -4,7 +4,9 @@ from types import SimpleNamespace
 import pytest
 
 from sportsmodel.database.nfl_historical_probability_evidence_repository import (
+    _annotate_training_reconstruction_contributions,
     _build_source_trace,
+    _derive_training_reconstruction_dependencies,
     _load_forward_exposures,
     _reject_latest_timestamp_ambiguity,
 )
@@ -28,6 +30,74 @@ def test_ordered_correction_lineage_is_deterministic() -> None:
         {"observed_at": NOW, "raw_row_sha256": "b" * 64},
     )
     _reject_latest_timestamp_ambiguity(observations, "game 1")
+
+
+def test_training_reconstruction_contributions_exclude_unrelated_loaded_context(
+) -> None:
+    earlier = NOW - timedelta(days=1)
+    later = NOW + timedelta(days=1)
+    snapshots = (
+        {"ingestion_run_id": 1},
+        {"ingestion_run_id": 2},
+        {"ingestion_run_id": 10},
+    )
+    game_dependency_ids, statistics_dependency_game_ids = (
+        _derive_training_reconstruction_dependencies(
+            mature_rows=({"target_game_id": 1},),
+            mature_traces=(SimpleNamespace(
+                target_game_id=1,
+                source_game_ids=(2,),
+            ),),
+            early_rows=(),
+        )
+    )
+    annotated = _annotate_training_reconstruction_contributions(
+        snapshots,
+        game_observations={
+            1: ({"ingestion_run_id": 1, "observed_at": earlier},),
+            2: ({"ingestion_run_id": 2, "observed_at": NOW},),
+            3: ({"ingestion_run_id": 10, "observed_at": later},),
+        },
+        stats_observations={
+            (1, 100): ({"ingestion_run_id": 10, "observed_at": later},),
+            (2, 100): ({"ingestion_run_id": 2, "observed_at": NOW},),
+            (2, 200): ({"ingestion_run_id": 2, "observed_at": NOW},),
+        },
+        game_dependency_ids=game_dependency_ids,
+        statistics_dependency_game_ids=statistics_dependency_game_ids,
+    )
+
+    by_run = {item["ingestion_run_id"]: item for item in annotated}
+    assert game_dependency_ids == {1, 2}
+    assert statistics_dependency_game_ids == {2}
+    assert by_run[1]["training_reconstruction_observation_count"] == 1
+    assert by_run[1]["training_reconstruction_source_snapshot_as_of"] == earlier
+    assert by_run[2]["training_reconstruction_observation_count"] == 3
+    assert by_run[2]["training_reconstruction_source_snapshot_as_of"] == NOW
+    assert by_run[10]["training_reconstruction_observation_count"] == 0
+    assert by_run[10]["training_reconstruction_source_snapshot_as_of"] is None
+
+
+def test_exact_dependencies_include_early_upstream_but_not_unused_trace() -> None:
+    game_dependency_ids, statistics_dependency_game_ids = (
+        _derive_training_reconstruction_dependencies(
+            mature_rows=({"target_game_id": 1},),
+            mature_traces=(
+                SimpleNamespace(target_game_id=1, source_game_ids=(2,)),
+                SimpleNamespace(target_game_id=99, source_game_ids=(3,)),
+            ),
+            early_rows=({
+                "target_game_id": 4,
+                "home_prior_season_source_game_ids": (5,),
+                "away_prior_season_source_game_ids": (),
+                "home_current_season_source_game_ids": (6,),
+                "away_current_season_source_game_ids": (),
+            },),
+        )
+    )
+
+    assert game_dependency_ids == {1, 2, 4, 5, 6}
+    assert statistics_dependency_game_ids == {2, 5, 6}
 
 
 def test_source_trace_preserves_observation_lineage_without_raw_payload() -> None:

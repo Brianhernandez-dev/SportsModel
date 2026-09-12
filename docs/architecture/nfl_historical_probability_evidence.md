@@ -14,12 +14,20 @@ and every feature-source game must have an earlier kickoff. The package separate
 records:
 
 - `reconstruction_as_of`: the transaction timestamp of the read-only snapshot;
-- `source_snapshot_as_of`: the latest relevant retained source-observation time.
+- `loaded_source_snapshot_as_of`: the maximum retained observation time across the
+  repository's complete loaded provenance scope;
+- `evidence_dependency_source_snapshot_as_of`: the maximum observation time that
+  contributes to an emitted probability-row trace or required training
+  reconstruction dependency; and
+- per-row `source_snapshot_as_of`: the maximum observation time in that row's
+  actual target and feature-source trace.
 
-Neither timestamp is represented as a historical prediction timestamp. The
-repository does not provide bitemporal knowledge-time reconstruction, so this
-package does not claim to recreate exactly what the database contained on each
-historical game date.
+None of these timestamps is represented as a historical prediction timestamp.
+Event-time PIT reconstruction prevents future-game inputs from crossing a target
+kickoff. It remains distinct from historical knowledge-time or bitemporal
+reconstruction, which the repository cannot provide; the package therefore does
+not claim to recreate exactly what the database contained on each historical game
+date.
 
 ## Locked population and classifications
 
@@ -34,6 +42,16 @@ usable for binary model fitting or legacy scoring reconciliation.
 | `EXPOSED_MODEL_HOLDOUT` | mature | 2025 | 237 |
 | `EXPOSED_MODEL_HOLDOUT` | early | 2025 | 48 |
 | **Canonical total** | | | **1,187** |
+
+The 2022 scored population contains 284 canonical games, partitioned by the
+frozen routing rule into 48 early-route and 236 mature-route rows. The cancelled
+`2022_17_BUF_CIN` source event is absent upstream and has no synthesized canonical
+row, so it is not an unexplained mature-route exclusion.
+
+Mature historical OOF coverage intentionally begins with 2022. The frozen mature
+fold design starts with training seasons 2018-2021 scoring season 2022; it never
+defined a mature 2021 OOF fold. Historical 2021 evidence is therefore early-route
+only under this protocol, even though mature-route historical inputs exist.
 
 The older 1,184-row non-tie population is reconciliation evidence only and never
 controls `probabilities.csv` membership. Already observed 2026 forward evidence
@@ -105,12 +123,28 @@ unambiguous source identity. Multiple retained observations are accepted as
 correction lineage only when their identity and latest selection are deterministic.
 Conflicting identities or different rows tied for the latest observation time fail
 closed. The package records source file identities, ingestion runs, observation
-times, per-row traces, correction findings, and the maximum relevant snapshot
-time without copying raw outcome-bearing source payloads. Each statistics trace
+times, per-row traces, correction findings, and explicitly scoped snapshot times
+without copying raw outcome-bearing source payloads. Each statistics trace
 retains canonical game and team IDs, provider team external ID, source identity,
 raw-row SHA-256, and ingestion/source-file lineage so both team observations for
 one game remain independently identifiable. Observation anomaly and override
 provenance is retained when its source observation type supplies it.
+
+`source_snapshots.json` classifies each loaded ingestion run as a probability-row
+trace contributor, a training-reconstruction contributor, or unrelated loaded
+context. A training contributor is derived from the reconstructed evidence graph,
+not a season range: game observations contribute for labeled dataset/fingerprint
+targets and their actual feature-source games, while statistics observations
+contribute only for actual feature-source games. Mature dependencies come from
+the PIT history traces used by its reconstructed rows. Early dependencies come
+from each retained early row's post-filter prior-regular and current-season source
+game IDs; games inspected for a discarded route do not contribute. It records
+loaded-observation counts, training contribution counts,
+probability-trace reference and unique-observation counts, and the applicable
+per-run maximum timestamps. A later unrelated observation can advance
+`loaded_source_snapshot_as_of`; it cannot advance
+`evidence_dependency_source_snapshot_as_of` or any row's
+`source_snapshot_as_of`.
 
 The current reconstruction is checked against the dataset fingerprints pinned by
 the committed frozen artifacts. Unattributable drift fails the export.
@@ -150,9 +184,10 @@ rejects missing files, extra files, changed byte sizes, and hash mismatches.
 The manifest also embeds immutable package metadata: repository revision,
 exporter and protocol versions, protocol fingerprint, redacted effective database
 identity, PostgreSQL server identity, read-only repeatable transaction snapshot,
-reconstruction/export-start timestamp, expected and actual canonical row counts,
-and overall validation result. Database, server, and snapshot identity are captured
-inside the same guarded transaction as the export snapshot.
+reconstruction/export-start timestamp, source-snapshot metadata version, loaded
+and evidence-dependency snapshot timestamps, expected and actual canonical row
+counts, and overall validation result. Database, server, and snapshot identity are
+captured inside the same guarded transaction as the export snapshot.
 
 An initial in-memory build is explicitly `UNVERIFIED` and cannot be written as a
 final package. The CLI renders the complete content twice from the identical pinned

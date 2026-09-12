@@ -205,6 +205,30 @@ def test_source_kickoff_naive_malformed_or_unknown_representation_fails_closed(
         )
 
 
+def test_per_row_source_snapshot_must_match_actual_trace_dependencies() -> None:
+    source = _source()
+    target = source.score_targets[0]
+    changed = replace(
+        target,
+        source_trace={
+            **target.source_trace,
+            "target_game": {
+                "game_observations": [{
+                    "ingestion_run_id": 1,
+                    "observed_at": target.source_snapshot_as_of,
+                    "raw_row_sha256": "a" * 64,
+                }],
+            },
+        },
+        source_snapshot_as_of=target.source_snapshot_as_of + timedelta(hours=1),
+    )
+    with pytest.raises(ValueError, match="differs from actual source trace"):
+        build_historical_evidence(
+            replace(source, score_targets=(changed, *source.score_targets[1:])),
+            enforce_expected_counts=False,
+        )
+
+
 def test_market_or_outcome_field_in_source_trace_fails_closed() -> None:
     source = _source()
     target = source.score_targets[0]
@@ -378,15 +402,119 @@ def test_package_provenance_and_protocol_fingerprint_are_durable(
     assert metadata["effective_database_identity"]["database"] == "sportsmodel_fixture"
     assert metadata["postgresql_server_identity"]["server_version_num"] == "160004"
     assert metadata["read_only_transaction_snapshot"]["snapshot_id"] == "1:2:"
+    assert metadata["source_snapshot_metadata_version"] == (
+        "nfl_historical_source_snapshot_metadata_0.2.0"
+    )
+    assert metadata["loaded_source_snapshot_as_of"] == "2026-07-31T00:00:00.000000Z"
+    assert metadata["evidence_dependency_source_snapshot_as_of"] == (
+        "2026-07-31T00:00:00.000000Z"
+    )
     assert metadata["expected_canonical_row_count"] == 1187
     assert metadata["actual_canonical_row_count"] == len(bundle.probabilities)
     assert metadata["overall_validation_result"] == "PASS"
+    assert "source_snapshot_as_of" not in metadata
 
     package = tmp_path / "package"
     manifest = write_historical_evidence_package(
         bundle, package, repository_root=tmp_path / "repository"
     )
     assert manifest["package_metadata"] == metadata
+
+
+def test_later_2026_loaded_snapshot_does_not_advance_evidence_dependencies() -> None:
+    source = _source()
+    row_snapshot = NOW - timedelta(days=1)
+    training_snapshot = NOW
+    later_2026_snapshot = NOW + timedelta(days=1)
+    target = source.score_targets[0]
+    target = replace(
+        target,
+        source_trace={
+            **target.source_trace,
+            "target_game": {
+                "game_observations": [{
+                    "canonical_game_id": target.canonical_game_id,
+                    "ingestion_run_id": 1,
+                    "observed_at": row_snapshot,
+                    "raw_row_sha256": "a" * 64,
+                }],
+            },
+        },
+        source_snapshot_as_of=row_snapshot,
+    )
+    source = replace(
+        source,
+        loaded_source_snapshot_as_of=later_2026_snapshot,
+        score_targets=(target, *source.score_targets[1:]),
+        source_snapshot_metadata=(
+            {
+                "ingestion_run_id": 1,
+                "source_name": "fixture",
+                "source_asset": "historical.csv",
+                "source_file_sha256": "1" * 64,
+                "retrieved_at": row_snapshot,
+                "completed_at": row_snapshot,
+                "loaded_game_observation_count": 1,
+                "loaded_statistics_observation_count": 1,
+                "loaded_observation_count": 2,
+                "loaded_source_snapshot_as_of": training_snapshot,
+                "training_reconstruction_observation_count": 1,
+                "training_reconstruction_source_snapshot_as_of": training_snapshot,
+            },
+            {
+                "ingestion_run_id": 10,
+                "source_name": "2026-only-fixture",
+                "source_asset": "2026-games.csv",
+                "source_file_sha256": "2" * 64,
+                "retrieved_at": later_2026_snapshot,
+                "completed_at": later_2026_snapshot,
+                "loaded_game_observation_count": 1,
+                "loaded_statistics_observation_count": 0,
+                "loaded_observation_count": 1,
+                "loaded_source_snapshot_as_of": later_2026_snapshot,
+                "training_reconstruction_observation_count": 0,
+                "training_reconstruction_source_snapshot_as_of": None,
+            },
+        ),
+    )
+
+    bundle = build_historical_evidence(source, enforce_expected_counts=False)
+
+    snapshots = bundle.source_snapshots
+    assert "source_snapshot_as_of" not in snapshots
+    assert snapshots["loaded_source_snapshot_as_of"] == (
+        "2026-08-02T00:00:00.000000Z"
+    )
+    assert snapshots["evidence_dependency_source_snapshot_as_of"] == (
+        "2026-08-01T00:00:00.000000Z"
+    )
+    assert {row["source_snapshot_as_of"] for row in bundle.probabilities} == {
+        "2026-07-31T00:00:00.000000Z"
+    }
+    by_run = {
+        item["ingestion_run_id"]: item for item in snapshots["snapshots"]
+    }
+    assert by_run[1]["contribution_classifications"] == [
+        "probability_row_trace_contributor",
+        "training_reconstruction_contributor",
+    ]
+    assert by_run[1]["probability_row_trace_reference_count"] == 1
+    assert by_run[1]["probability_row_trace_unique_observation_count"] == 1
+    assert by_run[1]["probability_row_trace_source_snapshot_as_of"] == (
+        "2026-07-31T00:00:00.000000Z"
+    )
+    assert by_run[10]["contribution_classifications"] == [
+        "unrelated_loaded_context"
+    ]
+    assert by_run[10]["probability_row_trace_reference_count"] == 0
+    assert by_run[10]["probability_row_trace_source_snapshot_as_of"] is None
+    assert by_run[10]["training_reconstruction_observation_count"] == 0
+    assert bundle.package_metadata["loaded_source_snapshot_as_of"] == (
+        snapshots["loaded_source_snapshot_as_of"]
+    )
+    assert bundle.package_metadata[
+        "evidence_dependency_source_snapshot_as_of"
+    ] == snapshots["evidence_dependency_source_snapshot_as_of"]
 
 
 def test_optional_2025_holdout_reconciliation_passes_by_canonical_identity(
@@ -466,7 +594,7 @@ def _source() -> HistoricalEvidenceInput:
     )
     return HistoricalEvidenceInput(
         reconstruction_as_of=NOW,
-        source_snapshot_as_of=NOW - timedelta(days=1),
+        loaded_source_snapshot_as_of=NOW - timedelta(days=1),
         repository_revision="8" * 40,
         database_identity={
             "database": "sportsmodel_fixture",

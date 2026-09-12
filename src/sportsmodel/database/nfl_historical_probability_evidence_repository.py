@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import replace
 from datetime import timezone
 from typing import Any
@@ -124,6 +124,21 @@ def load_historical_evidence_input(
             "current early reconstruction differs from the locked historical dataset"
         )
     early_examples = build_nfl_early_modeling_examples(early_dataset.rows)
+    (
+        training_game_dependency_ids,
+        training_statistics_dependency_game_ids,
+    ) = _derive_training_reconstruction_dependencies(
+        mature_rows=mature_dataset.rows,
+        mature_traces=tuple(mature_snapshot.traces),
+        early_rows=early_dataset.rows,
+    )
+    snapshots = _annotate_training_reconstruction_contributions(
+        snapshots,
+        game_observations=game_observations,
+        stats_observations=stats_observations,
+        game_dependency_ids=training_game_dependency_ids,
+        statistics_dependency_game_ids=training_statistics_dependency_game_ids,
+    )
 
     training = tuple(sorted((
         *(
@@ -219,10 +234,10 @@ def load_historical_evidence_input(
     ]
     if not all_observation_times:
         raise ValueError("historical source snapshot has no retained observations")
-    source_snapshot_as_of = max(all_observation_times)
+    loaded_source_snapshot_as_of = max(all_observation_times)
     return HistoricalEvidenceInput(
         reconstruction_as_of=reconstruction_as_of,
-        source_snapshot_as_of=source_snapshot_as_of,
+        loaded_source_snapshot_as_of=loaded_source_snapshot_as_of,
         repository_revision=repository_revision,
         database_identity=database_identity,
         server_identity=server_identity,
@@ -404,16 +419,30 @@ def _load_source_provenance(cursor: Any, games):
                 "selected_raw_row_sha256": observations[-1]["raw_row_sha256"],
             })
     snapshots_by_run: dict[int, dict[str, Any]] = {}
-    for observations in (*game_observations.values(), *stats_observations.values()):
-        for item in observations:
-            snapshots_by_run.setdefault(item["ingestion_run_id"], {
-                "ingestion_run_id": item["ingestion_run_id"],
-                "source_name": item["source_name"],
-                "source_asset": item["source_asset"],
-                "source_file_sha256": item["source_file_sha256"],
-                "retrieved_at": item["retrieved_at"],
-                "completed_at": item["completed_at"],
-            })
+    for observation_kind, grouped in (
+        ("game", game_observations.values()),
+        ("statistics", stats_observations.values()),
+    ):
+        for observations in grouped:
+            for item in observations:
+                snapshot = snapshots_by_run.setdefault(item["ingestion_run_id"], {
+                    "ingestion_run_id": item["ingestion_run_id"],
+                    "source_name": item["source_name"],
+                    "source_asset": item["source_asset"],
+                    "source_file_sha256": item["source_file_sha256"],
+                    "retrieved_at": item["retrieved_at"],
+                    "completed_at": item["completed_at"],
+                    "loaded_game_observation_count": 0,
+                    "loaded_statistics_observation_count": 0,
+                    "loaded_observation_count": 0,
+                    "loaded_source_snapshot_as_of": item["observed_at"],
+                })
+                snapshot[f"loaded_{observation_kind}_observation_count"] += 1
+                snapshot["loaded_observation_count"] += 1
+                snapshot["loaded_source_snapshot_as_of"] = max(
+                    snapshot["loaded_source_snapshot_as_of"],
+                    item["observed_at"],
+                )
     return (
         {key: tuple(value) for key, value in sources.items()},
         {key: tuple(value) for key, value in game_observations.items()},
@@ -421,6 +450,122 @@ def _load_source_provenance(cursor: Any, games):
         tuple(snapshots_by_run[key] for key in sorted(snapshots_by_run)),
         tuple(findings),
     )
+
+
+def _annotate_training_reconstruction_contributions(
+    snapshots,
+    *,
+    game_observations,
+    stats_observations,
+    game_dependency_ids: set[int],
+    statistics_dependency_game_ids: set[int],
+):
+    contribution_counts: Counter[int] = Counter()
+    latest_contributions: dict[int, Any] = {}
+    for game_id, observations in game_observations.items():
+        if game_id in game_dependency_ids:
+            _count_snapshot_contributions(
+                observations,
+                contribution_counts,
+                latest_contributions,
+            )
+    for (game_id, _), observations in stats_observations.items():
+        if game_id in statistics_dependency_game_ids:
+            _count_snapshot_contributions(
+                observations,
+                contribution_counts,
+                latest_contributions,
+            )
+    return tuple({
+        **snapshot,
+        "training_reconstruction_observation_count": contribution_counts[
+            snapshot["ingestion_run_id"]
+        ],
+        "training_reconstruction_source_snapshot_as_of": (
+            latest_contributions.get(snapshot["ingestion_run_id"])
+        ),
+    } for snapshot in snapshots)
+
+
+def _derive_training_reconstruction_dependencies(
+    *,
+    mature_rows,
+    mature_traces,
+    early_rows,
+) -> tuple[set[int], set[int]]:
+    """Return exact game-row and statistics provenance dependencies.
+
+    ``mature_rows`` is the reconstructed full-development fingerprint
+    population; ``early_rows`` is the retained frozen early-route population.
+    """
+
+    mature_target_ids = {
+        _require_dependency_game_id(row.get("target_game_id"), "mature target")
+        for row in mature_rows
+    }
+    mature_traces_by_target: dict[int, list[Any]] = defaultdict(list)
+    for trace in mature_traces:
+        mature_traces_by_target[trace.target_game_id].append(trace)
+    missing_mature_traces = mature_target_ids - set(mature_traces_by_target)
+    if missing_mature_traces:
+        raise ValueError(
+            "mature training reconstruction lacks feature-source traces: "
+            f"{sorted(missing_mature_traces)}"
+        )
+    mature_source_ids = {
+        _require_dependency_game_id(game_id, "mature feature source")
+        for target_game_id in mature_target_ids
+        for trace in mature_traces_by_target[target_game_id]
+        for game_id in trace.source_game_ids
+    }
+
+    early_target_ids = {
+        _require_dependency_game_id(row.get("target_game_id"), "early target")
+        for row in early_rows
+    }
+    early_source_ids = {
+        _require_dependency_game_id(game_id, "early feature source")
+        for row in early_rows
+        for key in (
+            "home_prior_season_source_game_ids",
+            "away_prior_season_source_game_ids",
+            "home_current_season_source_game_ids",
+            "away_current_season_source_game_ids",
+        )
+        for game_id in _require_dependency_game_id_collection(row, key)
+    }
+    feature_source_ids = mature_source_ids | early_source_ids
+    return (
+        mature_target_ids | early_target_ids | feature_source_ids,
+        feature_source_ids,
+    )
+
+
+def _require_dependency_game_id_collection(row, key: str):
+    value = row.get(key)
+    if not isinstance(value, tuple):
+        raise ValueError(f"training reconstruction row lacks {key}")
+    return value
+
+
+def _require_dependency_game_id(value, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"{label} game ID is invalid")
+    return value
+
+
+def _count_snapshot_contributions(
+    observations,
+    contribution_counts: Counter[int],
+    latest_contributions: dict[int, Any],
+) -> None:
+    for item in observations:
+        run_id = item["ingestion_run_id"]
+        contribution_counts[run_id] += 1
+        latest_contributions[run_id] = max(
+            item["observed_at"],
+            latest_contributions.get(run_id, item["observed_at"]),
+        )
 
 
 def _observation(values) -> dict[str, Any]:

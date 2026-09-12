@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -44,7 +44,10 @@ HISTORICAL_EVIDENCE_PROTOCOL_VERSION = (
     "nfl_historical_probability_evidence_0.1.0"
 )
 HISTORICAL_EVIDENCE_EXPORTER_VERSION = (
-    "nfl_historical_probability_evidence_exporter_0.1.0"
+    "nfl_historical_probability_evidence_exporter_0.1.1"
+)
+SOURCE_SNAPSHOT_METADATA_VERSION = (
+    "nfl_historical_source_snapshot_metadata_0.2.0"
 )
 HOLDOUT_RECONCILIATION_SHA256 = (
     "5ca0bed9d9d556b7f43e43d7e17850b3def5222fd5c99b1327edaf707acc93b2"
@@ -158,7 +161,7 @@ class ForwardExposure:
 @dataclass(frozen=True)
 class HistoricalEvidenceInput:
     reconstruction_as_of: datetime
-    source_snapshot_as_of: datetime
+    loaded_source_snapshot_as_of: datetime
     repository_revision: str
     database_identity: Mapping[str, Any]
     server_identity: Mapping[str, Any]
@@ -267,7 +270,10 @@ def build_historical_evidence(
     """Build deterministic evidence from an already-pinned read-only snapshot."""
 
     _require_aware(source.reconstruction_as_of, "reconstruction_as_of")
-    _require_aware(source.source_snapshot_as_of, "source_snapshot_as_of")
+    _require_aware(
+        source.loaded_source_snapshot_as_of,
+        "loaded_source_snapshot_as_of",
+    )
     _validate_package_source_metadata(source)
     early_artifact = early_artifact or load_frozen_nfl_early_artifact()
     mature_artifact = mature_artifact or load_frozen_nfl_mature_artifact()
@@ -348,6 +354,7 @@ def build_historical_evidence(
     rows: list[dict[str, Any]] = []
     identities: list[dict[str, Any]] = []
     traces: list[dict[str, Any]] = []
+    evidence_row_snapshot_times: list[datetime] = []
     model_records: dict[str, dict[str, Any]] = {}
     for target in targets:
         if target.season >= 2026:
@@ -423,6 +430,7 @@ def build_historical_evidence(
         if tuple(row) != PROBABILITY_OUTPUT_FIELDS:
             raise RuntimeError("probability output allowlist drift")
         rows.append(row)
+        evidence_row_snapshot_times.append(target.source_snapshot_as_of)
         identities.append({
             "canonical_game_id": target.canonical_game_id,
             "season": target.season,
@@ -472,6 +480,33 @@ def build_historical_evidence(
     _assert_no_forbidden_output_fields(rows_tuple)
     _assert_no_forbidden_output_fields(identity_tuple)
     _assert_no_forbidden_output_fields(trace_tuple)
+
+    classified_snapshots = _classify_source_snapshots(
+        source.source_snapshot_metadata,
+        trace_tuple,
+    )
+    training_snapshot_times = [
+        _metadata_timestamp(
+            item["training_reconstruction_source_snapshot_as_of"],
+            "training reconstruction source snapshot",
+        )
+        for item in classified_snapshots
+        if item["training_reconstruction_source_snapshot_as_of"] is not None
+    ]
+    evidence_dependency_times = [
+        *evidence_row_snapshot_times,
+        *training_snapshot_times,
+    ]
+    if not evidence_dependency_times:
+        raise ValueError("historical evidence has no retained source dependencies")
+    evidence_dependency_source_snapshot_as_of = max(evidence_dependency_times)
+    if (
+        evidence_dependency_source_snapshot_as_of
+        > source.loaded_source_snapshot_as_of
+    ):
+        raise ValueError(
+            "evidence dependency source snapshot exceeds loaded source snapshot"
+        )
 
     counts = Counter(
         (row["selected_route"], row["evidence_classification"], row["score_season"])
@@ -528,6 +563,13 @@ def build_historical_evidence(
         "read_only_transaction_snapshot": _canonical(
             dict(source.transaction_snapshot)
         ),
+        "source_snapshot_metadata_version": SOURCE_SNAPSHOT_METADATA_VERSION,
+        "loaded_source_snapshot_as_of": _utc_text(
+            source.loaded_source_snapshot_as_of
+        ),
+        "evidence_dependency_source_snapshot_as_of": _utc_text(
+            evidence_dependency_source_snapshot_as_of
+        ),
         "reconstruction_as_of": _utc_text(source.reconstruction_as_of),
         "export_started_at": _utc_text(source.reconstruction_as_of),
         "expected_canonical_row_count": 1187,
@@ -541,11 +583,31 @@ def build_historical_evidence(
         model_fingerprints=tuple(model_records[key] for key in sorted(model_records)),
         training_set_fingerprints=tuple(training_metadata),
         source_snapshots={
+            "source_snapshot_metadata_version": SOURCE_SNAPSHOT_METADATA_VERSION,
             "reconstruction_semantics": (
                 "event-time point-in-time reconstruction from a pinned current source snapshot"
             ),
             "reconstruction_as_of": _utc_text(source.reconstruction_as_of),
-            "source_snapshot_as_of": _utc_text(source.source_snapshot_as_of),
+            "loaded_source_snapshot_as_of": _utc_text(
+                source.loaded_source_snapshot_as_of
+            ),
+            "evidence_dependency_source_snapshot_as_of": _utc_text(
+                evidence_dependency_source_snapshot_as_of
+            ),
+            "source_snapshot_semantics": {
+                "loaded_source_snapshot_as_of": (
+                    "maximum retained observation time across the repository's "
+                    "complete loaded provenance scope"
+                ),
+                "evidence_dependency_source_snapshot_as_of": (
+                    "maximum observation time contributing to emitted probability-row "
+                    "traces or required training reconstruction dependencies"
+                ),
+                "per_row_source_snapshot_as_of": (
+                    "maximum observation time in that probability row's actual target "
+                    "and feature-source trace"
+                ),
+            },
             "effective_database_identity": _canonical(dict(source.database_identity)),
             "postgresql_server_identity": _canonical(dict(source.server_identity)),
             "read_only_transaction_snapshot": _canonical(
@@ -554,7 +616,7 @@ def build_historical_evidence(
             "locked_dataset_fingerprints": dict(
                 sorted((source.locked_dataset_fingerprints or {}).items())
             ),
-            "snapshots": [_canonical(dict(item)) for item in source.source_snapshot_metadata],
+            "snapshots": [_canonical(dict(item)) for item in classified_snapshots],
         },
         source_traces=trace_tuple,
         exposure_registry=exposure_registry,
@@ -977,6 +1039,20 @@ def _validate_input(source: HistoricalEvidenceInput) -> None:
         for kickoff in _source_kickoffs(target.source_trace):
             if kickoff >= target.kickoff:
                 raise ValueError("source kickoff must be strictly before feature_cutoff")
+        trace_observation_times = tuple(
+            _metadata_timestamp(
+                observation["observed_at"],
+                "probability trace source observation",
+            )
+            for observation in _trace_source_observations(target.source_trace)
+        )
+        if (
+            trace_observation_times
+            and max(trace_observation_times) != target.source_snapshot_as_of
+        ):
+            raise ValueError(
+                "target source_snapshot_as_of differs from actual source trace"
+            )
     if source.locked_dataset_fingerprints:
         for name, value in source.locked_dataset_fingerprints.items():
             if (
@@ -1015,6 +1091,127 @@ def _validate_package_source_metadata(source: HistoricalEvidenceInput) -> None:
     ).lower()
     if any(secret in serialized_identity for secret in ("password", "secret", "credential")):
         raise ValueError("database identity metadata contains a secret-bearing field")
+    if source.source_snapshot_metadata:
+        run_ids: set[int] = set()
+        loaded_times: list[datetime] = []
+        for item in source.source_snapshot_metadata:
+            if not isinstance(item, Mapping):
+                raise ValueError("source snapshot metadata row is invalid")
+            run_id = item.get("ingestion_run_id")
+            loaded_count = item.get("loaded_observation_count")
+            training_count = item.get(
+                "training_reconstruction_observation_count"
+            )
+            if (
+                not isinstance(run_id, int)
+                or run_id in run_ids
+                or not isinstance(loaded_count, int)
+                or loaded_count <= 0
+                or not isinstance(training_count, int)
+                or not 0 <= training_count <= loaded_count
+            ):
+                raise ValueError("source snapshot contribution metadata is invalid")
+            run_ids.add(run_id)
+            loaded_times.append(_metadata_timestamp(
+                item.get("loaded_source_snapshot_as_of"),
+                "loaded source snapshot",
+            ))
+            training_time = item.get(
+                "training_reconstruction_source_snapshot_as_of"
+            )
+            if (training_count == 0) != (training_time is None):
+                raise ValueError(
+                    "training reconstruction contribution timestamp is inconsistent"
+                )
+            if training_time is not None:
+                _metadata_timestamp(
+                    training_time,
+                    "training reconstruction source snapshot",
+                )
+        if max(loaded_times) != source.loaded_source_snapshot_as_of:
+            raise ValueError(
+                "loaded source snapshot timestamp differs from snapshot inventory"
+            )
+
+
+def _classify_source_snapshots(
+    snapshots: Iterable[Mapping[str, Any]],
+    traces: Iterable[Mapping[str, Any]],
+) -> tuple[dict[str, Any], ...]:
+    snapshot_rows = tuple(dict(item) for item in snapshots)
+    if not snapshot_rows:
+        return ()
+    known_run_ids = {item["ingestion_run_id"] for item in snapshot_rows}
+    reference_counts: Counter[int] = Counter()
+    unique_observations: dict[int, set[str]] = defaultdict(set)
+    latest_references: dict[int, datetime] = {}
+    for trace in traces:
+        for observation in _trace_source_observations(trace):
+            run_id = observation["ingestion_run_id"]
+            if run_id not in known_run_ids:
+                raise ValueError(
+                    "probability trace references an unlisted ingestion run"
+                )
+            observed_at = _metadata_timestamp(
+                observation["observed_at"],
+                "probability trace source observation",
+            )
+            reference_counts[run_id] += 1
+            unique_observations[run_id].add(fingerprint_payload(observation))
+            latest_references[run_id] = max(
+                observed_at,
+                latest_references.get(run_id, observed_at),
+            )
+
+    classified = []
+    for item in sorted(snapshot_rows, key=lambda row: row["ingestion_run_id"]):
+        run_id = item["ingestion_run_id"]
+        probability_count = reference_counts[run_id]
+        training_count = item["training_reconstruction_observation_count"]
+        classifications = []
+        if probability_count:
+            classifications.append("probability_row_trace_contributor")
+        if training_count:
+            classifications.append("training_reconstruction_contributor")
+        if not classifications:
+            classifications.append("unrelated_loaded_context")
+        classified.append({
+            **item,
+            "contribution_classifications": classifications,
+            "probability_row_trace_reference_count": probability_count,
+            "probability_row_trace_unique_observation_count": len(
+                unique_observations[run_id]
+            ),
+            "probability_row_trace_source_snapshot_as_of": (
+                latest_references.get(run_id)
+            ),
+        })
+    return tuple(classified)
+
+
+def _trace_source_observations(value: Any) -> Iterable[Mapping[str, Any]]:
+    if isinstance(value, Mapping):
+        if {
+            "ingestion_run_id", "observed_at", "raw_row_sha256"
+        }.issubset(value):
+            yield value
+        for item in value.values():
+            yield from _trace_source_observations(item)
+    elif isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        for item in value:
+            yield from _trace_source_observations(item)
+
+
+def _metadata_timestamp(value: Any, name: str) -> datetime:
+    if isinstance(value, datetime):
+        _require_aware(value, name)
+        return value
+    if isinstance(value, str):
+        try:
+            return _parse_source_kickoff(value)
+        except ValueError as error:
+            raise ValueError(f"{name} is invalid") from error
+    raise ValueError(f"{name} must be a timezone-aware timestamp")
 
 
 def _source_kickoffs(value: Any) -> Iterable[datetime]:
@@ -1118,6 +1315,15 @@ def _readme(bundle: HistoricalEvidenceBundle) -> str:
         "on each historical game date. Already observed 2026 evidence appears only "
         "in exposure_registry.json as EXPOSED_FORWARD; this package creates no "
         "PROSPECTIVE_CONFIRMATION evidence.\n\n"
+        "source_snapshots.json distinguishes the complete loaded provenance scope "
+        "from source observations that contribute to probability-row traces or "
+        "required training reconstruction. Each probabilities.csv row retains its "
+        "own actual target/feature-trace source_snapshot_as_of timestamp.\n\n"
+        "The 2022 scored population has 284 canonical games: 48 early-route and "
+        "236 mature-route. The upstream-cancelled 2022_17_BUF_CIN event is absent, "
+        "not an unexplained mature-route exclusion. Mature OOF coverage intentionally "
+        "begins in 2022 with the frozen 2018-2021 -> 2022 fold; 2021 historical "
+        "evidence is early-route only.\n\n"
         "No target outcomes, market observations, prices, evaluation results, or "
         "profit/loss fields are included.\n\n"
         f"Package identity: {bundle.validation_summary['package_identity_sha256']}\n"
