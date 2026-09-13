@@ -105,16 +105,23 @@ def test_raises_when_upsert_returns_no_row() -> None:
 
 
 def test_loads_official_evidence_counts_for_date_and_sport() -> None:
-    cursor = FakeCursor(returned_row=(0, 0))
+    cursor = FakeCursor(returned_row=(1, 1, 1, 1, 0, 0, 0))
 
     counts = load_moneyline_daily_official_evidence_counts(
         cursor,
         target_date=TARGET_DATE,
         sport="baseball_mlb",
+        prediction_run_id=25,
+        odds_ingestion_run_id=182,
     )
 
-    assert counts.prediction_runs == 0
-    assert counts.entry_odds_runs == 0
+    assert counts.prediction_runs == 1
+    assert counts.entry_odds_runs == 1
+    assert counts.linked_prediction_runs == 1
+    assert counts.linked_entry_odds_runs == 1
+    assert counts.market_evaluations == 0
+    assert counts.paper_candidates == 0
+    assert counts.settlements == 0
     assert "run_type = 'official'" in cursor.executed_query
     assert "snapshot_role = 'entry'" in cursor.executed_query
     assert "sport = %s" in cursor.executed_query
@@ -122,6 +129,17 @@ def test_loads_official_evidence_counts_for_date_and_sport() -> None:
         TARGET_DATE,
         TARGET_DATE,
         "baseball_mlb",
+        25,
+        TARGET_DATE,
+        182,
+        TARGET_DATE,
+        "baseball_mlb",
+        25,
+        182,
+        25,
+        182,
+        25,
+        182,
     )
 
 

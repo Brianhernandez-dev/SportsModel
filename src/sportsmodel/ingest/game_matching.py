@@ -4,6 +4,27 @@ from datetime import datetime, timedelta
 DEFAULT_GAME_TIME_TOLERANCE = timedelta(minutes=15)
 
 
+class CanonicalGameIdentityConflictError(ValueError):
+    """Raised when source and canonical game identity evidence conflicts."""
+
+
+def _load_candidate_count(
+    cursor,
+    *,
+    query: str,
+    parameters: tuple,
+) -> tuple[int, int | None]:
+    cursor.execute(query, parameters)
+    row = cursor.fetchone()
+
+    if row is None or len(row) != 2:
+        raise RuntimeError(
+            "Canonical game candidate query returned an invalid result."
+        )
+
+    return row[0], row[1]
+
+
 def get_or_create_canonical_game(
     cursor,
     *,
@@ -19,28 +40,38 @@ def get_or_create_canonical_game(
 
     Matching order:
 
-    1. Existing source mapping.
-    2. Same home team and away team within the configured time window,
-       excluding games already mapped by this source.
-    3. Create a new canonical game.
+    1. Existing source mapping, unless it conflicts with another nearby
+       canonical identity.
+    2. One unambiguous same-orientation game within the configured time
+       window, excluding games already mapped by this source.
+    3. One unambiguous same-orientation, same-Pacific-date game carrying
+       retained source identity. This permits schedule drift beyond the time
+       tolerance without collapsing a doubleheader.
+    4. Create a new canonical game.
 
     The team orientation must match exactly. Reversed home and away teams
     are not treated as the same game.
 
-    Excluding an existing mapping from the same source prevents distinct
-    doubleheader games with similar scheduled start times from sharing one
-    canonical game ID. A game mapped by another source remains eligible for
-    cross-source matching.
+    Candidate counts fail closed when more than one game qualifies. Excluding
+    an existing mapping from the same source prevents distinct doubleheader
+    events from sharing one canonical game ID. A unique game mapped by another
+    source remains eligible for cross-source matching.
     """
 
     external_game_id = str(external_game_id)
 
     cursor.execute(
         """
-        SELECT game_id
-        FROM game_sources
-        WHERE source_name = %s
-          AND external_game_id = %s;
+        SELECT
+            source.game_id,
+            game.game_date,
+            game.home_team_id,
+            game.away_team_id
+        FROM game_sources AS source
+        JOIN games AS game
+          ON game.game_id = source.game_id
+        WHERE source.source_name = %s
+          AND source.external_game_id = %s;
         """,
         (
             source_name,
@@ -51,51 +82,131 @@ def get_or_create_canonical_game(
     existing_source = cursor.fetchone()
 
     if existing_source is not None:
-        return existing_source[0]
+        (
+            mapped_game_id,
+            _mapped_game_datetime,
+            mapped_home_team_id,
+            mapped_away_team_id,
+        ) = existing_source
+
+        if (
+            mapped_home_team_id != home_team_id
+            or mapped_away_team_id != away_team_id
+        ):
+            raise CanonicalGameIdentityConflictError(
+                "Existing source mapping conflicts with the incoming "
+                "home/away identity: "
+                f"{source_name}/{external_game_id}."
+            )
+
+        conflict_count, conflicting_game_id = _load_candidate_count(
+            cursor,
+            query="""
+                SELECT COUNT(*), MIN(candidate.game_id)
+                FROM games AS candidate
+                WHERE candidate.game_id <> %s
+                  AND candidate.home_team_id = %s
+                  AND candidate.away_team_id = %s
+                  AND candidate.game_date BETWEEN %s AND %s;
+            """,
+            parameters=(
+                mapped_game_id,
+                home_team_id,
+                away_team_id,
+                game_datetime - tolerance,
+                game_datetime + tolerance,
+            ),
+        )
+
+        if conflict_count:
+            raise CanonicalGameIdentityConflictError(
+                "Existing source mapping conflicts with nearby canonical "
+                "game identity: "
+                f"{source_name}/{external_game_id} maps to "
+                f"{mapped_game_id}, candidate={conflicting_game_id}, "
+                f"candidate_count={conflict_count}."
+            )
+
+        return mapped_game_id
 
     window_start = game_datetime - tolerance
     window_end = game_datetime + tolerance
 
-    cursor.execute(
-        """
-        SELECT candidate.game_id
-        FROM games AS candidate
-        WHERE candidate.home_team_id = %s
-          AND candidate.away_team_id = %s
-          AND candidate.game_date BETWEEN %s AND %s
-          AND NOT EXISTS (
-              SELECT 1
-              FROM game_sources AS existing_mapping
-              WHERE
-                  existing_mapping.game_id = candidate.game_id
-                  AND existing_mapping.source_name = %s
-          )
-        ORDER BY
-            ABS(
-                EXTRACT(
-                    EPOCH FROM (
-                        candidate.game_date - %s
-                    )
-                )
-            ),
-            candidate.game_id
-        LIMIT 1;
+    candidate_count, game_id = _load_candidate_count(
+        cursor,
+        query="""
+            SELECT COUNT(*), MIN(candidate.game_id)
+            FROM games AS candidate
+            WHERE candidate.home_team_id = %s
+              AND candidate.away_team_id = %s
+              AND candidate.game_date BETWEEN %s AND %s
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM game_sources AS existing_mapping
+                  WHERE
+                      existing_mapping.game_id = candidate.game_id
+                      AND existing_mapping.source_name = %s
+              );
         """,
-        (
+        parameters=(
             home_team_id,
             away_team_id,
             window_start,
             window_end,
             source_name,
-            game_datetime,
         ),
     )
 
-    existing_game = cursor.fetchone()
+    if candidate_count > 1:
+        raise CanonicalGameIdentityConflictError(
+            "Multiple nearby canonical games match the incoming source "
+            "event; identity is ambiguous: "
+            f"{source_name}/{external_game_id}."
+        )
 
-    if existing_game is not None:
-        game_id = existing_game[0]
-    else:
+    if candidate_count == 0:
+        candidate_count, game_id = _load_candidate_count(
+            cursor,
+            query="""
+                SELECT COUNT(*), MIN(candidate.game_id)
+                FROM games AS candidate
+                WHERE candidate.home_team_id = %s
+                  AND candidate.away_team_id = %s
+                  AND (
+                      candidate.game_date AT TIME ZONE 'America/Los_Angeles'
+                  )::date = (
+                      %s AT TIME ZONE 'America/Los_Angeles'
+                  )::date
+                  AND EXISTS (
+                      SELECT 1
+                      FROM game_sources AS retained_source
+                      WHERE retained_source.game_id = candidate.game_id
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM game_sources AS existing_mapping
+                      WHERE
+                          existing_mapping.game_id = candidate.game_id
+                          AND existing_mapping.source_name = %s
+                  );
+            """,
+            parameters=(
+                home_team_id,
+                away_team_id,
+                game_datetime,
+                source_name,
+            ),
+        )
+
+        if candidate_count > 1:
+            raise CanonicalGameIdentityConflictError(
+                "Multiple same-date canonical games match the incoming "
+                "source event; doubleheader or schedule identity is "
+                "ambiguous: "
+                f"{source_name}/{external_game_id}."
+            )
+
+    if candidate_count == 0:
         cursor.execute(
             """
             INSERT INTO games (
@@ -114,6 +225,11 @@ def get_or_create_canonical_game(
         )
 
         game_id = cursor.fetchone()[0]
+
+    if game_id is None:
+        raise RuntimeError(
+            "Canonical game matching selected no game identity."
+        )
 
     cursor.execute(
         """

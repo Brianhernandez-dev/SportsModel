@@ -11,6 +11,11 @@ from sportsmodel.models.moneyline_daily_workflow import (
 class MoneylineDailyOfficialEvidenceCounts:
     prediction_runs: int
     entry_odds_runs: int
+    linked_prediction_runs: int
+    linked_entry_odds_runs: int
+    market_evaluations: int
+    paper_candidates: int
+    settlements: int
 
 
 _WORKFLOW_COLUMNS = """
@@ -78,6 +83,8 @@ def load_moneyline_daily_official_evidence_counts(
     *,
     target_date: date,
     sport: str,
+    prediction_run_id: int | None,
+    odds_ingestion_run_id: int | None,
 ) -> MoneylineDailyOfficialEvidenceCounts:
     """Count independently persisted official evidence for one date."""
 
@@ -96,12 +103,74 @@ def load_moneyline_daily_official_evidence_counts(
                 WHERE target_date = %s
                   AND snapshot_role = 'entry'
                   AND sport = %s
+            ),
+            (
+                SELECT COUNT(*)
+                FROM moneyline_prediction_runs
+                WHERE moneyline_prediction_run_id = %s
+                  AND target_date = %s
+                  AND run_type = 'official'
+                  AND status = 'completed'
+            ),
+            (
+                SELECT COUNT(*)
+                FROM odds_ingestion_runs
+                WHERE odds_ingestion_run_id = %s
+                  AND target_date = %s
+                  AND snapshot_role = 'entry'
+                  AND sport = %s
+                  AND status = 'completed'
+            ),
+            (
+                SELECT COUNT(*)
+                FROM moneyline_prediction_market_evaluations
+                    AS evaluation
+                JOIN moneyline_game_predictions AS prediction
+                  ON prediction.moneyline_game_prediction_id =
+                     evaluation.moneyline_game_prediction_id
+                WHERE prediction.moneyline_prediction_run_id = %s
+                  AND evaluation.odds_ingestion_run_id = %s
+            ),
+            (
+                SELECT COUNT(*)
+                FROM moneyline_prediction_market_evaluations
+                    AS evaluation
+                JOIN moneyline_game_predictions AS prediction
+                  ON prediction.moneyline_game_prediction_id =
+                     evaluation.moneyline_game_prediction_id
+                WHERE prediction.moneyline_prediction_run_id = %s
+                  AND evaluation.odds_ingestion_run_id = %s
+                  AND evaluation.qualifies_as_paper_candidate IS TRUE
+            ),
+            (
+                SELECT COUNT(*)
+                FROM moneyline_paper_candidate_settlements AS settlement
+                JOIN moneyline_prediction_market_evaluations
+                    AS evaluation
+                  ON evaluation.moneyline_prediction_market_evaluation_id =
+                     settlement.moneyline_prediction_market_evaluation_id
+                JOIN moneyline_game_predictions AS prediction
+                  ON prediction.moneyline_game_prediction_id =
+                     evaluation.moneyline_game_prediction_id
+                WHERE prediction.moneyline_prediction_run_id = %s
+                  AND evaluation.odds_ingestion_run_id = %s
             );
         """,
         (
             target_date,
             target_date,
             sport,
+            prediction_run_id,
+            target_date,
+            odds_ingestion_run_id,
+            target_date,
+            sport,
+            prediction_run_id,
+            odds_ingestion_run_id,
+            prediction_run_id,
+            odds_ingestion_run_id,
+            prediction_run_id,
+            odds_ingestion_run_id,
         ),
     )
     row = cursor.fetchone()
@@ -114,6 +183,11 @@ def load_moneyline_daily_official_evidence_counts(
     return MoneylineDailyOfficialEvidenceCounts(
         prediction_runs=row[0],
         entry_odds_runs=row[1],
+        linked_prediction_runs=row[2],
+        linked_entry_odds_runs=row[3],
+        market_evaluations=row[4],
+        paper_candidates=row[5],
+        settlements=row[6],
     )
 
 

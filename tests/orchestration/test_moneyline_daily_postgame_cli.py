@@ -113,6 +113,29 @@ def test_reports_intentional_no_card_completion(capsys) -> None:
     assert "official settlement skipped" in output
 
 
+def test_reports_failed_card_with_preserved_upstream_run_ids(capsys) -> None:
+    exit_code = main(
+        ["--target-date", "2026-09-13"],
+        postgame_runner=lambda **arguments: SimpleNamespace(
+            workflow_run_id=203,
+            target_date=arguments["target_date"],
+            prediction_run_id=79,
+            odds_ingestion_run_id=400,
+            games_processed=15,
+            boxscores_processed=15,
+            settlements_saved=0,
+            pending_candidates=0,
+            pipeline_state="no_official_card",
+        ),
+    )
+
+    assert exit_code == 0
+    output = capsys.readouterr().out
+    assert "Prediction run ID:  79" in output
+    assert "Odds run ID:        400" in output
+    assert "Official card:      ABSENT" in output
+
+
 def test_defaults_postgame_to_yesterday() -> None:
     calls = []
 

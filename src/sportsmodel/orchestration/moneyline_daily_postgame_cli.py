@@ -55,7 +55,7 @@ def main(
         "Odds run ID:        "
         f"{result.odds_ingestion_run_id}"
     )
-    if result.prediction_run_id is None:
+    if result.pipeline_state == "no_official_card":
         print(
             "Official card:      ABSENT — preserved PIT gap; "
             "official settlement skipped"

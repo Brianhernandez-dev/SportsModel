@@ -45,7 +45,8 @@ def test_candidate_query_excludes_same_source_mapping() -> None:
     cursor = FakeCursor(
         [
             None,
-            None,
+            (0, None),
+            (0, None),
             (
                 9001,
             ),
@@ -62,7 +63,7 @@ def test_candidate_query_excludes_same_source_mapping() -> None:
     )
 
     assert game_id == 9001
-    assert len(cursor.executions) == 4
+    assert len(cursor.executions) == 5
 
     candidate_query, candidate_parameters = (
         cursor.executions[1]
@@ -86,11 +87,10 @@ def test_candidate_query_excludes_same_source_mapping() -> None:
             + DEFAULT_GAME_TIME_TOLERANCE
         ),
         "mlb_stats",
-        game_datetime,
     )
 
     source_insert_query, source_insert_parameters = (
-        cursor.executions[3]
+        cursor.executions[4]
     )
 
     assert "INSERT INTO game_sources" in source_insert_query
@@ -106,7 +106,18 @@ def test_existing_source_mapping_still_has_priority() -> None:
         [
             (
                 500,
+                datetime(
+                    2025,
+                    4,
+                    24,
+                    18,
+                    15,
+                    tzinfo=timezone.utc,
+                ),
+                10,
+                20,
             ),
+            (0, None),
         ]
     )
 
@@ -130,4 +141,4 @@ def test_existing_source_mapping_still_has_priority() -> None:
     )
 
     assert game_id == 500
-    assert len(cursor.executions) == 1
+    assert len(cursor.executions) == 2

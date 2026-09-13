@@ -1279,6 +1279,11 @@ def _no_official_evidence(**overrides):
     values = {
         "prediction_runs": 0,
         "entry_odds_runs": 0,
+        "linked_prediction_runs": 0,
+        "linked_entry_odds_runs": 0,
+        "market_evaluations": 0,
+        "paper_candidates": 0,
+        "settlements": 0,
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -1344,6 +1349,148 @@ def test_postgame_completes_legitimate_no_card_day(
     assert "completed without an official card" in output
     assert "official candidate settlement was skipped" in output
     assert "Early Entry evidence was reconciled independently" in output
+
+
+def test_postgame_preserves_failed_evaluation_as_no_card_incident(
+    monkeypatch,
+    capsys,
+) -> None:
+    calls = []
+    workflow = _no_card_workflow(
+        target_date=date(2026, 9, 13),
+        current_stage="evaluation",
+        moneyline_prediction_run_id=79,
+        odds_ingestion_run_id=400,
+        error_message="No complete consensus market.",
+    )
+    evidence = _no_official_evidence(
+        prediction_runs=1,
+        entry_odds_runs=1,
+        linked_prediction_runs=1,
+        linked_entry_odds_runs=1,
+    )
+
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_get_or_create_workflow",
+        lambda **arguments: workflow,
+    )
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_load_postgame_official_evidence_counts",
+        lambda **arguments: evidence,
+    )
+
+    def unexpected_official_call(**arguments):
+        raise AssertionError("Official settlement/audit must not run.")
+
+    result = moneyline_daily.run_moneyline_daily_postgame(
+        target_date=date(2026, 9, 13),
+        connection_factory=lambda: None,
+        results_fetcher=lambda **arguments: SimpleNamespace(
+            dates_failed=0,
+            boxscores_failed=0,
+            games_processed=15,
+            boxscores_processed=15,
+        ),
+        settlement_runner=unexpected_official_call,
+        early_entry_settlement_runner=lambda **arguments: (
+            calls.append(arguments)
+            or SimpleNamespace(
+                cohort_settlements=(),
+                performance=SimpleNamespace(pending=2),
+            )
+        ),
+        pipeline_auditor=unexpected_official_call,
+    )
+
+    assert result.prediction_run_id == 79
+    assert result.odds_ingestion_run_id == 400
+    assert result.pipeline_state == "no_official_card"
+    assert len(calls) == 1
+    output = capsys.readouterr().out
+    assert "linked official prediction and entry-odds evidence" in output
+    assert "no official market evaluation or candidate evidence" in output
+
+
+@pytest.mark.parametrize(
+    ("evidence_override", "workflow_override"),
+    [
+        ({"market_evaluations": 1}, {}),
+        ({"paper_candidates": 1}, {}),
+        ({"settlements": 1}, {}),
+        ({"prediction_runs": 2}, {}),
+        ({"entry_odds_runs": 2}, {}),
+        ({"linked_prediction_runs": 0}, {}),
+        ({"linked_entry_odds_runs": 0}, {}),
+        ({}, {"current_stage": "pregame_audit"}),
+        ({}, {"pregame_completed_at": date(2026, 9, 13)}),
+    ],
+)
+def test_failed_evaluation_no_card_state_fails_closed_on_ambiguity(
+    evidence_override,
+    workflow_override,
+) -> None:
+    workflow_values = {
+        "current_stage": "evaluation",
+        "moneyline_prediction_run_id": 79,
+        "odds_ingestion_run_id": 400,
+    }
+    workflow_values.update(workflow_override)
+    workflow = _no_card_workflow(**workflow_values)
+
+    evidence_values = {
+        "prediction_runs": 1,
+        "entry_odds_runs": 1,
+        "linked_prediction_runs": 1,
+        "linked_entry_odds_runs": 1,
+    }
+    evidence_values.update(evidence_override)
+    evidence = _no_official_evidence(**evidence_values)
+
+    assert not moneyline_daily._is_legitimate_no_card_workflow(
+        workflow=workflow,
+        official_evidence_counts=evidence,
+    )
+
+
+def test_postgame_rejects_partial_failed_card_evidence(monkeypatch) -> None:
+    workflow = _no_card_workflow(
+        current_stage="evaluation",
+        moneyline_prediction_run_id=79,
+        odds_ingestion_run_id=400,
+    )
+    evidence = _no_official_evidence(
+        prediction_runs=1,
+        entry_odds_runs=1,
+        linked_prediction_runs=1,
+        linked_entry_odds_runs=1,
+        market_evaluations=1,
+    )
+    result_calls = []
+
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_get_or_create_workflow",
+        lambda **arguments: workflow,
+    )
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_load_postgame_official_evidence_counts",
+        lambda **arguments: evidence,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="failed pregame evidence outside the legitimate no-card state",
+    ):
+        moneyline_daily.run_moneyline_daily_postgame(
+            target_date=date(2026, 9, 13),
+            connection_factory=lambda: None,
+            results_fetcher=lambda **arguments: result_calls.append(arguments),
+        )
+
+    assert result_calls == []
 
 
 @pytest.mark.parametrize(

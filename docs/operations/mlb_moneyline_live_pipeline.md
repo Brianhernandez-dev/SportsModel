@@ -147,13 +147,21 @@ There should be no duplicates or integrity issues.
 
 The same date can safely be rerun when some games or box scores are not yet available.
 
-If Pregame failed before creating any official prediction or entry-odds
-evidence and its PIT window was intentionally allowed to expire, Postgame still
-ingests canonical results. It records an explicit no-official-card outcome,
+If Pregame failed and its PIT window was intentionally allowed to expire,
+Postgame still ingests canonical results and may record an explicit
+no-official-card outcome. The accepted states are deliberately narrow:
+
+- an early schedule/prediction failure with no official prediction or entry
+  odds evidence; or
+- an evaluation-stage failure with exactly one completed, linked official
+  prediction run and entry-odds run, but zero persisted market evaluations,
+  official candidates, or official settlements.
+
+Postgame preserves the failed workflow and any partial upstream evidence,
 skips official candidate settlement and audit, and reconciles any independently
-persisted Early Entry cohort. This path is allowed only for a failed early-stage
-Pregame workflow with no linked or independently persisted official evidence;
-missing linkage in later workflow stages remains an integrity failure.
+persisted Early Entry cohort. Partial market evaluation, candidate, or
+settlement evidence remains an integrity failure. A failed-card day is a PIT
+gap and must not be reconstructed from later information.
 
 ### 7. Settle paper candidates
 
