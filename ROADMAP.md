@@ -2,144 +2,82 @@
 
 ## Vision
 
-SportsModel is intended to become a professional sports market research platform demonstrating modern software engineering, data engineering, statistical analysis, and machine learning practices.
+SportsModel is a reproducible sports market research platform built around point-in-time correctness, canonical identity, source provenance, frozen analytical contracts, and independently reviewable evidence.
 
-The long-term objective is not simply predicting games, but building a reproducible analytics platform capable of researching betting strategies using historical market data.
+The roadmap distinguishes established infrastructure from work that remains gated. Repository capabilities do not by themselves authorize provider access, production execution, or historical model/market/outcome joins.
 
----
+## MLB Moneyline Program
 
-# NFL Program Status
+### Completed / Established
 
-**NFL Phase 2: COMPLETE**
+- Canonical historical and current data ingestion
+- Point-in-time feature engineering and chronological model evaluation
+- Frozen Moneyline model and versioned feature contract
+- Pregame prediction, market capture, evaluation, paper-candidate, settlement, and audit workflows
+- Read-only dashboard and operational recovery controls
+- Production-facing timing, retry, schema-compatibility, and evidence-preservation safeguards
 
-The first frozen NFL Moneyline baseline and its one-time 2025 historical
-holdout result are recorded in
-[`docs/architecture/nfl_phase_2_closeout.md`](docs/architecture/nfl_phase_2_closeout.md).
-The 2025 season is now exposed and is not an untouched holdout for subsequent
-model development.
+### Current / Next
 
-Next: **NFL Phase 3A — Early-Season Coverage**. Design and validate a separate
-point-in-time-safe strategy for games where one or both teams have fewer than
-three current-season prior games, without altering the frozen Phase 2
-baseline. Phase 3A is not implemented yet.
+- Continue prospective forward validation and production hardening
+- Preserve failed or expired point-in-time workflows as evidence rather than reconstructing official history
+- Evaluate model and policy behavior over meaningful prospective samples
 
----
+## NFL Moneyline Program
 
-# Version 1.0 — Analytics Platform ✅
+### Completed / Established
 
-Completed
+- Historical schedule, result, and team-statistics ingestion with canonical identity and source provenance
+- Point-in-time early-season and mature feature pipelines
+- Frozen early-season and mature Moneyline models with deterministic routing
+- Immutable forward prediction and official pregame evidence infrastructure
+- Sport-safe odds identity, capture, and market-evaluation foundations
+- Historical probability evidence reconstruction and package provenance architecture
+- Frozen historical-market base research protocol with independent-review and freeze records
 
-### Infrastructure
+The historical model evidence includes exposed development, confirmation, and holdout periods under their documented classifications. Those periods must not be relabeled as untouched evidence for later model or policy selection.
 
-- Python project structure
-- PostgreSQL database
-- Repository pattern
-- Automated migrations
-- Feature branch workflow
+### Current / Next
 
-### Data
+- Conduct outcome-blind historical-market provider feasibility research
+- Freeze a final provider amendment covering source identity, timestamp semantics, mapping, eligible books, executable prices, settlement rules, licensing, and retention
+- Freeze the normative analysis specification and remaining deterministic analysis parameters
+- Complete required independent reviews and chain-of-custody gates
+- Activate the approved analysis bundle before the first historical model/market/outcome join
+- Perform historical market-performance analysis only after explicit authorization
 
-- Historical MLB ingestion
-- Live Odds API ingestion
-- Sportsbook normalization
-- Historical game linking
+The frozen base protocol alone does not authorize joining historical odds to model probabilities, outcomes, or derived performance. Outcome-blind provider-feasibility research remains permitted under the frozen research boundaries.
 
-### Analytics
+### Future
 
-- Complete Market Builder
-- Line Movement
-- Probability utilities
-- No-Vig Engine
-- Consensus Engine
-- Expected Value Engine
-- Market Timeline Engine
-- Closing Line Value Engine
+- Continue prospective NFL probability and market validation under frozen protocols
+- Expand production operation only after current evidence, identity, timing, and health gates are satisfied
+- Consider additional NFL markets only after Moneyline correctness and evidence requirements are met
 
-### Strategy
+## Shared Platform Direction
 
-- Positive Expected Value Strategy
+### Completed / Established
 
-### Quality
+- PostgreSQL persistence with ordered migrations and repository boundaries
+- Deterministic analytics, versioned artifacts, and immutable evidence contracts
+- Cross-sport isolation for shared market infrastructure
+- Automated unit and integration testing
+- Operational audit, backup, recovery, and scheduler governance
 
-- Unit testing
-- Live validation scripts
-- Immutable domain models
-- Clean architecture
+### Future
 
-Current status:
+- Broader reporting and research tooling
+- Additional data sources and sportsbooks where licensing and provenance permit
+- Additional sports and markets after existing workflows meet their validation gates
+- Deployment expansion only with explicit production-readiness and health verification
 
-- **41 automated tests passing**
+## Engineering Principles
 
----
+- Point-in-time correctness and avoidance of look-ahead bias
+- Canonical identity and traceable source provenance
+- Outcome-blind research design and prospective policy declaration
+- Immutable frozen artifacts, protocols, and official evidence
+- Explicit authorization boundaries for Git, providers, databases, migrations, tasks, and production
+- Testability, maintainability, reproducibility, and independent review
 
-# Version 1.1 — Research & Backtesting
-
-Planned
-
-### Research
-
-- Bet candidate research layer
-- Historical wager settlement
-- Backtesting engine
-- Performance reporting
-
-Metrics:
-
-- ROI
-- Win %
-- Units Won
-- Drawdown
-- Closing Line Value statistics
-
----
-
-# Version 2.0 — Machine Learning
-
-Planned
-
-### Feature Store
-
-- Expected Value
-- Closing Line Value
-- Line Movement
-- Reverse Line Movement
-- Steam Detection
-- Consensus Features
-- Historical Team Metrics
-
-### Machine Learning
-
-- Model training
-- Cross validation
-- Hyperparameter tuning
-- Model evaluation
-
----
-
-# Future Goals
-
-Potential future enhancements include:
-
-- Additional sportsbooks
-- Additional sports
-- Automated data collection
-- Dashboarding
-- REST API
-- Cloud deployment
-- Scheduled ingestion
-- Strategy optimization
-- Kelly staking
-- Monte Carlo bankroll simulation
-
----
-
-# Engineering Goals
-
-Throughout development the project prioritizes:
-
-- Clean Architecture
-- Testability
-- Maintainability
-- Reproducibility
-- Statistical correctness
-- Avoidance of look-ahead bias
+Detailed implementation and research contracts live under `docs/architecture/`; authorized operating procedures live under `docs/operations/`. Root documentation intentionally avoids transient commit IDs, test totals, production status, incident state, and short-run performance results.
