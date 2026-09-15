@@ -8,6 +8,86 @@ class CanonicalGameIdentityConflictError(ValueError):
     """Raised when source and canonical game identity evidence conflicts."""
 
 
+def get_or_create_authoritative_source_game(
+    cursor,
+    *,
+    source_name: str,
+    external_game_id: str,
+    game_datetime: datetime,
+    home_team_id: int,
+    away_team_id: int,
+    tolerance: timedelta = DEFAULT_GAME_TIME_TOLERANCE,
+) -> int:
+    """
+    Resolve a game whose persisted source identity is authoritative.
+
+    A unique existing source mapping is returned after exact participant and
+    orientation validation. Nearby identities from unrelated sources do not
+    veto that authoritative mapping. When no mapping exists, the ordinary
+    strict canonical matching and creation contract remains in force.
+    """
+
+    external_game_id = str(external_game_id)
+
+    cursor.execute(
+        """
+        SELECT
+            source.game_id,
+            game.home_team_id,
+            game.away_team_id
+        FROM game_sources AS source
+        JOIN games AS game
+          ON game.game_id = source.game_id
+        WHERE source.source_name = %s
+          AND source.external_game_id = %s
+        ORDER BY source.game_source_id
+        LIMIT 2;
+        """,
+        (
+            source_name,
+            external_game_id,
+        ),
+    )
+
+    existing_sources = cursor.fetchall()
+
+    if len(existing_sources) > 1:
+        raise CanonicalGameIdentityConflictError(
+            "Multiple canonical games share the authoritative source "
+            "identity: "
+            f"{source_name}/{external_game_id}."
+        )
+
+    if existing_sources:
+        (
+            mapped_game_id,
+            mapped_home_team_id,
+            mapped_away_team_id,
+        ) = existing_sources[0]
+
+        if (
+            mapped_home_team_id != home_team_id
+            or mapped_away_team_id != away_team_id
+        ):
+            raise CanonicalGameIdentityConflictError(
+                "Existing authoritative source mapping conflicts with the "
+                "incoming home/away identity: "
+                f"{source_name}/{external_game_id}."
+            )
+
+        return mapped_game_id
+
+    return get_or_create_canonical_game(
+        cursor,
+        source_name=source_name,
+        external_game_id=external_game_id,
+        game_datetime=game_datetime,
+        home_team_id=home_team_id,
+        away_team_id=away_team_id,
+        tolerance=tolerance,
+    )
+
+
 def _load_candidate_count(
     cursor,
     *,

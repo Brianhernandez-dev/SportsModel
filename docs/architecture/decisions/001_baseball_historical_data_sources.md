@@ -136,6 +136,18 @@ games.game_id
 
 Source identifiers such as MLB game IDs must remain preserved through the existing source-mapping architecture.
 
+For completed MLB result and box-score ingestion, a unique persisted MLB Stats
+source mapping is authoritative when its canonical game has the same home and
+away participants in the same orientation as the incoming event. A nearby game
+mapped by an unrelated provider remains retained provenance and does not veto
+that authoritative result identity. The unrelated mapping is not rewritten,
+merged, or deleted by result ingestion.
+
+Missing, duplicate, or participant-inconsistent authoritative identity still
+fails closed or, for a previously unseen event, follows the existing strict
+canonical matching and creation rules. Result authority does not weaken the
+generic cross-source matcher used by workflows that must reconcile providers.
+
 Rows that cannot be mapped safely must be quarantined rather than matched through weak assumptions.
 
 ---

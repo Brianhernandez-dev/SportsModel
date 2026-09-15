@@ -4,6 +4,7 @@ import pytest
 
 from sportsmodel.ingest.game_matching import (
     CanonicalGameIdentityConflictError,
+    get_or_create_authoritative_source_game,
     get_or_create_canonical_game,
 )
 
@@ -38,6 +39,125 @@ class FakeCursor:
             )
 
         return self.fetch_results.pop(0)
+
+
+class FakeAuthoritativeCursor(FakeCursor):
+    def __init__(self, *, existing_sources, fetch_results=()):
+        super().__init__(fetch_results=fetch_results)
+        self.existing_sources = list(existing_sources)
+
+    def fetchall(self):
+        return self.existing_sources
+
+
+def test_authoritative_mapping_ignores_unrelated_nearby_identity() -> None:
+    cursor = FakeAuthoritativeCursor(
+        existing_sources=[
+            (42, 10, 20),
+        ]
+    )
+
+    game_id = get_or_create_authoritative_source_game(
+        cursor,
+        source_name="mlb_stats",
+        external_game_id="12345",
+        game_datetime=GAME_TIME,
+        home_team_id=10,
+        away_team_id=20,
+    )
+
+    assert game_id == 42
+    assert len(cursor.executions) == 1
+    assert "candidate" not in cursor.executions[0][0]
+
+
+def test_authoritative_mapping_orientation_conflict_fails_closed() -> None:
+    cursor = FakeAuthoritativeCursor(
+        existing_sources=[
+            (42, 20, 10),
+        ]
+    )
+
+    with pytest.raises(
+        CanonicalGameIdentityConflictError,
+        match="authoritative source mapping conflicts",
+    ):
+        get_or_create_authoritative_source_game(
+            cursor,
+            source_name="mlb_stats",
+            external_game_id="12345",
+            game_datetime=GAME_TIME,
+            home_team_id=10,
+            away_team_id=20,
+        )
+
+
+def test_duplicate_authoritative_source_identity_fails_closed() -> None:
+    cursor = FakeAuthoritativeCursor(
+        existing_sources=[
+            (42, 10, 20),
+            (43, 10, 20),
+        ]
+    )
+
+    with pytest.raises(
+        CanonicalGameIdentityConflictError,
+        match="Multiple canonical games share the authoritative source",
+    ):
+        get_or_create_authoritative_source_game(
+            cursor,
+            source_name="mlb_stats",
+            external_game_id="12345",
+            game_datetime=GAME_TIME,
+            home_team_id=10,
+            away_team_id=20,
+        )
+
+
+def test_unmapped_authoritative_source_uses_strict_doubleheader_matching() -> None:
+    cursor = FakeAuthoritativeCursor(
+        existing_sources=[],
+        fetch_results=[
+            None,
+            (0, None),
+            (2, 51),
+        ],
+    )
+
+    with pytest.raises(
+        CanonicalGameIdentityConflictError,
+        match="doubleheader or schedule identity is ambiguous",
+    ):
+        get_or_create_authoritative_source_game(
+            cursor,
+            source_name="mlb_stats",
+            external_game_id="12345",
+            game_datetime=GAME_TIME,
+            home_team_id=10,
+            away_team_id=20,
+        )
+
+
+def test_unmapped_authoritative_source_uses_strict_unique_match() -> None:
+    cursor = FakeAuthoritativeCursor(
+        existing_sources=[],
+        fetch_results=[
+            None,
+            (1, 51),
+        ],
+    )
+
+    game_id = get_or_create_authoritative_source_game(
+        cursor,
+        source_name="mlb_stats",
+        external_game_id="12345",
+        game_datetime=GAME_TIME,
+        home_team_id=10,
+        away_team_id=20,
+    )
+
+    assert game_id == 51
+    assert len(cursor.executions) == 4
 
 
 def test_existing_source_mapping_is_returned():

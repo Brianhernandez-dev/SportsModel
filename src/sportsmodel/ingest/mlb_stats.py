@@ -11,7 +11,7 @@ from sportsmodel.database.boxscore_status_repository import (
 from sportsmodel.database.connection import get_connection
 from sportsmodel.ingest.boxscore_ingestion import ingest_boxscore
 from sportsmodel.ingest.game_matching import (
-    get_or_create_canonical_game,
+    get_or_create_authoritative_source_game,
 )
 from sportsmodel.ingest.team_identity import normalize_team_name
 from sportsmodel.utils.transient_errors import is_retryable_provider_error
@@ -336,7 +336,7 @@ def fetch_historical_results(
     connection_factory: ConnectionFactory = get_connection,
     team_id_resolver: TeamIdResolver = get_team_id,
     canonical_game_resolver: CanonicalGameResolver = (
-        get_or_create_canonical_game
+        get_or_create_authoritative_source_game
     ),
     historical_result_saver: HistoricalResultSaver = (
         save_historical_result

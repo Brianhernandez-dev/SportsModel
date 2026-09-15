@@ -20,6 +20,17 @@ class FakeCursor:
         return None
 
 
+class AuthoritativeMappingCursor(FakeCursor):
+    def __init__(self) -> None:
+        self.executions = []
+
+    def execute(self, query, parameters=None) -> None:
+        self.executions.append((query, parameters))
+
+    def fetchall(self):
+        return [(42, 10, 20)]
+
+
 class FakeConnection:
     def __init__(self) -> None:
         self.cursor_instance = FakeCursor()
@@ -131,6 +142,44 @@ def test_backfill_processes_and_skips_complete_boxscores() -> None:
     assert connection.committed is True
     assert connection.rolled_back is False
     assert connection.closed is True
+
+
+def test_backfill_defaults_to_authoritative_mlb_source_mapping() -> None:
+    connection = FakeConnection()
+    connection.cursor_instance = AuthoritativeMappingCursor()
+    saved_game_ids = []
+
+    summary = fetch_historical_results(
+        start_date=date(2025, 4, 1),
+        end_date=date(2025, 4, 1),
+        progress_callback=None,
+        schedule_fetcher=lambda _: {
+            "dates": [
+                {
+                    "games": [
+                        _game(
+                            game_pk=1,
+                            final=True,
+                        ),
+                    ]
+                }
+            ]
+        },
+        connection_factory=lambda: connection,
+        team_id_resolver=lambda cursor, name: (
+            10 if name == "Home" else 20
+        ),
+        historical_result_saver=lambda **kwargs: saved_game_ids.append(
+            kwargs["game_id"]
+        ),
+        complete_game_ids_getter=lambda ids: frozenset({42}),
+    )
+
+    assert summary.dates_failed == 0
+    assert summary.games_processed == 1
+    assert summary.boxscores_skipped_complete == 1
+    assert saved_game_ids == [42]
+    assert len(connection.cursor_instance.executions) == 1
 
 
 def test_schedule_failure_does_not_stop_later_dates() -> None:

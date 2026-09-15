@@ -163,6 +163,16 @@ persisted Early Entry cohort. Partial market evaluation, candidate, or
 settlement evidence remains an integrity failure. A failed-card day is a PIT
 gap and must not be reconstructed from later information.
 
+Canonical MLB results and box-score statistics remain recoverable independently
+of an expired or failed betting card. When a unique persisted MLB Stats mapping
+matches the completed event's participants and orientation, result ingestion
+uses that canonical game even if an unrelated provider retains a conflicting
+nearby mapping. The other provider mapping remains unchanged as provenance.
+
+This independent result path must not create or reconstruct official
+predictions, market evaluations, paper candidates, or settlements. The failed
+workflow and any partial official-card evidence remain failed and preserved.
+
 ### 7. Settle paper candidates
 
     D:\SportsModel\.venv\Scripts\python.exe .\scripts\settle_moneyline_paper_candidates.py --prediction-run-id PREDICTION_RUN_ID --odds-run-id ODDS_RUN_ID
