@@ -165,22 +165,7 @@ def save_parsed_boxscore(
 
     try:
         with connection.cursor() as cursor:
-            _update_game(
-                cursor=cursor,
-                parsed_boxscore=parsed_boxscore,
-            )
-
-            for statistics in parsed_boxscore.team_statistics:
-                _upsert_team_statistics(
-                    cursor=cursor,
-                    statistics=statistics,
-                )
-
-            for statistics in parsed_boxscore.pitcher_statistics:
-                _upsert_pitcher_statistics(
-                    cursor=cursor,
-                    statistics=statistics,
-                )
+            save_parsed_boxscore_with_cursor(cursor, parsed_boxscore)
 
         connection.commit()
 
@@ -190,6 +175,15 @@ def save_parsed_boxscore(
 
     finally:
         connection.close()
+
+
+def save_parsed_boxscore_with_cursor(cursor: Any, parsed_boxscore: ParsedBoxScore) -> None:
+    """Reuse normal persistence in a caller-owned, identity-locked transaction."""
+    _update_game(cursor=cursor, parsed_boxscore=parsed_boxscore)
+    for statistics in parsed_boxscore.team_statistics:
+        _upsert_team_statistics(cursor=cursor, statistics=statistics)
+    for statistics in parsed_boxscore.pitcher_statistics:
+        _upsert_pitcher_statistics(cursor=cursor, statistics=statistics)
 
 
 def _update_game(
