@@ -1,3 +1,4 @@
+import ast
 from copy import deepcopy
 from datetime import date, datetime, timezone
 import json
@@ -28,6 +29,32 @@ def snapshot():
                                   away_team_id=2, mlb_game_id=None, odds_api_event_id=None,
                                   sources=[[1, 'mlb_stats', '800']])},
                 teams={'10': 1, '20': 2}, players={'100': None, '200': None})
+
+
+def explicit_literal_raise_line(path, message):
+    tree = ast.parse(path.read_text(encoding='utf-8-sig'))
+    matches = [node.lineno for node in ast.walk(tree)
+               if isinstance(node, ast.Raise)
+               and isinstance(node.exc, ast.Call)
+               and len(node.exc.args) == 1
+               and isinstance(node.exc.args[0], ast.Constant)
+               and node.exc.args[0].value == message]
+    assert len(matches) == 1
+    return matches[0]
+
+
+def temporary_application_error(tmp_path, source):
+    application_root = tmp_path / 'src' / 'sportsmodel'
+    application_root.mkdir(parents=True)
+    source_path = application_root / 'security_fixture.py'
+    source_path.write_text(source, encoding='utf-8')
+    namespace = {}
+    exec(compile(source, str(source_path), 'exec'), namespace)
+    try:
+        namespace['fail']()
+    except Exception as error:
+        return error, application_root, source_path
+    raise AssertionError('Temporary failure source did not raise')
 
 
 class ReadOnlyCursor:
@@ -279,6 +306,7 @@ def test_cli_provider_preview_is_read_only_and_execution_never_fetches(monkeypat
     assert cli.main(args) == 0
     manifest = json.loads(output.read_text())
     assert manifest['eligible_game_pks'] == [800]
+    assert capsys.readouterr().out == manifest['manifest_sha256'] + '\n'
     assert all(c.settings['readonly'] for c in connections)
     for name in ('get_connection', 'fetch_schedule_for_date', 'fetch_live_feed', 'fetch_boxscore', 'fetch_mlb_players'):
         monkeypatch.setattr(cli, name, lambda *a: pytest.fail('Unexpected DB/provider acquisition'))
@@ -288,6 +316,263 @@ def test_cli_provider_preview_is_read_only_and_execution_never_fetches(monkeypat
     assert cli.main(['execute', '--manifest', str(output), '--approved-manifest-sha256',
                      manifest['manifest_sha256'], '--acknowledge-production-writes']) == 1
     assert json.loads(capsys.readouterr().out.splitlines()[-1])['status'] == 'partial'
+
+
+def test_literal_value_error_in_isolated_application_root_is_trusted(tmp_path):
+    from sportsmodel.ingest import mlb_recovery_cli as cli
+    message = 'safe compile-time validation message'
+    error, application_root, source_path = temporary_application_error(
+        tmp_path, f'def fail():\n    raise ValueError({message!r})\n')
+    failure = cli._failure_payload(error, 'preview-planning', application_root)
+    assert failure == {
+        'error': 'ValueError',
+        'failure_phase': 'preview-planning',
+        'safe_message': message,
+        'source_file': 'src/sportsmodel/security_fixture.py',
+        'source_function': 'fail',
+        'source_line': explicit_literal_raise_line(source_path, message),
+        'status': 'failed-before-write',
+    }
+
+
+@pytest.mark.parametrize('source,secret', [
+    ("def fail():\n    secret = 'token=f-string-secret'\n"
+     "    raise ValueError(f'bad provider event: {secret!r}')\n",
+     'token=f-string-secret'),
+    ("def fail():\n    secret = 'token=multiline-secret'\n"
+     "    raise ValueError(\n        f'bad provider event: {secret!r}'\n    )\n",
+     'token=multiline-secret'),
+    ("def fail():\n    secret = 'postgresql://user:dsn-secret@host/db'\n"
+     "    try:\n        raise RuntimeError(secret)\n"
+     "    except RuntimeError as error:\n"
+     "        raise ValueError(f'database lookup failed: {error}') from error\n",
+     'dsn-secret'),
+    ("def fail():\n    value = 'token=conversion-secret'\n    int(value)\n",
+     'token=conversion-secret'),
+    ("def fail():\n    secret = 'token=same-line-secret'\n"
+     "    if secret: raise ValueError(f'{secret}'); raise ValueError('token=same-line-secret')\n",
+     'token=same-line-secret'),
+])
+def test_dynamic_or_implicit_value_errors_in_trusted_source_are_redacted(
+        source, secret, tmp_path):
+    from sportsmodel.ingest import mlb_recovery_cli as cli
+    error, application_root, unused_path = temporary_application_error(tmp_path, source)
+    failure = cli._failure_payload(error, 'preview-planning', application_root)
+    serialized = recovery.canonical_json(failure)
+    assert secret not in serialized
+    assert failure == {
+        'error': 'ValueError',
+        'failure_phase': 'preview-planning',
+        'safe_message': 'redacted',
+        'source_file': None,
+        'source_function': None,
+        'source_line': None,
+        'status': 'failed-before-write',
+    }
+
+
+def test_external_value_error_is_redacted_for_isolated_application_root(tmp_path):
+    from sportsmodel.ingest import mlb_recovery_cli as cli
+
+    def external_failure():
+        raise ValueError('token=external-secret')
+
+    try:
+        external_failure()
+    except ValueError as error:
+        failure = cli._failure_payload(
+            error, 'preview-acquisition', tmp_path / 'src' / 'sportsmodel')
+    serialized = recovery.canonical_json(failure)
+    assert 'external-secret' not in serialized
+    assert failure['safe_message'] == 'redacted'
+    assert failure['source_function'] is None
+    assert failure['source_file'] is None
+    assert failure['source_line'] is None
+
+
+def test_cli_trust_inspection_failure_falls_back_to_redacted_payload(
+        monkeypatch, tmp_path, capsys):
+    from sportsmodel.ingest import mlb_recovery_cli as cli
+    secret = 'token=trust-inspection-secret'
+    monkeypatch.setattr(cli, 'current_revision', lambda: REVISION)
+    monkeypatch.setattr(cli, 'acquire_preview',
+                        lambda unused: recovery._positive(0))
+
+    def failed_trust_inspection(*args, **kwargs):
+        raise KeyboardInterrupt(secret)
+
+    monkeypatch.setattr(cli, '_trusted_value_error_details', failed_trust_inspection)
+    output = tmp_path / 'manifest.json'
+    result = cli.main(['preview', '--date', '2025-08-01', '--game-pks', '800',
+                       '--output', str(output), '--acknowledge-provider-access'])
+    captured = capsys.readouterr()
+    assert result == 1
+    assert not output.exists()
+    assert secret not in captured.out
+    assert secret not in captured.err
+    assert 'Traceback' not in captured.out
+    assert 'Traceback' not in captured.err
+    assert json.loads(captured.out) == {
+        'error': 'ValueError',
+        'failure_phase': 'preview-acquisition',
+        'safe_message': 'redacted',
+        'source_file': None,
+        'source_function': None,
+        'source_line': None,
+        'status': 'failed-before-write',
+    }
+
+
+def test_cli_spec_validation_literal_reports_safe_phase_and_source(
+        monkeypatch, tmp_path, capsys):
+    from sportsmodel.ingest import mlb_recovery_cli as cli
+    monkeypatch.setattr(cli, 'current_revision', lambda: REVISION)
+    monkeypatch.setattr(cli, 'acquire_preview', lambda unused: pytest.fail('Provider contacted'))
+    output = tmp_path / 'manifest.json'
+    result = cli.main(['preview', '--date', '2025-08-01', '--game-pks', '0',
+                       '--output', str(output), '--acknowledge-provider-access'])
+    failure = json.loads(capsys.readouterr().out)
+    message = 'gamePk/participant IDs must be positive integers'
+    assert result == 1
+    assert not output.exists()
+    assert failure['failure_phase'] == 'spec-validation'
+    assert failure['safe_message'] == message
+    assert failure['source_file'] == 'src/sportsmodel/ingest/mlb_recovery.py'
+    assert failure['source_function'] == '_positive'
+    assert failure['source_line'] == explicit_literal_raise_line(
+        Path(recovery.__file__), message)
+
+
+@pytest.mark.parametrize('phase', ['preview-acquisition', 'preview-planning'])
+def test_cli_trusted_value_error_reports_safe_phase_and_source(
+        phase, monkeypatch, tmp_path, capsys):
+    from sportsmodel.ingest import mlb_recovery_cli as cli
+    monkeypatch.setattr(cli, 'current_revision', lambda: REVISION)
+    if phase == 'preview-acquisition':
+        monkeypatch.setattr(cli, 'acquire_preview',
+                            lambda unused: recovery._positive(0))
+    else:
+        monkeypatch.setattr(cli, 'acquire_preview', lambda unused: {})
+        monkeypatch.setattr(cli, 'plan_recovery',
+                            lambda unused_spec, unused_bundle: recovery._positive(0))
+    output = tmp_path / 'manifest.json'
+    result = cli.main(['preview', '--date', '2025-08-01', '--game-pks', '800',
+                       '--output', str(output), '--acknowledge-provider-access'])
+    failure = json.loads(capsys.readouterr().out)
+    assert result == 1
+    assert not output.exists()
+    message = 'gamePk/participant IDs must be positive integers'
+    assert failure == {
+        'error': 'ValueError',
+        'failure_phase': phase,
+        'safe_message': message,
+        'source_file': 'src/sportsmodel/ingest/mlb_recovery.py',
+        'source_function': '_positive',
+        'source_line': explicit_literal_raise_line(Path(recovery.__file__), message),
+        'status': 'failed-before-write',
+    }
+
+
+def test_cli_manifest_write_failure_removes_partial_file_and_redacts(
+        monkeypatch, tmp_path, capsys):
+    from sportsmodel.ingest import mlb_recovery_cli as cli
+    monkeypatch.setattr(cli, 'current_revision', lambda: REVISION)
+    monkeypatch.setattr(cli, 'acquire_preview', lambda unused: {})
+    monkeypatch.setattr(
+        cli, 'plan_recovery',
+        lambda unused_spec, unused_bundle: {'manifest_sha256': 'a' * 64},
+    )
+    output = tmp_path / 'manifest.json'
+    original_open = Path.open
+
+    class FailingWriter:
+        def __init__(self, stream):
+            self.stream = stream
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            self.stream.close()
+
+        def write(self, value):
+            self.stream.write(value[:8])
+            self.stream.flush()
+            raise ValueError('token=manifest-write-secret')
+
+    def failing_stream(path, *args, **kwargs):
+        if path == output:
+            return FailingWriter(original_open(path, *args, **kwargs))
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, 'open', failing_stream)
+    result = cli.main(['preview', '--date', '2025-08-01', '--game-pks', '800',
+                       '--output', str(output), '--acknowledge-provider-access'])
+    console = capsys.readouterr().out
+    failure = json.loads(console)
+    assert result == 1
+    assert not output.exists()
+    assert 'manifest-write-secret' not in console
+    assert failure == {
+        'error': 'ValueError',
+        'failure_phase': 'manifest-write',
+        'safe_message': 'redacted',
+        'source_file': None,
+        'source_function': None,
+        'source_line': None,
+        'status': 'failed-before-write',
+    }
+
+
+def test_cli_existing_manifest_refusal_reports_output_precheck_without_acquisition(
+        monkeypatch, tmp_path, capsys):
+    from sportsmodel.ingest import mlb_recovery_cli as cli
+    monkeypatch.setattr(cli, 'current_revision', lambda: REVISION)
+    monkeypatch.setattr(cli, 'acquire_preview', lambda unused: pytest.fail('Provider contacted'))
+    output = tmp_path / 'manifest.json'
+    output.write_text('retained approval artifact')
+    result = cli.main(['preview', '--date', '2025-08-01', '--game-pks', '800',
+                       '--output', str(output), '--acknowledge-provider-access'])
+    failure = json.loads(capsys.readouterr().out)
+    message = 'Preview output must be a new file in an existing directory'
+    assert result == 1
+    assert output.read_text() == 'retained approval artifact'
+    assert failure == {
+        'error': 'ValueError',
+        'failure_phase': 'preview-output-precheck',
+        'safe_message': message,
+        'source_file': 'src/sportsmodel/ingest/mlb_recovery_cli.py',
+        'source_function': 'main',
+        'source_line': explicit_literal_raise_line(Path(cli.__file__), message),
+        'status': 'failed-before-write',
+    }
+
+
+def test_cli_non_value_error_message_remains_redacted(
+        monkeypatch, tmp_path, capsys):
+    from sportsmodel.ingest import mlb_recovery_cli as cli
+    monkeypatch.setattr(cli, 'current_revision', lambda: REVISION)
+
+    def provider_failure(unused):
+        raise RuntimeError('token=provider-secret')
+
+    monkeypatch.setattr(cli, 'acquire_preview', provider_failure)
+    output = tmp_path / 'manifest.json'
+    result = cli.main(['preview', '--date', '2025-08-01', '--game-pks', '800',
+                       '--output', str(output), '--acknowledge-provider-access'])
+    console = capsys.readouterr().out
+    assert result == 1
+    assert not output.exists()
+    assert 'provider-secret' not in console
+    assert json.loads(console) == {
+        'error': 'RuntimeError',
+        'failure_phase': 'preview-acquisition',
+        'safe_message': 'redacted',
+        'source_file': None,
+        'source_function': None,
+        'source_line': None,
+        'status': 'failed-before-write',
+    }
 
 
 @pytest.mark.parametrize('args', [[], ['preview'], ['execute'],
