@@ -59,8 +59,8 @@ Execution still requires separate review and approval of an exact manifest hash.
 The `diagnose-evidence` mode performs no provider or database access. It compares
 each retained live-feed `liveData.boxscore` with its standalone boxscore without
 normalizing or modifying either payload, reporting deterministic differing paths
-and bounded values. It is diagnostic only and does not change the strict preview
-validator.
+and bounded values. It is diagnostic only; preview validation separately compares
+a recovery-relevant semantic projection while the raw diagnostic remains intact.
 
 ## Version 1 eligibility and identity contract
 
@@ -80,7 +80,14 @@ to generic matching/creation. Ordinary Odds/cross-source matching is unchanged.
 
 Standalone MLB boxscores have no native gamePk. Their requested gamePk is pinned
 and their content must agree with the boxscore embedded in the identified live
-feed. Disagreeing responses are refused even when the difference seems incidental.
+feed on every recovery-relevant value. The positive comparison projection covers
+oriented team IDs; boxscore player keys and person IDs; ordered pitcher identities;
+every team batting, pitching and fielding value persisted by the parser; and every
+per-pitcher value that affects an appearance, decision or persisted statistic.
+Copyright, display-only `person.boxscoreName` and hydrated team descriptors are
+not recovery inputs and do not cause disagreement. Missing or differing required
+identity/statistical values still fail closed; this is not a general missing-field
+or path-ignore rule.
 Schedule/feed start, official date, game type, finality, participants and scores
 are validated. Positive game numbers and N/Y doubleheader flags must agree with
 schedule metadata when supplied; other flags require a separately reviewed contract.

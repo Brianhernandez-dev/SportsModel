@@ -15,7 +15,9 @@ from zoneinfo import ZoneInfo
 
 from sportsmodel.database.connection import get_connection
 from sportsmodel.database import mlb_recovery_repository as repository
-from sportsmodel.ingest.boxscore_parser import parse_boxscore
+from sportsmodel.ingest.boxscore_parser import (
+    parse_boxscore, parse_pitcher_statistics, parse_team_statistics,
+)
 from sportsmodel.ingest.mlb_players import normalize_mlb_player
 from sportsmodel.ingest.mlb_stats import save_historical_result, _parse_finalized_schedule_game
 
@@ -148,6 +150,31 @@ def _player_ids(box):
                    for p in box['teams'][side]['players'].values()})
 
 
+def _recovery_boxscore_projection(box):
+    """Return only boxscore values that can affect a recovery mutation."""
+    team_ids = {int(box['teams'][side]['team']['id']):
+                int(box['teams'][side]['team']['id'])
+                for side in ('away', 'home')}
+    player_ids = {player_id: player_id for player_id in _player_ids(box)}
+    identities = {}
+    for side in ('away', 'home'):
+        section = box['teams'][side]
+        identities[side] = dict(
+            team_id=section['team']['id'],
+            players={key: player['person']['id']
+                     for key, player in sorted(section['players'].items())},
+            pitchers=list(section['pitchers']),
+        )
+    return dict(
+        identities=identities,
+        team_statistics=[asdict(value) for value in parse_team_statistics(
+            box, game_id=1, team_ids_by_mlb_id=team_ids)],
+        pitcher_statistics=[asdict(value) for value in parse_pitcher_statistics(
+            box, game_id=1, team_ids_by_mlb_id=team_ids,
+            player_ids_by_mlb_id=player_ids)],
+    )
+
+
 def read_snapshot(cursor, spec, bundle, *, lock=False):
     events = _events(spec, bundle)
     snapshot = dict(games={}, teams={}, players={})
@@ -180,7 +207,12 @@ def _validate_box(event, pinned):
     # require agreement with the boxscore embedded in the identified live feed.
     if feed['gamePk'] != pk or pinned['game_pk'] != pk or box.get('gamePk', pk) != pk:
         raise ValueError('Pinned boxscore request identity mismatch')
-    if canonical_json(box) != canonical_json(feed['liveData']['boxscore']):
+    try:
+        standalone_projection = _recovery_boxscore_projection(box)
+        feed_projection = _recovery_boxscore_projection(feed['liveData']['boxscore'])
+    except (AttributeError, KeyError, TypeError):
+        raise ValueError('Standalone/feed boxscore disagreement') from None
+    if canonical_json(standalone_projection) != canonical_json(feed_projection):
         raise ValueError('Standalone/feed boxscore disagreement')
     if feed['gameData']['game']['type'] != event['gameType']:
         raise ValueError('Feed game type mismatch')

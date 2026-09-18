@@ -12,11 +12,35 @@ from sportsmodel.database import mlb_recovery_repository as repository
 
 
 FIXTURE = Path(__file__).parents[1] / 'fixtures/mlb_recovery/synthetic.json'
+SEMANTIC_FIXTURE = Path(__file__).parents[1] / 'fixtures/mlb_recovery/semantic_equivalence.json'
 REVISION = 'a' * 40
 
 
 def bundle():
     return json.loads(FIXTURE.read_text())
+
+
+def semantic_fixture():
+    return json.loads(SEMANTIC_FIXTURE.read_text())
+
+
+def apply_semantic_additions(box, *families):
+    fixture = semantic_fixture()
+    if 'copyright' in families:
+        box['copyright'] = fixture['copyright']
+    if 'boxscore_names' in families:
+        for side, players in fixture['boxscore_names'].items():
+            for player, name in players.items():
+                box['teams'][side]['players'][player]['person']['boxscoreName'] = name
+    if 'team_hydration' in families:
+        for side, values in fixture['team_hydration'].items():
+            box['teams'][side]['team'].update(deepcopy(values))
+
+
+def validation_inputs():
+    payload = bundle()
+    event = payload['schedule']['dates'][0]['games'][0]
+    return event, payload['games']['800']
 
 
 def spec():
@@ -124,6 +148,123 @@ def test_preview_no_writes_and_complete_manifest():
     assert len(manifest['games'][0]['boxscore']['team_statistics']) == 2
     assert manifest['games'][0]['starters'] == [200, 100]
     assert all('baseball_player_id' not in p for p in manifest['games'][0]['boxscore']['pitcher_statistics'])
+
+
+def test_semantic_boxscore_exact_equality_passes():
+    event, pinned = validation_inputs()
+    recovery._validate_box(event, pinned)
+
+
+@pytest.mark.parametrize('families', [
+    ('copyright',),
+    ('boxscore_names',),
+    ('team_hydration',),
+    ('copyright', 'boxscore_names', 'team_hydration'),
+])
+def test_semantic_boxscore_standalone_only_nonmaterial_additions_pass(families):
+    event, pinned = validation_inputs()
+    apply_semantic_additions(pinned['boxscore'], *families)
+
+    recovery._validate_box(event, pinned)
+
+
+def test_semantic_boxscore_feed_only_nonmaterial_additions_deliberately_pass():
+    event, pinned = validation_inputs()
+    apply_semantic_additions(
+        pinned['feed']['liveData']['boxscore'],
+        'copyright', 'boxscore_names', 'team_hydration',
+    )
+
+    recovery._validate_box(event, pinned)
+
+
+def test_semantic_boxscore_additions_pass_complete_planning():
+    payload = bundle()
+    apply_semantic_additions(
+        payload['games']['800']['boxscore'],
+        'copyright', 'boxscore_names', 'team_hydration',
+    )
+
+    manifest = recovery.build_manifest(spec(), payload, snapshot())
+
+    assert manifest['eligible_game_pks'] == [800]
+    assert manifest['games'][0]['starters'] == [200, 100]
+
+
+def test_raw_boxscore_diagnostic_still_reports_nonmaterial_additions():
+    from sportsmodel.ingest import mlb_recovery_cli as cli
+
+    unused_event, pinned = validation_inputs()
+    feed = pinned['feed']['liveData']['boxscore']
+    standalone = pinned['boxscore']
+    apply_semantic_additions(standalone, 'copyright')
+
+    assert cli.field_differences(feed, standalone) == [{
+        'path': '/copyright',
+        'feed_present': False,
+        'standalone_present': True,
+        'feed': None,
+        'standalone': semantic_fixture()['copyright'],
+    }]
+
+
+@pytest.mark.parametrize('case', semantic_fixture()['negative_cases'],
+                         ids=lambda case: case['name'])
+def test_semantic_boxscore_material_difference_fails_closed(case):
+    event, pinned = validation_inputs()
+    target = pinned['boxscore']
+    parent = target
+    for component in case['path'][:-1]:
+        parent = parent[component]
+    if case.get('action') == 'delete':
+        del parent[case['path'][-1]]
+    else:
+        parent[case['path'][-1]] = case['value']
+
+    with pytest.raises(ValueError, match='Standalone/feed boxscore disagreement'):
+        recovery._validate_box(event, pinned)
+
+
+def test_semantic_boxscore_pitcher_order_and_starter_mismatch_fails_closed():
+    event, pinned = validation_inputs()
+    for box in (pinned['feed']['liveData']['boxscore'], pinned['boxscore']):
+        home = box['teams']['home']
+        reliever = deepcopy(home['players']['ID100'])
+        reliever['person']['id'] = 101
+        home['players']['ID101'] = reliever
+        home['pitchers'] = [100, 101]
+    pinned['boxscore']['teams']['home']['pitchers'] = [101, 100]
+
+    with pytest.raises(ValueError, match='Standalone/feed boxscore disagreement'):
+        recovery._validate_box(event, pinned)
+
+
+def test_semantic_boxscore_projection_is_deterministic():
+    def reordered(value):
+        if isinstance(value, dict):
+            return {key: reordered(item) for key, item in reversed(list(value.items()))}
+        if isinstance(value, list):
+            return [reordered(item) for item in value]
+        return value
+
+    unused_event, pinned = validation_inputs()
+    box = pinned['boxscore']
+    first = recovery._recovery_boxscore_projection(box)
+    second = recovery._recovery_boxscore_projection(reordered(box))
+
+    assert recovery.canonical_json(first) == recovery.canonical_json(second)
+
+
+def test_semantic_boxscore_validation_does_not_mutate_inputs():
+    event, pinned = validation_inputs()
+    apply_semantic_additions(
+        pinned['boxscore'], 'copyright', 'boxscore_names', 'team_hydration')
+    original_event, original_pinned = deepcopy(event), deepcopy(pinned)
+
+    recovery._validate_box(event, pinned)
+
+    assert event == original_event
+    assert pinned == original_pinned
 
 
 @pytest.mark.parametrize('count,dangling', [(0, False), (2, False), (1, True)])

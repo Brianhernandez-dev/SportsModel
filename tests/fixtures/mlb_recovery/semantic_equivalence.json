@@ -1,0 +1,122 @@
+{
+  "copyright": "Synthetic standalone-only copyright",
+  "boxscore_names": {
+    "away": {
+      "ID200": "Away, S"
+    },
+    "home": {
+      "ID100": "Home, S"
+    }
+  },
+  "team_hydration": {
+    "away": {
+      "abbreviation": "AWY",
+      "active": true,
+      "clubName": "Away Club",
+      "division": {
+        "id": 201,
+        "name": "Synthetic Division"
+      },
+      "fileCode": "awy",
+      "firstYearOfPlay": "1901",
+      "franchiseName": "Away",
+      "league": {
+        "id": 103,
+        "name": "Synthetic League"
+      },
+      "locationName": "Away City",
+      "record": {
+        "losses": 1,
+        "wins": 2
+      },
+      "season": 2025,
+      "shortName": "Away",
+      "sport": {
+        "id": 1,
+        "name": "Baseball"
+      },
+      "springVenue": {
+        "id": 9002
+      },
+      "teamCode": "awy",
+      "teamName": "Away Club",
+      "venue": {
+        "id": 2002,
+        "name": "Away Park"
+      }
+    },
+    "home": {
+      "abbreviation": "HOM",
+      "active": true,
+      "clubName": "Home Club",
+      "division": {
+        "id": 201,
+        "name": "Synthetic Division"
+      },
+      "fileCode": "hom",
+      "firstYearOfPlay": "1902",
+      "franchiseName": "Home",
+      "league": {
+        "id": 103,
+        "name": "Synthetic League"
+      },
+      "locationName": "Home City",
+      "record": {
+        "losses": 2,
+        "wins": 1
+      },
+      "season": 2025,
+      "shortName": "Home",
+      "sport": {
+        "id": 1,
+        "name": "Baseball"
+      },
+      "springVenue": {
+        "id": 9001
+      },
+      "teamCode": "hom",
+      "teamName": "Home Club",
+      "venue": {
+        "id": 2001,
+        "name": "Home Park"
+      }
+    }
+  },
+  "negative_cases": [
+    {
+      "name": "player_identity",
+      "path": ["teams", "home", "players", "ID100", "person", "id"],
+      "value": 101
+    },
+    {
+      "name": "team_identity",
+      "path": ["teams", "home", "team", "id"],
+      "value": 999
+    },
+    {
+      "name": "batting_stat",
+      "path": ["teams", "home", "teamStats", "batting", "hits"],
+      "value": 8
+    },
+    {
+      "name": "team_pitching_stat",
+      "path": ["teams", "home", "teamStats", "pitching", "strikeOuts"],
+      "value": 6
+    },
+    {
+      "name": "player_pitching_stat",
+      "path": ["teams", "home", "players", "ID100", "stats", "pitching", "outs"],
+      "value": 26
+    },
+    {
+      "action": "delete",
+      "name": "missing_required",
+      "path": ["teams", "home", "teamStats", "batting", "hits"]
+    },
+    {
+      "name": "required_type",
+      "path": ["teams", "home", "teamStats", "batting", "runs"],
+      "value": "5"
+    }
+  ]
+}
