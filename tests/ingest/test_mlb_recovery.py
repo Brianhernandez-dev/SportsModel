@@ -23,6 +23,13 @@ def spec():
     return recovery.RecoverySpecification(date(2025, 8, 1), (800,), REVISION)
 
 
+def preview_args(tmp_path, *, game_pk='800', output=None, evidence_name='provider-evidence'):
+    output = output or tmp_path / 'manifest.json'
+    return ['preview', '--date', '2025-08-01', '--game-pks', game_pk,
+            '--output', str(output), '--evidence-output', str(tmp_path / evidence_name),
+            '--acknowledge-provider-access']
+
+
 def snapshot():
     return dict(games={'800': dict(game_id=1, source_id=1,
                                   start='2025-08-01T19:00:00+00:00', home_team_id=1,
@@ -301,13 +308,32 @@ def test_cli_provider_preview_is_read_only_and_execution_never_fetches(monkeypat
     monkeypatch.setattr(cli, 'fetch_mlb_players', lambda ids: payload['people'])
     monkeypatch.setattr(cli, 'plan_recovery', lambda s, b: recovery.plan_recovery(s, b, connection_factory=connect))
     output = tmp_path / 'manifest.json'
-    args = ['preview', '--date', '2025-08-01', '--game-pks', '800', '--output', str(output),
-            '--acknowledge-provider-access']
+    args = preview_args(tmp_path, output=output)
     assert cli.main(args) == 0
     manifest = json.loads(output.read_text())
     assert manifest['eligible_game_pks'] == [800]
     assert capsys.readouterr().out == manifest['manifest_sha256'] + '\n'
     assert all(c.settings['readonly'] for c in connections)
+    evidence = tmp_path / 'provider-evidence'
+    assert (evidence / 'acquisition_complete.json').is_file()
+    assert (evidence / 'schedule.json').is_file()
+    assert (evidence / 'games/800/feed.json').is_file()
+    assert (evidence / 'games/800/boxscore.json').is_file()
+    assert (evidence / 'people.json').is_file()
+    retained_hashes = json.loads((evidence / 'payload_hashes.json').read_text())
+    assert retained_hashes['payloads'] == [
+        {'filename': 'schedule.json', 'game_pk': None,
+         'payload_sha256': recovery.digest(payload['schedule']), 'source': 'schedule'},
+        {'filename': 'games/800/feed.json', 'game_pk': 800,
+         'payload_sha256': recovery.digest(payload['games']['800']['feed']),
+         'source': 'live-feed'},
+        {'filename': 'games/800/boxscore.json', 'game_pk': 800,
+         'payload_sha256': recovery.digest(payload['games']['800']['boxscore']),
+         'source': 'standalone-boxscore'},
+        {'filename': 'people.json', 'game_pk': None,
+         'payload_sha256': recovery.digest(payload['people']), 'source': 'people'},
+    ]
+    assert json.loads((evidence / 'preview_status.json').read_text())['status'] == 'success'
     for name in ('get_connection', 'fetch_schedule_for_date', 'fetch_live_feed', 'fetch_boxscore', 'fetch_mlb_players'):
         monkeypatch.setattr(cli, name, lambda *a: pytest.fail('Unexpected DB/provider acquisition'))
     # Existing output refuses before acquisition; execution consumes the file only.
@@ -396,15 +422,14 @@ def test_cli_trust_inspection_failure_falls_back_to_redacted_payload(
     secret = 'token=trust-inspection-secret'
     monkeypatch.setattr(cli, 'current_revision', lambda: REVISION)
     monkeypatch.setattr(cli, 'acquire_preview',
-                        lambda unused: recovery._positive(0))
+                        lambda unused, evidence=None: recovery._positive(0))
 
     def failed_trust_inspection(*args, **kwargs):
         raise KeyboardInterrupt(secret)
 
     monkeypatch.setattr(cli, '_trusted_value_error_details', failed_trust_inspection)
     output = tmp_path / 'manifest.json'
-    result = cli.main(['preview', '--date', '2025-08-01', '--game-pks', '800',
-                       '--output', str(output), '--acknowledge-provider-access'])
+    result = cli.main(preview_args(tmp_path, output=output))
     captured = capsys.readouterr()
     assert result == 1
     assert not output.exists()
@@ -414,6 +439,8 @@ def test_cli_trust_inspection_failure_falls_back_to_redacted_payload(
     assert 'Traceback' not in captured.err
     assert json.loads(captured.out) == {
         'error': 'ValueError',
+        'evidence_path': str((tmp_path / 'provider-evidence').resolve()),
+        'evidence_status': 'incomplete',
         'failure_phase': 'preview-acquisition',
         'safe_message': 'redacted',
         'source_file': None,
@@ -429,8 +456,7 @@ def test_cli_spec_validation_literal_reports_safe_phase_and_source(
     monkeypatch.setattr(cli, 'current_revision', lambda: REVISION)
     monkeypatch.setattr(cli, 'acquire_preview', lambda unused: pytest.fail('Provider contacted'))
     output = tmp_path / 'manifest.json'
-    result = cli.main(['preview', '--date', '2025-08-01', '--game-pks', '0',
-                       '--output', str(output), '--acknowledge-provider-access'])
+    result = cli.main(preview_args(tmp_path, game_pk='0', output=output))
     failure = json.loads(capsys.readouterr().out)
     message = 'gamePk/participant IDs must be positive integers'
     assert result == 1
@@ -450,19 +476,21 @@ def test_cli_trusted_value_error_reports_safe_phase_and_source(
     monkeypatch.setattr(cli, 'current_revision', lambda: REVISION)
     if phase == 'preview-acquisition':
         monkeypatch.setattr(cli, 'acquire_preview',
-                            lambda unused: recovery._positive(0))
+                            lambda unused, evidence=None: recovery._positive(0))
     else:
-        monkeypatch.setattr(cli, 'acquire_preview', lambda unused: {})
+        def acquired(unused, evidence=None):
+            evidence.complete()
+            return {}
+        monkeypatch.setattr(cli, 'acquire_preview', acquired)
         monkeypatch.setattr(cli, 'plan_recovery',
                             lambda unused_spec, unused_bundle: recovery._positive(0))
     output = tmp_path / 'manifest.json'
-    result = cli.main(['preview', '--date', '2025-08-01', '--game-pks', '800',
-                       '--output', str(output), '--acknowledge-provider-access'])
+    result = cli.main(preview_args(tmp_path, output=output))
     failure = json.loads(capsys.readouterr().out)
     assert result == 1
     assert not output.exists()
     message = 'gamePk/participant IDs must be positive integers'
-    assert failure == {
+    expected = {
         'error': 'ValueError',
         'failure_phase': phase,
         'safe_message': message,
@@ -471,13 +499,20 @@ def test_cli_trusted_value_error_reports_safe_phase_and_source(
         'source_line': explicit_literal_raise_line(Path(recovery.__file__), message),
         'status': 'failed-before-write',
     }
+    expected.update(evidence_path=str((tmp_path / 'provider-evidence').resolve()),
+                    evidence_status=('complete' if phase == 'preview-planning'
+                                     else 'incomplete'))
+    assert failure == expected
 
 
 def test_cli_manifest_write_failure_removes_partial_file_and_redacts(
         monkeypatch, tmp_path, capsys):
     from sportsmodel.ingest import mlb_recovery_cli as cli
     monkeypatch.setattr(cli, 'current_revision', lambda: REVISION)
-    monkeypatch.setattr(cli, 'acquire_preview', lambda unused: {})
+    def acquired(unused, evidence=None):
+        evidence.complete()
+        return {}
+    monkeypatch.setattr(cli, 'acquire_preview', acquired)
     monkeypatch.setattr(
         cli, 'plan_recovery',
         lambda unused_spec, unused_bundle: {'manifest_sha256': 'a' * 64},
@@ -506,8 +541,7 @@ def test_cli_manifest_write_failure_removes_partial_file_and_redacts(
         return original_open(path, *args, **kwargs)
 
     monkeypatch.setattr(Path, 'open', failing_stream)
-    result = cli.main(['preview', '--date', '2025-08-01', '--game-pks', '800',
-                       '--output', str(output), '--acknowledge-provider-access'])
+    result = cli.main(preview_args(tmp_path, output=output))
     console = capsys.readouterr().out
     failure = json.loads(console)
     assert result == 1
@@ -515,6 +549,8 @@ def test_cli_manifest_write_failure_removes_partial_file_and_redacts(
     assert 'manifest-write-secret' not in console
     assert failure == {
         'error': 'ValueError',
+        'evidence_path': str((tmp_path / 'provider-evidence').resolve()),
+        'evidence_status': 'complete',
         'failure_phase': 'manifest-write',
         'safe_message': 'redacted',
         'source_file': None,
@@ -531,8 +567,7 @@ def test_cli_existing_manifest_refusal_reports_output_precheck_without_acquisiti
     monkeypatch.setattr(cli, 'acquire_preview', lambda unused: pytest.fail('Provider contacted'))
     output = tmp_path / 'manifest.json'
     output.write_text('retained approval artifact')
-    result = cli.main(['preview', '--date', '2025-08-01', '--game-pks', '800',
-                       '--output', str(output), '--acknowledge-provider-access'])
+    result = cli.main(preview_args(tmp_path, output=output))
     failure = json.loads(capsys.readouterr().out)
     message = 'Preview output must be a new file in an existing directory'
     assert result == 1
@@ -553,19 +588,20 @@ def test_cli_non_value_error_message_remains_redacted(
     from sportsmodel.ingest import mlb_recovery_cli as cli
     monkeypatch.setattr(cli, 'current_revision', lambda: REVISION)
 
-    def provider_failure(unused):
+    def provider_failure(unused, evidence=None):
         raise RuntimeError('token=provider-secret')
 
     monkeypatch.setattr(cli, 'acquire_preview', provider_failure)
     output = tmp_path / 'manifest.json'
-    result = cli.main(['preview', '--date', '2025-08-01', '--game-pks', '800',
-                       '--output', str(output), '--acknowledge-provider-access'])
+    result = cli.main(preview_args(tmp_path, output=output))
     console = capsys.readouterr().out
     assert result == 1
     assert not output.exists()
     assert 'provider-secret' not in console
     assert json.loads(console) == {
         'error': 'RuntimeError',
+        'evidence_path': str((tmp_path / 'provider-evidence').resolve()),
+        'evidence_status': 'incomplete',
         'failure_phase': 'preview-acquisition',
         'safe_message': 'redacted',
         'source_file': None,
@@ -573,6 +609,199 @@ def test_cli_non_value_error_message_remains_redacted(
         'source_line': None,
         'status': 'failed-before-write',
     }
+
+
+def test_planning_failure_retains_complete_provider_evidence(
+        monkeypatch, tmp_path, capsys):
+    from sportsmodel.ingest import mlb_recovery_cli as cli
+    payload = bundle()
+    connection = ReadOnlyConnection()
+    monkeypatch.setattr(cli, 'get_connection', lambda: connection)
+    monkeypatch.setattr(cli, 'current_revision', lambda: REVISION)
+    monkeypatch.setattr(cli, 'fetch_schedule_for_date', lambda unused: payload['schedule'])
+    monkeypatch.setattr(cli, 'fetch_live_feed', lambda pk: payload['games'][str(pk)]['feed'])
+    monkeypatch.setattr(cli, 'fetch_boxscore', lambda pk: payload['games'][str(pk)]['boxscore'])
+    monkeypatch.setattr(cli, 'fetch_mlb_players', lambda unused: payload['people'])
+    monkeypatch.setattr(cli, 'plan_recovery',
+                        lambda unused_spec, unused_bundle: recovery._positive(0))
+    output = tmp_path / 'manifest.json'
+
+    assert cli.main(preview_args(tmp_path, output=output)) == 1
+
+    failure = json.loads(capsys.readouterr().out)
+    evidence = tmp_path / 'provider-evidence'
+    assert failure['failure_phase'] == 'preview-planning'
+    assert failure['evidence_path'] == str(evidence.resolve())
+    assert failure['evidence_status'] == 'complete'
+    assert not output.exists()
+    assert (evidence / 'acquisition_complete.json').is_file()
+    assert json.loads((evidence / 'preview_status.json').read_text())['status'] == 'planning-failed'
+    assert connection.settings['readonly'] is True
+
+
+def test_acquisition_failure_retains_partial_evidence_without_complete_marker(
+        monkeypatch, tmp_path, capsys):
+    from sportsmodel.ingest import mlb_recovery_cli as cli
+    payload = bundle()
+    monkeypatch.setattr(cli, 'get_connection', ReadOnlyConnection)
+    monkeypatch.setattr(cli, 'current_revision', lambda: REVISION)
+    monkeypatch.setattr(cli, 'fetch_schedule_for_date', lambda unused: payload['schedule'])
+    monkeypatch.setattr(cli, 'fetch_live_feed', lambda pk: payload['games'][str(pk)]['feed'])
+
+    def failed_boxscore(unused):
+        raise RuntimeError('token=provider-request-secret')
+
+    monkeypatch.setattr(cli, 'fetch_boxscore', failed_boxscore)
+    output = tmp_path / 'manifest.json'
+
+    assert cli.main(preview_args(tmp_path, output=output)) == 1
+
+    console = capsys.readouterr().out
+    evidence = tmp_path / 'provider-evidence'
+    assert 'provider-request-secret' not in console
+    assert (evidence / 'schedule.json').is_file()
+    assert (evidence / 'games/800/feed.json').is_file()
+    assert not (evidence / 'games/800/boxscore.json').exists()
+    assert not (evidence / 'acquisition_complete.json').exists()
+    assert not (evidence / 'payload_hashes.json').exists()
+    assert json.loads((evidence / 'acquisition_metadata.json').read_text())['status'] == 'acquisition-failed'
+    assert json.loads((evidence / 'preview_status.json').read_text())['status'] == 'acquisition-failed'
+    assert not output.exists()
+
+
+def test_retained_payload_hashes_ignore_dictionary_insertion_order(tmp_path):
+    from sportsmodel.ingest import mlb_recovery_cli as cli
+
+    def reordered(value):
+        if isinstance(value, dict):
+            return {key: reordered(item) for key, item in reversed(list(value.items()))}
+        if isinstance(value, list):
+            return [reordered(item) for item in value]
+        return value
+
+    first = cli.PreviewEvidence(tmp_path / 'first', spec())
+    second = cli.PreviewEvidence(tmp_path / 'second', spec())
+    first.schedule(bundle()['schedule'], spec().schedule_date)
+    second.schedule(reordered(bundle()['schedule']), spec().schedule_date)
+    first.complete()
+    second.complete()
+    first_hashes = json.loads((first.path / 'payload_hashes.json').read_text())
+    second_hashes = json.loads((second.path / 'payload_hashes.json').read_text())
+    assert first_hashes == second_hashes
+
+
+def test_evidence_metadata_allowlist_excludes_request_and_database_secrets(
+        monkeypatch, tmp_path):
+    from sportsmodel.ingest import mlb_recovery_cli as cli
+    payload = bundle()
+    request_secret = 'token=request-object-secret'
+    database_secret = 'postgresql://user:database-secret@host/database'
+
+    class Provider:
+        session_headers = {'Authorization': request_secret}
+
+        def __call__(self, unused):
+            return payload['schedule']
+
+    connection = ReadOnlyConnection()
+    connection.dsn = database_secret
+    monkeypatch.setattr(cli, 'get_connection', lambda: connection)
+    monkeypatch.setattr(cli, 'fetch_schedule_for_date', Provider())
+    monkeypatch.setattr(cli, 'fetch_live_feed', lambda pk: payload['games'][str(pk)]['feed'])
+    monkeypatch.setattr(cli, 'fetch_boxscore', lambda pk: payload['games'][str(pk)]['boxscore'])
+    monkeypatch.setattr(cli, 'fetch_mlb_players', lambda unused: payload['people'])
+    evidence = cli.PreviewEvidence(tmp_path / 'evidence', spec())
+
+    cli.acquire_preview(spec(), evidence=evidence)
+
+    retained = '\n'.join(path.read_text(encoding='utf-8')
+                         for path in evidence.path.rglob('*.json'))
+    assert request_secret not in retained
+    assert database_secret not in retained
+    metadata = json.loads((evidence.path / 'acquisition_metadata.json').read_text())
+    assert set(metadata['requests'][0]) == {
+        'endpoint_path', 'filename', 'game_pk', 'observation_timestamp',
+        'payload_sha256', 'query_parameters', 'source',
+    }
+
+
+def test_field_diff_reports_real_shape_and_does_not_mutate_inputs():
+    from sportsmodel.ingest import mlb_recovery_cli as cli
+    payload = bundle()
+    feed = deepcopy(payload['games']['800']['feed']['liveData']['boxscore'])
+    standalone = deepcopy(payload['games']['800']['boxscore'])
+    standalone['teams']['home']['teamStats']['batting']['runs'] = 99
+    original_feed, original_standalone = deepcopy(feed), deepcopy(standalone)
+
+    differences = cli.field_differences(feed, standalone)
+
+    assert differences == [{
+        'path': '/teams/home/teamStats/batting/runs',
+        'feed_present': True,
+        'standalone_present': True,
+        'feed': 5,
+        'standalone': 99,
+    }]
+    assert feed == original_feed
+    assert standalone == original_standalone
+
+
+def test_diagnostic_mode_reads_retained_payloads_without_provider_or_database(
+        monkeypatch, tmp_path, capsys):
+    from sportsmodel.ingest import mlb_recovery_cli as cli
+    payload = bundle()
+    evidence = cli.PreviewEvidence(tmp_path / 'evidence', spec())
+    evidence.schedule(payload['schedule'], spec().schedule_date)
+    evidence.feed(payload['games']['800']['feed'], 800)
+    standalone = deepcopy(payload['games']['800']['boxscore'])
+    standalone['teams']['away']['team']['id'] = 999
+    evidence.boxscore(standalone, 800)
+    evidence.complete()
+    for name in ('get_connection', 'fetch_schedule_for_date', 'fetch_live_feed',
+                 'fetch_boxscore', 'fetch_mlb_players'):
+        monkeypatch.setattr(cli, name, lambda *args: pytest.fail('External access'))
+
+    assert cli.main(['diagnose-evidence', '--evidence', str(evidence.path)]) == 0
+
+    report = json.loads(capsys.readouterr().out)
+    assert report['games'] == [{
+        'game_pk': 800,
+        'equal': False,
+        'differences': [{
+            'path': '/teams/away/team/id',
+            'feed_present': True,
+            'standalone_present': True,
+            'feed': 20,
+            'standalone': 999,
+        }],
+    }]
+
+
+def test_evidence_directory_inside_repository_is_refused_before_creation():
+    from sportsmodel.ingest import mlb_recovery_cli as cli
+    target = Path(cli.__file__).resolve().parents[3] / 'forbidden-provider-evidence'
+    assert not target.exists()
+    with pytest.raises(ValueError, match='outside the repository'):
+        cli.PreviewEvidence(target, spec())
+    assert not target.exists()
+
+
+def test_manifest_path_cannot_become_evidence_directory_parent(
+        monkeypatch, tmp_path, capsys):
+    from sportsmodel.ingest import mlb_recovery_cli as cli
+    monkeypatch.setattr(cli, 'current_revision', lambda: REVISION)
+    monkeypatch.setattr(cli, 'acquire_preview', lambda *args, **kwargs: pytest.fail('Provider contacted'))
+    output = tmp_path / 'manifest.json'
+    evidence = output / 'provider-evidence'
+    args = preview_args(tmp_path, output=output)
+    args[args.index('--evidence-output') + 1] = str(evidence)
+
+    assert cli.main(args) == 1
+
+    failure = json.loads(capsys.readouterr().out)
+    assert failure['failure_phase'] == 'evidence-output-precheck'
+    assert failure['safe_message'] == 'Manifest and provider evidence paths must be distinct'
+    assert not output.exists()
 
 
 @pytest.mark.parametrize('args', [[], ['preview'], ['execute'],

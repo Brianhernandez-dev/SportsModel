@@ -19,7 +19,12 @@ per recovery. Do not infer the allowlist from the date. Example placeholders:
 ```powershell
 .\.venv\Scripts\python.exe .\scripts\recover_mlb_historical_results.py preview `
   --date YYYY-MM-DD --game-pks APPROVED_PK_1 APPROVED_PK_2 `
-  --output D:\APPROVED_EVIDENCE\manifest.json --acknowledge-provider-access
+  --output D:\APPROVED_EVIDENCE\manifest.json `
+  --evidence-output D:\APPROVED_EVIDENCE\provider-acquisition `
+  --acknowledge-provider-access
+
+.\.venv\Scripts\python.exe .\scripts\recover_mlb_historical_results.py diagnose-evidence `
+  --evidence D:\APPROVED_EVIDENCE\provider-acquisition
 
 .\.venv\Scripts\python.exe .\scripts\recover_mlb_historical_results.py execute `
   --manifest D:\APPROVED_EVIDENCE\manifest.json `
@@ -30,7 +35,32 @@ Preview performs SELECT-only database work in read-only sessions. It verifies
 capabilities and existing raw MLB mappings before provider requests. It fetches
 the schedule, identified live feeds and standalone boxscores, and only the
 missing players' people payloads. It never calls synchronization or persistence.
-Output is created exclusively; existing evidence is not overwritten.
+Manifest and provider-evidence outputs are created exclusively; existing evidence
+is not overwritten. The explicit provider-evidence directory must be outside the
+repository.
+
+Provider acquisition evidence is written locally before planning begins. It
+contains the schedule, per-game live feeds and standalone boxscores, any fetched
+people payload, safe endpoint/gamePk/query metadata, observation timestamps and
+deterministic payload hashes. It does not retain HTTP request objects, headers,
+credentials, database configuration or environment data. MLB Stats requests use
+public HTTPS endpoints without an API key. The maintained clients send only the
+documented schedule date/sport ID, gamePk path, or people IDs/hydration parameters.
+
+`acquisition_complete.json` is created only after the complete payload bundle and
+hash index are durable. An acquisition failure can leave explicitly incomplete
+evidence without that marker. A planning failure leaves the completed provider
+evidence on disk and reports its path, while the manifest remains absent. Manifest
+write failure and success are recorded separately in `preview_status.json`.
+These artifacts are local files, never database writes. A failed preview remains
+zero-write, and retained provider payloads do not authorize recovery execution.
+Execution still requires separate review and approval of an exact manifest hash.
+
+The `diagnose-evidence` mode performs no provider or database access. It compares
+each retained live-feed `liveData.boxscore` with its standalone boxscore without
+normalizing or modifying either payload, reporting deterministic differing paths
+and bounded values. It is diagnostic only and does not change the strict preview
+validator.
 
 ## Version 1 eligibility and identity contract
 
