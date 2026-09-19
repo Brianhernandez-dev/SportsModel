@@ -19,7 +19,7 @@ from sportsmodel.ingest.boxscore_parser import (
     parse_boxscore, parse_pitcher_statistics, parse_team_statistics,
 )
 from sportsmodel.ingest.mlb_players import normalize_mlb_player
-from sportsmodel.ingest.mlb_stats import save_historical_result, _parse_finalized_schedule_game
+from sportsmodel.ingest.mlb_stats import _parse_finalized_schedule_game
 
 
 VERSION = 1
@@ -355,30 +355,39 @@ def _revalidate(cursor, manifest, *, lock=False):
     return current
 
 
+def _validate_approved_manifest(manifest, approved_hash, code_revision):
+    """Validate immutable approval bindings without acquiring or mutating data."""
+
+    body = {k: v for k, v in manifest.items() if k != 'manifest_sha256'}
+    if digest(body) != approved_hash or manifest['manifest_sha256'] != approved_hash:
+        raise ValueError('Approved manifest hash mismatch')
+    spec = RecoverySpecification.from_dict(manifest['specification'])
+    ApprovedRecoverySpecification(spec, approved_hash)
+    if code_revision != spec.code_revision or manifest['format_version'] != VERSION:
+        raise ValueError('Code/manifest revision mismatch')
+    rebuilt = build_manifest(spec, manifest['pinned_payloads'], manifest['snapshot'],
+                             protected_references=manifest['protected_references'])
+    if canonical_json(rebuilt) != canonical_json(manifest):
+        raise ValueError('Pinned payload/plan differs from approved manifest')
+    return spec
+
+
 def execute_recovery(manifest, approved_hash, *, code_revision,
                      acknowledge_writes=False, connection_factory=get_connection):
-    """Date results then per-game player/boxscore commits; never whole-run atomic."""
+    """Apply one approved manifest in one all-or-zero database transaction."""
     outcome = dict(status='failed-before-write', manifest_hash=approved_hash,
                    committed_results=[], committed_boxscores=[], synchronized_players=[],
                    failed_games=[], failure_phase='approval', error=None,
                    uncertain_commits=[])
     connection = None
     phase, active = 'approval', []
+    writes_started = False
     committing = False
+    pending_synchronized = []
     try:
         if not acknowledge_writes:
             raise ValueError('Explicit independent production-write authorization required')
-        body = {k: v for k, v in manifest.items() if k != 'manifest_sha256'}
-        if digest(body) != approved_hash or manifest['manifest_sha256'] != approved_hash:
-            raise ValueError('Approved manifest hash mismatch')
-        spec = RecoverySpecification.from_dict(manifest['specification'])
-        ApprovedRecoverySpecification(spec, approved_hash)
-        if code_revision != spec.code_revision or manifest['format_version'] != VERSION:
-            raise ValueError('Code/manifest revision mismatch')
-        rebuilt = build_manifest(spec, manifest['pinned_payloads'], manifest['snapshot'],
-                                 protected_references=manifest['protected_references'])
-        if canonical_json(rebuilt) != canonical_json(manifest):
-            raise ValueError('Pinned payload/plan differs from approved manifest')
+        _validate_approved_manifest(manifest, approved_hash, code_revision)
         phase = 'preflight'
         active = list(manifest['eligible_game_pks'])
         connection = connection_factory()
@@ -386,63 +395,78 @@ def execute_recovery(manifest, approved_hash, *, code_revision,
         # inserts must serialize/fail, never silently redirect the normal upsert.
         connection.set_session(isolation_level='SERIALIZABLE')
         with connection.cursor() as cursor:
-            _revalidate(cursor, manifest, lock=True)
-            for game in manifest['games']:
-                if game['disposition'] == 'eligible':
-                    repository.validate_result_scope(cursor, game['identity']['game_id'],
-                                                     game['game_pk'], spec.schedule_date)
+            current = _revalidate(cursor, manifest, lock=True)
+            # Repeat every non-database approval binding after the first locked
+            # read has started the SERIALIZABLE transaction. This closes the
+            # final code/manifest TOCTOU window before any recovery mutation.
+            _validate_approved_manifest(manifest, approved_hash, code_revision)
+            repository.validate_recovery_targets_absent(cursor, manifest['games'])
+
             phase = 'results'
-            active = manifest['eligible_game_pks']
             for game in manifest['games']:
                 if game['disposition'] == 'eligible':
+                    active = [game['game_pk']]
                     result = dict(game['result'])
                     result['game_date'] = date.fromisoformat(result['game_date'])
-                    save_historical_result(cursor=cursor, **result)
-        committing = True
-        connection.commit()
-        committing = False
-        outcome['committed_results'] = list(active)
-        for game in manifest['games']:
-            if game['disposition'] != 'eligible':
-                continue
-            active, phase = [game['game_pk']], 'boxscore'
-            synchronized = []
-            with connection.cursor() as cursor:
-                current = _revalidate(cursor, manifest, lock=True)
+                    writes_started = True
+                    repository.insert_recovery_result(cursor, result)
+
+            resolved_players = {
+                int(external_id): row[0]
+                for external_id, row in current['players'].items()
+                if row is not None
+            }
+            for game in manifest['games']:
+                if game['disposition'] != 'eligible':
+                    continue
+                active, phase = [game['game_pk']], 'boxscore'
                 pinned = manifest['pinned_payloads']['games'][str(game['game_pk'])]
                 player_map = {}
                 for p in _player_ids(pinned['boxscore']):
-                    row = current['players'][str(p)]
-                    if row is None:
+                    if p not in resolved_players:
                         phase = 'player-sync'
                         payload = next(v for v in manifest['pinned_payloads']['people'] if v['id'] == p)
-                        player_map[p] = repository.insert_missing_mlb_player(cursor, payload, manifest['observed_at'])
-                        synchronized.append(p)
-                    else:
-                        player_map[p] = row[0]
+                        writes_started = True
+                        resolved_players[p] = repository.insert_missing_mlb_player(
+                            cursor, payload, manifest['observed_at'])
+                        pending_synchronized.append(p)
+                    player_map[p] = resolved_players[p]
                 phase = 'boxscore'
                 parsed = parse_boxscore(game_id=game['identity']['game_id'], game_pk=game['game_pk'],
                                        live_feed=pinned['feed'], boxscore=pinned['boxscore'],
                                        team_ids_by_mlb_id={int(k): v for k, v in current['teams'].items()},
                                        player_ids_by_mlb_id=player_map)
+                writes_started = True
                 repository.save_recovery_boxscore(cursor, parsed)
-            committing = True
-            connection.commit()
-            committing = False
-            outcome['committed_boxscores'].extend(active)
-            outcome['synchronized_players'].extend(synchronized)
+
+        phase = 'commit'
+        active = list(manifest['eligible_game_pks'])
+        committing = True
+        connection.commit()
+        committing = False
+        outcome['committed_results'] = list(manifest['eligible_game_pks'])
+        outcome['committed_boxscores'] = list(manifest['eligible_game_pks'])
+        outcome['synchronized_players'] = pending_synchronized
         outcome.update(status='complete', failure_phase=None)
     except Exception as error:
+        rollback_error = None
         if connection is not None:
             try:
                 connection.rollback()
-            except Exception:
-                pass
-        if committing:
-            outcome['uncertain_commits'].append(dict(phase=phase, game_pks=list(active)))
-        outcome.update(status='partial' if outcome['committed_results'] or committing else 'failed-before-write',
-                       failure_phase=phase, failed_games=list(active),
-                       error=f'{type(error).__name__}: {error}')
+            except Exception as rollback_failure:
+                rollback_error = rollback_failure
+        if committing or rollback_error is not None:
+            outcome['uncertain_commits'].append(
+                dict(phase=phase, game_pks=list(manifest.get('eligible_game_pks', active))))
+        status = ('unknown-commit-state' if committing or rollback_error is not None
+                  else 'rolled-back' if writes_started else 'failed-before-write')
+        error_message = f'{type(error).__name__}: {error}'
+        if rollback_error is not None:
+            error_message += (f'; rollback failed: {type(rollback_error).__name__}: '
+                              f'{rollback_error}')
+        outcome.update(status=status,
+                        failure_phase=phase, failed_games=list(active),
+                        error=error_message)
     finally:
         if connection is not None:
             try:

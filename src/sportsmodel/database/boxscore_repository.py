@@ -21,7 +21,7 @@ UPDATE_GAME_QUERY = """
 """
 
 
-UPSERT_TEAM_STATISTICS_QUERY = """
+INSERT_TEAM_STATISTICS_QUERY = """
     INSERT INTO team_game_statistics (
         game_id,
         team_id,
@@ -57,7 +57,11 @@ UPSERT_TEAM_STATISTICS_QUERY = """
         %s, %s, %s, %s, %s, %s, %s,
         %s, %s, %s, %s, %s, %s, %s,
         %s, %s, %s, %s, %s, %s, %s
-    )
+    );
+"""
+
+
+UPSERT_TEAM_STATISTICS_QUERY = INSERT_TEAM_STATISTICS_QUERY.rstrip(";\n") + """
     ON CONFLICT (game_id, team_id)
     DO UPDATE SET
         is_home = EXCLUDED.is_home,
@@ -90,7 +94,7 @@ UPSERT_TEAM_STATISTICS_QUERY = """
 """
 
 
-UPSERT_PITCHER_STATISTICS_QUERY = """
+INSERT_PITCHER_STATISTICS_QUERY = """
     INSERT INTO player_game_pitching_statistics (
         game_id,
         team_id,
@@ -120,7 +124,11 @@ UPSERT_PITCHER_STATISTICS_QUERY = """
         %s, %s, %s, %s, %s, %s, %s,
         %s, %s, %s, %s, %s, %s, %s,
         %s
-    )
+    );
+"""
+
+
+UPSERT_PITCHER_STATISTICS_QUERY = INSERT_PITCHER_STATISTICS_QUERY.rstrip(";\n") + """
     ON CONFLICT (game_id, baseball_player_id)
     DO UPDATE SET
         team_id = EXCLUDED.team_id,
@@ -186,6 +194,19 @@ def save_parsed_boxscore_with_cursor(cursor: Any, parsed_boxscore: ParsedBoxScor
         _upsert_pitcher_statistics(cursor=cursor, statistics=statistics)
 
 
+def insert_parsed_boxscore_with_cursor(
+    cursor: Any,
+    parsed_boxscore: ParsedBoxScore,
+) -> None:
+    """Insert one approved recovery boxscore in its caller-owned transaction."""
+
+    _update_game(cursor=cursor, parsed_boxscore=parsed_boxscore)
+    for statistics in parsed_boxscore.team_statistics:
+        _insert_team_statistics(cursor=cursor, statistics=statistics)
+    for statistics in parsed_boxscore.pitcher_statistics:
+        _insert_pitcher_statistics(cursor=cursor, statistics=statistics)
+
+
 def _update_game(
     *,
     cursor: Any,
@@ -228,36 +249,51 @@ def _upsert_team_statistics(
 
     cursor.execute(
         UPSERT_TEAM_STATISTICS_QUERY,
-        (
-            statistics.game_id,
-            statistics.team_id,
-            statistics.is_home,
-            statistics.runs,
-            statistics.hits,
-            statistics.errors,
-            statistics.at_bats,
-            statistics.plate_appearances,
-            statistics.doubles,
-            statistics.triples,
-            statistics.home_runs,
-            statistics.walks,
-            statistics.intentional_walks,
-            statistics.strikeouts,
-            statistics.hit_by_pitch,
-            statistics.sacrifice_flies,
-            statistics.stolen_bases,
-            statistics.caught_stealing,
-            statistics.pitching_outs,
-            statistics.runs_allowed,
-            statistics.earned_runs_allowed,
-            statistics.hits_allowed,
-            statistics.home_runs_allowed,
-            statistics.walks_allowed,
-            statistics.strikeouts_recorded,
-            statistics.left_on_base,
-            statistics.double_plays,
-            statistics.source_name,
-        ),
+        _team_statistics_parameters(statistics),
+    )
+
+
+def _insert_team_statistics(
+    *,
+    cursor: Any,
+    statistics: TeamGameStatistics,
+) -> None:
+    cursor.execute(
+        INSERT_TEAM_STATISTICS_QUERY,
+        _team_statistics_parameters(statistics),
+    )
+
+
+def _team_statistics_parameters(statistics: TeamGameStatistics) -> tuple[Any, ...]:
+    return (
+        statistics.game_id,
+        statistics.team_id,
+        statistics.is_home,
+        statistics.runs,
+        statistics.hits,
+        statistics.errors,
+        statistics.at_bats,
+        statistics.plate_appearances,
+        statistics.doubles,
+        statistics.triples,
+        statistics.home_runs,
+        statistics.walks,
+        statistics.intentional_walks,
+        statistics.strikeouts,
+        statistics.hit_by_pitch,
+        statistics.sacrifice_flies,
+        statistics.stolen_bases,
+        statistics.caught_stealing,
+        statistics.pitching_outs,
+        statistics.runs_allowed,
+        statistics.earned_runs_allowed,
+        statistics.hits_allowed,
+        statistics.home_runs_allowed,
+        statistics.walks_allowed,
+        statistics.strikeouts_recorded,
+        statistics.left_on_base,
+        statistics.double_plays,
+        statistics.source_name,
     )
 
 
@@ -270,36 +306,52 @@ def _upsert_pitcher_statistics(
     Insert or update one pitcher appearance record.
     """
 
+    cursor.execute(
+        UPSERT_PITCHER_STATISTICS_QUERY,
+        _pitcher_statistics_parameters(statistics),
+    )
+
+
+def _insert_pitcher_statistics(
+    *,
+    cursor: Any,
+    statistics: PlayerGamePitchingStatistics,
+) -> None:
+    cursor.execute(
+        INSERT_PITCHER_STATISTICS_QUERY,
+        _pitcher_statistics_parameters(statistics),
+    )
+
+
+def _pitcher_statistics_parameters(
+    statistics: PlayerGamePitchingStatistics,
+) -> tuple[Any, ...]:
     decision = (
         statistics.decision.value
         if statistics.decision is not None
         else None
     )
-
-    cursor.execute(
-        UPSERT_PITCHER_STATISTICS_QUERY,
-        (
-            statistics.game_id,
-            statistics.team_id,
-            statistics.baseball_player_id,
-            statistics.appearance_order,
-            statistics.is_starter,
-            statistics.pitching_outs,
-            statistics.batters_faced,
-            statistics.hits_allowed,
-            statistics.runs_allowed,
-            statistics.earned_runs_allowed,
-            statistics.home_runs_allowed,
-            statistics.walks_allowed,
-            statistics.intentional_walks_allowed,
-            statistics.strikeouts,
-            statistics.hit_batters,
-            statistics.pitches_thrown,
-            statistics.strikes_thrown,
-            decision,
-            statistics.save_recorded,
-            statistics.hold_recorded,
-            statistics.blown_save_recorded,
-            statistics.source_name,
-        ),
+    return (
+        statistics.game_id,
+        statistics.team_id,
+        statistics.baseball_player_id,
+        statistics.appearance_order,
+        statistics.is_starter,
+        statistics.pitching_outs,
+        statistics.batters_faced,
+        statistics.hits_allowed,
+        statistics.runs_allowed,
+        statistics.earned_runs_allowed,
+        statistics.home_runs_allowed,
+        statistics.walks_allowed,
+        statistics.intentional_walks_allowed,
+        statistics.strikeouts,
+        statistics.hit_batters,
+        statistics.pitches_thrown,
+        statistics.strikes_thrown,
+        decision,
+        statistics.save_recorded,
+        statistics.hold_recorded,
+        statistics.blown_save_recorded,
+        statistics.source_name,
     )

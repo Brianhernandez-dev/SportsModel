@@ -2,7 +2,10 @@ from typing import Any
 
 import pytest
 
-from sportsmodel.database.boxscore_repository import save_parsed_boxscore
+from sportsmodel.database.boxscore_repository import (
+    insert_parsed_boxscore_with_cursor,
+    save_parsed_boxscore,
+)
 from sportsmodel.models.parsed_boxscore import ParsedBoxScore
 from sportsmodel.models.player_game_pitching_statistics import (
     PitchingDecision,
@@ -412,3 +415,16 @@ def test_save_parsed_boxscore_rolls_back_on_database_failure() -> None:
     assert connection.committed is False
     assert connection.rolled_back is True
     assert connection.closed is True
+
+
+def test_guarded_insert_path_has_no_upsert_semantics() -> None:
+    cursor = FakeCursor()
+
+    insert_parsed_boxscore_with_cursor(cursor, _build_parsed_boxscore())
+
+    assert len(cursor.executions) == 6
+    assert "UPDATE games" in cursor.executions[0][0]
+    assert all(
+        "ON CONFLICT" not in query
+        for query, unused_parameters in cursor.executions[1:]
+    )

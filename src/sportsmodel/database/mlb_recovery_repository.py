@@ -2,7 +2,7 @@
 
 from dataclasses import asdict
 
-from sportsmodel.database.boxscore_repository import save_parsed_boxscore_with_cursor
+from sportsmodel.database.boxscore_repository import insert_parsed_boxscore_with_cursor
 from sportsmodel.ingest.mlb_players import normalize_mlb_player
 
 
@@ -91,14 +91,62 @@ def insert_missing_mlb_player(cursor, payload: dict, observed_at: str) -> int:
 
 
 def save_recovery_boxscore(cursor, parsed) -> None:
-    save_parsed_boxscore_with_cursor(cursor, parsed)
+    insert_parsed_boxscore_with_cursor(cursor, parsed)
 
 
-def validate_result_scope(cursor, game_id: int, game_pk: int, schedule_date) -> None:
-    """Never let the maintained MLB-key upsert move another game's history."""
+def validate_recovery_targets_absent(cursor, games: list[dict]) -> None:
+    """Require the complete approved recovery target scope to remain empty."""
+
+    eligible = [game for game in games if game['disposition'] == 'eligible']
+    game_ids = [game['identity']['game_id'] for game in eligible]
+    game_pks = [game['game_pk'] for game in eligible]
+    if not game_ids:
+        return
+
     cursor.execute(
-        "SELECT game_id,mlb_game_id,game_date FROM historical_games "
-        "WHERE game_id=%s OR mlb_game_id=%s FOR UPDATE", (game_id, game_pk),
+        "SELECT game_id,mlb_game_id FROM historical_games "
+        "WHERE game_id=ANY(%s) OR mlb_game_id=ANY(%s) FOR UPDATE",
+        (game_ids, game_pks),
     )
-    if any(row != (game_id, game_pk, schedule_date) for row in cursor.fetchall()):
-        raise ValueError('Existing historical result conflicts with approved identity/date')
+    if cursor.fetchall():
+        raise ValueError('Approved recovery target already has a historical result')
+
+    cursor.execute(
+        "SELECT game_id,team_id FROM team_game_statistics "
+        "WHERE game_id=ANY(%s) FOR UPDATE",
+        (game_ids,),
+    )
+    if cursor.fetchall():
+        raise ValueError('Approved recovery target already has team statistics')
+
+    cursor.execute(
+        "SELECT game_id,baseball_player_id "
+        "FROM player_game_pitching_statistics "
+        "WHERE game_id=ANY(%s) FOR UPDATE",
+        (game_ids,),
+    )
+    if cursor.fetchall():
+        raise ValueError('Approved recovery target already has pitching statistics')
+
+
+def insert_recovery_result(cursor, result: dict) -> None:
+    """Insert one approved historical result without overwrite semantics."""
+
+    cursor.execute(
+        """
+        INSERT INTO historical_games (
+            game_id, mlb_game_id, game_date, home_team, away_team,
+            home_score, away_score, home_win
+        ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+        """,
+        (
+            result['game_id'],
+            result['mlb_game_id'],
+            result['game_date'],
+            result['home_team'],
+            result['away_team'],
+            result['home_score'],
+            result['away_score'],
+            result['home_score'] > result['away_score'],
+        ),
+    )

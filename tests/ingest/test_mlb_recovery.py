@@ -408,6 +408,33 @@ def test_implementation_drift_refused_without_connection(monkeypatch):
     assert result['status'] == 'failed-before-write'
 
 
+def test_implementation_drift_rechecked_inside_serializable_transaction(monkeypatch):
+    manifest = recovery.build_manifest(spec(), bundle(), snapshot())
+    hashes = iter([manifest['implementation_hash'], 'b' * 64])
+
+    class TransactionConnection(ReadOnlyConnection):
+        rolled_back = False
+
+        def rollback(self):
+            self.rolled_back = True
+
+    connection = TransactionConnection()
+    monkeypatch.setattr(recovery, 'implementation_hash', lambda: next(hashes))
+    monkeypatch.setattr(recovery, '_revalidate', lambda *args, **kwargs: snapshot())
+    monkeypatch.setattr(
+        repository, 'validate_recovery_targets_absent',
+        lambda *args: pytest.fail('Absence check reached after implementation drift'))
+
+    result = recovery.execute_recovery(
+        manifest, manifest['manifest_sha256'], code_revision=REVISION,
+        acknowledge_writes=True, connection_factory=lambda: connection)
+
+    assert result['status'] == 'failed-before-write'
+    assert result['failure_phase'] == 'preflight'
+    assert connection.settings == {'isolation_level': 'SERIALIZABLE'}
+    assert connection.rolled_back is True
+
+
 def test_typed_approval_requires_exact_hash():
     with pytest.raises(ValueError):
         recovery.ApprovedRecoverySpecification(spec(), 'approved')
@@ -423,14 +450,20 @@ def test_commit_uncertainty_not_misreported_as_rollback(monkeypatch):
         def close(self):
             raise RuntimeError('Synthetic closed connection')
     monkeypatch.setattr(recovery, '_revalidate', lambda *a, **k: snapshot())
-    monkeypatch.setattr(repository, 'validate_result_scope', lambda *a: None)
-    monkeypatch.setattr(recovery, 'save_historical_result', lambda **k: None)
+    monkeypatch.setattr(repository, 'validate_recovery_targets_absent', lambda *a: None)
+    monkeypatch.setattr(repository, 'insert_recovery_result', lambda *a: None)
+    monkeypatch.setattr(
+        repository, 'insert_missing_mlb_player',
+        lambda unused_cursor, payload, unused_observed_at: payload['id'])
+    monkeypatch.setattr(repository, 'save_recovery_boxscore', lambda *a: None)
     result = recovery.execute_recovery(manifest, manifest['manifest_sha256'], code_revision=REVISION,
                                        acknowledge_writes=True, connection_factory=UncertainConnection)
-    assert result['status'] == 'partial'
+    assert result['status'] == 'unknown-commit-state'
     assert result['committed_results'] == []
-    assert result['uncertain_commits'] == [dict(phase='results', game_pks=[800])]
+    assert result['committed_boxscores'] == []
+    assert result['uncertain_commits'] == [dict(phase='commit', game_pks=[800])]
     assert 'lost commit acknowledgement' in result['error']
+    assert 'rollback failed' in result['error']
 
 
 def test_cli_provider_preview_is_read_only_and_execution_never_fetches(monkeypatch, tmp_path, capsys):
