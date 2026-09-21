@@ -126,6 +126,7 @@ def test_backfill_processes_and_skips_complete_boxscores() -> None:
     assert summary.boxscores_processed == 1
     assert summary.boxscores_skipped_complete == 1
     assert summary.boxscores_failed == 0
+    assert summary.finalized_game_pks == (1, 2)
 
     assert saved_results == [
         1,
@@ -354,6 +355,7 @@ def test_backfill_skips_non_regular_season_games() -> None:
     assert summary.games_received == 1
     assert summary.games_processed == 0
     assert summary.games_skipped == 1
+    assert summary.finalized_game_pks == ()
     assert summary.boxscores_processed == 0
     assert summary.boxscores_failed == 0
     assert boxscore_called is False

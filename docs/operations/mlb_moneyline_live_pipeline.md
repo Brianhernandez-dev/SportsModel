@@ -173,6 +173,26 @@ This independent result path must not create or reconstruct official
 predictions, market evaluations, paper candidates, or settlements. The failed
 workflow and any partial official-card evidence remain failed and preserved.
 
+Postgame workflow completion is not evidence that historical results and
+statistics are complete. Every Postgame invocation, including a workflow already
+marked complete, rechecks the target date and then audits each finalized
+regular-season MLB event. The audit requires one unambiguous MLB-to-canonical
+mapping, one matching historical result, correctly oriented statistics for both
+teams, one starter per team, contiguous pitching appearances, and pitcher totals
+that reconcile to the team pitching totals. Non-final, postponed, and
+non-regular-season events are not completeness targets until the authoritative
+schedule identifies them as finalized regular-season games.
+
+Official Pregame prediction generation is gated separately. For each scheduled
+target team, the gate audits every canonical MLB event in the same 200-game
+history window used by team features. It also audits the canonical events for
+the resolved probable starters' 50 persisted starts used by starter features.
+Missing interior results, team rows, or pitching rows fail closed even when the
+newest history date is current. Statistic rows must have been created no later
+than the single prediction cutoff passed to feature generation; later recovery
+data cannot become available retroactively. An event outside the actual feature
+windows does not block the card.
+
 ### 7. Settle paper candidates
 
     D:\SportsModel\.venv\Scripts\python.exe .\scripts\settle_moneyline_paper_candidates.py --prediction-run-id PREDICTION_RUN_ID --odds-run-id ODDS_RUN_ID

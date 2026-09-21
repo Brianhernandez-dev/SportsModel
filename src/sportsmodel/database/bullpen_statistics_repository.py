@@ -57,6 +57,7 @@ GET_COMPLETED_RELIEF_APPEARANCES_BEFORE_QUERY = """
     WHERE pgps.team_id = %s
       AND pgps.is_starter = FALSE
       AND g.game_date < %s
+      AND pgps.created_at <= %s
       AND EXTRACT(YEAR FROM g.game_date) = (
           EXTRACT(YEAR FROM %s::timestamptz)
       )
@@ -127,6 +128,7 @@ class PostgresBullpenStatisticsRepository(
                     GET_COMPLETED_RELIEF_APPEARANCES_BEFORE_QUERY,
                     (
                         team_id,
+                        cutoff_time,
                         cutoff_time,
                         cutoff_time,
                     ),

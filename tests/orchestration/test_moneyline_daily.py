@@ -3,6 +3,9 @@ from types import SimpleNamespace
 
 import pytest
 
+from sportsmodel.database.mlb_completeness_repository import (
+    MlbCompletenessError,
+)
 from sportsmodel.ingest.mlb_schedule import (
     ScheduleSyncDateSummary,
     ScheduleSyncSummary,
@@ -1299,6 +1302,7 @@ def test_postgame_completes_legitimate_no_card_day(
         boxscores_failed=0,
         games_processed=12,
         boxscores_processed=12,
+        finalized_game_pks=(),
     )
 
     monkeypatch.setattr(
@@ -1392,6 +1396,7 @@ def test_postgame_preserves_failed_evaluation_as_no_card_incident(
             boxscores_failed=0,
             games_processed=15,
             boxscores_processed=15,
+            finalized_game_pks=(),
         ),
         settlement_runner=unexpected_official_call,
         early_entry_settlement_runner=lambda **arguments: (
@@ -1559,6 +1564,7 @@ def test_repeated_no_card_postgame_remains_idempotent(
             boxscores_failed=0,
             games_processed=1,
             boxscores_processed=1,
+            finalized_game_pks=(),
         )
 
     def settle_early_entry(**arguments):
@@ -1605,6 +1611,7 @@ def test_runs_postgame_results_ingestion(
         boxscores_failed=0,
         games_processed=8,
         boxscores_processed=8,
+        finalized_game_pks=(),
     )
 
     monkeypatch.setattr(
@@ -2027,9 +2034,22 @@ def test_completed_official_workflow_still_settles_early_entry(
         lambda **arguments: workflow,
     )
 
-    moneyline_daily.run_moneyline_daily_postgame(
+    result = moneyline_daily.run_moneyline_daily_postgame(
         target_date=date(2026, 8, 3),
         connection_factory=lambda: None,
+        results_fetcher=lambda **arguments: (
+            calls.append("results")
+            or SimpleNamespace(
+                dates_failed=0,
+                boxscores_failed=0,
+                games_processed=1,
+                boxscores_processed=0,
+                finalized_game_pks=(800001,),
+            )
+        ),
+        completeness_checker=lambda game_pks, **arguments: (
+            calls.append(("complete", game_pks))
+        ),
         early_entry_settlement_runner=lambda **arguments: (
             calls.append(arguments)
             or SimpleNamespace(
@@ -2039,5 +2059,125 @@ def test_completed_official_workflow_still_settles_early_entry(
         pipeline_auditor=lambda **arguments: audit,
     )
 
-    assert len(calls) == 1
-    assert calls[0]["target_date"] == date(2026, 8, 3)
+    assert calls[0] == "results"
+    assert calls[1] == ("complete", (800001,))
+    assert calls[2]["target_date"] == date(2026, 8, 3)
+    assert result.boxscores_processed == 0
+
+
+def test_completed_workflow_fails_closed_on_missing_result_history(
+    monkeypatch,
+) -> None:
+    early_entry_calls = []
+    audit_calls = []
+    workflow_updates = []
+    historical_rows = {"existing-history"}
+    workflow = SimpleNamespace(
+        moneyline_daily_workflow_run_id=12,
+        target_date=date(2026, 8, 10),
+        status="completed",
+        current_stage="complete",
+        moneyline_prediction_run_id=25,
+        odds_ingestion_run_id=182,
+    )
+
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_get_or_create_workflow",
+        lambda **arguments: workflow,
+    )
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_update_workflow",
+        lambda **arguments: workflow_updates.append(arguments),
+    )
+
+    def reject_missing_result(game_pks, **arguments):
+        assert game_pks == (800010,)
+        assert historical_rows == {"existing-history"}
+        raise MlbCompletenessError(
+            "historical result coverage is missing for gamePk 800010"
+        )
+
+    with pytest.raises(
+        MlbCompletenessError,
+        match="historical result coverage is missing for gamePk 800010",
+    ):
+        moneyline_daily.run_moneyline_daily_postgame(
+            target_date=date(2026, 8, 10),
+            connection_factory=lambda: None,
+            results_fetcher=lambda **arguments: SimpleNamespace(
+                dates_failed=0,
+                boxscores_failed=0,
+                games_processed=1,
+                boxscores_processed=0,
+                finalized_game_pks=(800010,),
+            ),
+            completeness_checker=reject_missing_result,
+            early_entry_settlement_runner=lambda **arguments: (
+                early_entry_calls.append(arguments)
+            ),
+            pipeline_auditor=lambda **arguments: (
+                audit_calls.append(arguments)
+            ),
+        )
+
+    assert early_entry_calls == []
+    assert audit_calls == []
+    assert historical_rows == {"existing-history"}
+    assert len(workflow_updates) == 1
+    assert workflow_updates[0]["updater"] is (
+        moneyline_daily.mark_moneyline_daily_workflow_failed
+    )
+    assert workflow_updates[0]["workflow_run_id"] == 12
+    assert workflow_updates[0]["current_stage"] == "results_ingestion"
+    assert workflow_updates[0]["error_message"] == (
+        "historical result coverage is missing for gamePk 800010"
+    )
+
+
+def test_postgame_ignores_nonfinal_events_not_reported_as_finalized(
+    monkeypatch,
+) -> None:
+    checked = []
+    workflow = SimpleNamespace(
+        moneyline_daily_workflow_run_id=12,
+        target_date=date(2026, 8, 10),
+        status="completed",
+        current_stage="complete",
+        moneyline_prediction_run_id=25,
+        odds_ingestion_run_id=182,
+    )
+    audit = SimpleNamespace(
+        integrity_issues=(),
+        predictions=0,
+        evaluated_predictions=0,
+        evaluations=0,
+        paper_candidates=0,
+        settlements=0,
+        pipeline_state="complete",
+    )
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_get_or_create_workflow",
+        lambda **arguments: workflow,
+    )
+
+    moneyline_daily.run_moneyline_daily_postgame(
+        target_date=date(2026, 8, 10),
+        connection_factory=lambda: None,
+        results_fetcher=lambda **arguments: SimpleNamespace(
+            dates_failed=0,
+            boxscores_failed=0,
+            games_processed=0,
+            boxscores_processed=0,
+            finalized_game_pks=(),
+        ),
+        completeness_checker=lambda game_pks, **arguments: checked.append(
+            game_pks
+        ),
+        early_entry_settlement_runner=lambda **arguments: None,
+        pipeline_auditor=lambda **arguments: audit,
+    )
+
+    assert checked == [()]

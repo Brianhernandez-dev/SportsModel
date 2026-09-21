@@ -10,6 +10,9 @@ from sportsmodel.auditing.moneyline_live_pipeline import (
     audit_moneyline_live_pipeline,
 )
 from sportsmodel.database.connection import get_connection
+from sportsmodel.database.mlb_completeness_repository import (
+    assert_mlb_games_complete,
+)
 from sportsmodel.database.moneyline_daily_workflow_repository import (
     advance_moneyline_daily_workflow_stage,
     get_or_create_moneyline_daily_workflow_run,
@@ -57,6 +60,7 @@ PipelineAuditor = Callable[..., Any]
 ResultsFetcher = Callable[..., Any]
 SettlementRunner = Callable[..., Any]
 EarlyEntrySettlementRunner = Callable[..., Any]
+PostgameCompletenessChecker = Callable[..., Any]
 
 
 @dataclass(frozen=True)
@@ -764,6 +768,10 @@ def _fetch_and_validate_postgame_results(
     *,
     target_date: date,
     results_fetcher: ResultsFetcher,
+    connection_factory: ConnectionFactory,
+    completeness_checker: PostgameCompletenessChecker = (
+        assert_mlb_games_complete
+    ),
 ):
     results_summary = results_fetcher(
         start_date=target_date,
@@ -789,6 +797,21 @@ def _fetch_and_validate_postgame_results(
             f"boxscores={results_summary.boxscores_failed}."
         )
 
+    finalized_game_pks = getattr(
+        results_summary,
+        "finalized_game_pks",
+        None,
+    )
+    if finalized_game_pks is None:
+        raise RuntimeError(
+            "MLB results ingestion did not report finalized game IDs."
+        )
+
+    completeness_checker(
+        finalized_game_pks,
+        connection_factory=connection_factory,
+    )
+
     return results_summary
 
 
@@ -798,10 +821,15 @@ def _run_postgame_results_ingestion(
     target_date: date,
     connection_factory: ConnectionFactory,
     results_fetcher: ResultsFetcher,
+    completeness_checker: PostgameCompletenessChecker = (
+        assert_mlb_games_complete
+    ),
 ):
     results_summary = _fetch_and_validate_postgame_results(
         target_date=target_date,
         results_fetcher=results_fetcher,
+        connection_factory=connection_factory,
+        completeness_checker=completeness_checker,
     )
 
     _update_workflow(
@@ -820,11 +848,14 @@ def _run_no_card_postgame(
     target_date: date,
     connection_factory: ConnectionFactory,
     results_fetcher: ResultsFetcher,
+    completeness_checker: PostgameCompletenessChecker,
     early_entry_settlement_runner: EarlyEntrySettlementRunner,
 ) -> MoneylineDailyPostgameResult:
     results_summary = _fetch_and_validate_postgame_results(
         target_date=target_date,
         results_fetcher=results_fetcher,
+        connection_factory=connection_factory,
+        completeness_checker=completeness_checker,
     )
     early_entry_result = early_entry_settlement_runner(
         target_date=target_date,
@@ -950,6 +981,9 @@ def run_moneyline_daily_postgame(
     pipeline_auditor: PipelineAuditor = (
         audit_moneyline_live_pipeline
     ),
+    completeness_checker: PostgameCompletenessChecker = (
+        assert_mlb_games_complete
+    ),
 ) -> MoneylineDailyPostgameResult:
     """
     Run or safely resume one MLB Moneyline postgame workflow.
@@ -983,6 +1017,9 @@ def run_moneyline_daily_postgame(
                 target_date=target_date,
                 connection_factory=connection_factory,
                 results_fetcher=results_fetcher,
+                completeness_checker=(
+                    completeness_checker
+                ),
                 early_entry_settlement_runner=(
                     early_entry_settlement_runner
                 ),
@@ -1041,23 +1078,45 @@ def run_moneyline_daily_postgame(
     )
 
     if workflow.status == "completed":
-        early_entry_settlement_runner(
-            target_date=target_date,
-            connection_factory=connection_factory,
-        )
+        current_stage = "results_ingestion"
 
-        audit = pipeline_auditor(
-            prediction_run_id=prediction_run_id,
-            odds_ingestion_run_id=odds_ingestion_run_id,
-        )
+        try:
+            results_summary = _fetch_and_validate_postgame_results(
+                target_date=target_date,
+                results_fetcher=results_fetcher,
+                connection_factory=connection_factory,
+                completeness_checker=completeness_checker,
+            )
 
-        _validate_pregame_audit(audit)
+            current_stage = "early_entry_settlement"
+            early_entry_settlement_runner(
+                target_date=target_date,
+                connection_factory=connection_factory,
+            )
 
-        return _build_postgame_result(
-            workflow=workflow,
-            results_summary=None,
-            audit=audit,
-        )
+            current_stage = "final_audit"
+            audit = pipeline_auditor(
+                prediction_run_id=prediction_run_id,
+                odds_ingestion_run_id=odds_ingestion_run_id,
+            )
+
+            _validate_pregame_audit(audit)
+
+            return _build_postgame_result(
+                workflow=workflow,
+                results_summary=results_summary,
+                audit=audit,
+            )
+        except Exception as error:
+            _record_pregame_failure(
+                workflow_run_id=(
+                    workflow.moneyline_daily_workflow_run_id
+                ),
+                current_stage=current_stage,
+                error=error,
+                connection_factory=connection_factory,
+            )
+            raise
 
     workflow_run_id = (
         workflow.moneyline_daily_workflow_run_id
@@ -1078,6 +1137,9 @@ def run_moneyline_daily_postgame(
                 target_date=target_date,
                 connection_factory=connection_factory,
                 results_fetcher=results_fetcher,
+                completeness_checker=(
+                    completeness_checker
+                ),
             )
         )
 

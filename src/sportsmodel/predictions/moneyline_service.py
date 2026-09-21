@@ -11,6 +11,9 @@ import requests
 from sportsmodel.database.connection import (
     get_connection,
 )
+from sportsmodel.database.mlb_completeness_repository import (
+    assert_mlb_feature_history_complete,
+)
 from sportsmodel.database.moneyline_prediction_repository import (
     create_moneyline_prediction_run,
     insert_moneyline_game_prediction,
@@ -58,6 +61,7 @@ REGULAR_SEASON_GAME_TYPE = "R"
 
 
 ConnectionFactory = Callable[[], Any]
+FeatureHistoryChecker = Callable[..., Any]
 
 
 @dataclass(frozen=True)
@@ -367,6 +371,9 @@ def run_moneyline_predictions(
     feature_generation_service: (
         FeatureGenerationService | None
     ) = None,
+    feature_history_checker: FeatureHistoryChecker = (
+        assert_mlb_feature_history_complete
+    ),
 ) -> MoneylinePredictionRunResult:
     """
     Generate and persist one daily MLB Moneyline prediction run.
@@ -543,6 +550,20 @@ def run_moneyline_predictions(
                     for player_id
                     in unresolved_player_ids
                 )
+            )
+
+        if normalized_run_type == "official":
+            feature_history_checker(
+                target_game_pks=tuple(
+                    game.mlb_game_id
+                    for game in prediction_games
+                ),
+                starting_pitcher_ids=tuple(
+                    player_ids_by_mlb_id[player_id]
+                    for player_id in probable_pitcher_ids
+                ),
+                cutoff_time=resolved_prediction_time,
+                connection_factory=connection_factory,
             )
 
         resolved_feature_service = (

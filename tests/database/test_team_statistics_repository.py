@@ -176,9 +176,14 @@ def test_repository_passes_point_in_time_parameters() -> None:
         == (
             10,
             cutoff_time,
+            cutoff_time,
             7,
         )
     )
+    normalized_query = " ".join(
+        fake_connection.cursor_instance.executed_query.split()
+    )
+    assert "tgs.created_at <= %s" in normalized_query
 
 
 def test_repository_closes_connection() -> None:

@@ -93,6 +93,8 @@ class HistoricalResultsDateSummary:
 
     nonretryable_failures: int = 0
 
+    finalized_game_pks: tuple[int, ...] = ()
+
     @property
     def failed(self) -> bool:
         return (
@@ -167,6 +169,16 @@ class HistoricalResultsBackfillSummary:
         return sum(
             summary.boxscores_failed
             for summary in self.date_summaries
+        )
+
+    @property
+    def finalized_game_pks(self) -> tuple[int, ...]:
+        """Return finalized regular-season MLB IDs in date order."""
+
+        return tuple(
+            game_pk
+            for summary in self.date_summaries
+            for game_pk in summary.finalized_game_pks
         )
 
     @property
@@ -569,6 +581,10 @@ def _process_schedule_date(
                     + _format_error(error)
                 ),
                 nonretryable_failures=1,
+                finalized_game_pks=tuple(
+                    reference.game_pk
+                    for reference in references
+                ),
             )
 
     boxscores_processed = 0
@@ -609,6 +625,10 @@ def _process_schedule_date(
         boxscores_failed=boxscores_failed,
         retryable_failures=retryable_failures,
         nonretryable_failures=nonretryable_failures,
+        finalized_game_pks=tuple(
+            reference.game_pk
+            for reference in references
+        ),
     )
 
 

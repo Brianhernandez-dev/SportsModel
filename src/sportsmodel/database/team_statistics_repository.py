@@ -56,6 +56,7 @@ GET_COMPLETED_GAMES_BEFORE_QUERY = """
         ON g.game_id = tgs.game_id
     WHERE tgs.team_id = %s
       AND g.game_date < %s
+      AND tgs.created_at <= %s
       AND (
             g.home_team_id = tgs.team_id
             OR g.away_team_id = tgs.team_id
@@ -134,6 +135,7 @@ class PostgresTeamStatisticsRepository(
                     GET_COMPLETED_GAMES_BEFORE_QUERY,
                     (
                         team_id,
+                        cutoff_time,
                         cutoff_time,
                         limit,
                     ),

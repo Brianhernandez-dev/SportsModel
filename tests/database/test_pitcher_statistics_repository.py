@@ -154,6 +154,7 @@ def test_repository_returns_mapped_historical_starts() -> None:
     assert cursor.executed_parameters == (
         30,
         cutoff_time,
+        cutoff_time,
         50,
     )
 
@@ -166,6 +167,7 @@ def test_repository_returns_mapped_historical_starts() -> None:
     assert "pgps.baseball_player_id = %s" in normalized_query
     assert "pgps.is_starter = TRUE" in normalized_query
     assert "g.game_date < %s" in normalized_query
+    assert "pgps.created_at <= %s" in normalized_query
     assert "g.game_date DESC" in normalized_query
     assert connection.closed is True
 

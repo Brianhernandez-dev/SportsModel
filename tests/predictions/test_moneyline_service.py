@@ -120,6 +120,7 @@ def test_daily_prediction_run_persists_future_game(
     connection = FakeConnection()
     inserted_predictions = []
     completed_calls = []
+    history_checks = []
 
     _patch_common_dependencies(
         monkeypatch,
@@ -159,6 +160,9 @@ def test_daily_prediction_run_persists_future_game(
         feature_generation_service=(
             FakeFeatureService()
         ),
+        feature_history_checker=lambda **arguments: (
+            history_checks.append(arguments)
+        ),
     )
 
     assert result.moneyline_prediction_run_id == 41
@@ -177,9 +181,60 @@ def test_daily_prediction_run_persists_future_game(
     assert completed_calls[0][
         "predictions_created"
     ] == 1
+    assert history_checks[0]["target_game_pks"] == (1001,)
+    assert history_checks[0]["starting_pitcher_ids"] == (
+        1101,
+        1202,
+    )
+    assert history_checks[0]["cutoff_time"] == PREDICTION_TIME
 
     assert connection.commits == 1
     assert connection.closed is True
+
+
+def test_official_prediction_blocks_incomplete_feature_history(
+    monkeypatch,
+) -> None:
+    connection = FakeConnection()
+    failed_calls = []
+    feature_calls = []
+
+    _patch_common_dependencies(
+        monkeypatch,
+        connection=connection,
+        schedule_payload=_schedule_payload(
+            game_time="2026-07-30T17:40:00Z",
+        ),
+    )
+    monkeypatch.setattr(
+        service,
+        "mark_moneyline_prediction_run_failed",
+        lambda connection, **kwargs: failed_calls.append(kwargs),
+    )
+
+    def reject_history(**arguments):
+        raise RuntimeError("missing interior MLB history")
+
+    with pytest.raises(
+        RuntimeError,
+        match="missing interior MLB history",
+    ):
+        service.run_moneyline_predictions(
+            target_date=date(2026, 7, 30),
+            prediction_time=PREDICTION_TIME,
+            connection_factory=lambda: connection,
+            feature_generation_service=SimpleNamespace(
+                generate_for_game_record=lambda **arguments: (
+                    feature_calls.append(arguments)
+                )
+            ),
+            feature_history_checker=reject_history,
+        )
+
+    assert feature_calls == []
+    assert connection.rollbacks == 1
+    assert connection.closed is True
+    assert failed_calls[0]["moneyline_prediction_run_id"] == 41
 
 
 def test_started_game_is_skipped(
@@ -240,6 +295,7 @@ def test_started_game_is_skipped(
         feature_generation_service=(
             FakeFeatureService()
         ),
+        feature_history_checker=lambda **arguments: None,
     )
 
     assert result.games_received == 2
@@ -290,6 +346,7 @@ def test_prediction_failure_rolls_back_and_marks_run_failed(
                     fail=True
                 )
             ),
+            feature_history_checker=lambda **arguments: None,
         )
 
     assert connection.rollbacks == 1

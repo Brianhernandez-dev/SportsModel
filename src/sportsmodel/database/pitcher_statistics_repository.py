@@ -57,6 +57,7 @@ GET_COMPLETED_STARTS_BEFORE_QUERY = """
     WHERE pgps.baseball_player_id = %s
       AND pgps.is_starter = TRUE
       AND g.game_date < %s
+      AND pgps.created_at <= %s
       AND (
             g.home_team_id = pgps.team_id
             OR g.away_team_id = pgps.team_id
@@ -135,6 +136,7 @@ class PostgresPitcherStatisticsRepository(
                     GET_COMPLETED_STARTS_BEFORE_QUERY,
                     (
                         player_id,
+                        cutoff_time,
                         cutoff_time,
                         limit,
                     ),

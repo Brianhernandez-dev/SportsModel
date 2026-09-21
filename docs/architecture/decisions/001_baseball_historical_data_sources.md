@@ -431,6 +431,21 @@ They must be marked using a starter-role indicator when reliable classification 
 
 ## Consequences
 
+### Live completeness invariants
+
+Daily workflow state and historical-data completeness are independent facts.
+Postgame therefore validates finalized regular-season MLB events by canonical
+identity and required result, team-stat, and pitching-stat rows even when the
+betting workflow is already complete. Identity ambiguity and statistic
+inconsistency fail closed.
+
+Official Pregame output requires event-complete history for the exact team-game
+and resolved-starter windows consumed by the feature builders. Event-level
+checks take precedence over maximum-date freshness because a current maximum
+date cannot reveal an interior gap. All feature reads also enforce their
+prediction-time persistence boundary, so data inserted by a later repair is
+excluded from an earlier point-in-time feature context.
+
 ### Positive consequences
 
 * Feature calculations remain reproducible.
