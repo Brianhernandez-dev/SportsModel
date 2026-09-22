@@ -159,11 +159,29 @@ def test_missing_pitching_statistics_are_detected() -> None:
     )
 
 
-def test_pitching_aggregate_disagreement_is_detected() -> None:
+@pytest.mark.parametrize(
+    "pitcher_field",
+    (
+        "pitching_outs",
+        "runs_allowed",
+        "hits_allowed",
+        "home_runs_allowed",
+        "walks_allowed",
+        "strikeouts",
+    ),
+)
+def test_other_pitching_aggregate_disagreement_is_detected(
+    pitcher_field,
+) -> None:
     complete = _complete_snapshot()
     altered_home = replace(
         complete.pitching_statistics[0],
-        pitching_outs=24,
+        **{
+            pitcher_field: (
+                getattr(complete.pitching_statistics[0], pitcher_field)
+                + 1
+            ),
+        },
     )
     snapshot = replace(
         complete,
@@ -176,6 +194,90 @@ def test_pitching_aggregate_disagreement_is_detected() -> None:
     assert any(
         "pitching-stat aggregates disagree"
         in issue
+        for issue in repository.validate_mlb_game_completeness(
+            (snapshot,),
+            as_of=NOW,
+        )
+    )
+
+
+@pytest.mark.parametrize("reliever_earned_runs", (3, 4))
+def test_rule_9_16i_pitcher_earned_runs_need_not_equal_team_total(
+    reliever_earned_runs,
+) -> None:
+    complete = _complete_snapshot(game_pk=822888, game_id=235)
+    home_starter = replace(
+        complete.pitching_statistics[0],
+        pitching_outs=18,
+        hits_allowed=4,
+        runs_allowed=1,
+        earned_runs_allowed=1,
+        walks_allowed=1,
+        strikeouts=6,
+    )
+    home_reliever = replace(
+        complete.pitching_statistics[0],
+        appearance_order=2,
+        is_starter=False,
+        pitching_outs=9,
+        hits_allowed=3,
+        runs_allowed=2,
+        earned_runs_allowed=reliever_earned_runs,
+        home_runs_allowed=0,
+        walks_allowed=1,
+        strikeouts=4,
+    )
+    snapshot = replace(
+        complete,
+        pitching_statistics=(
+            home_starter,
+            home_reliever,
+            complete.pitching_statistics[1],
+        ),
+    )
+
+    assert repository.validate_mlb_game_completeness(
+        (snapshot,),
+        as_of=NOW,
+    ) == ()
+
+
+@pytest.mark.parametrize(
+    ("replacement", "expected_issue"),
+    (
+        (
+            {"is_starter": False},
+            "pitching-stat coverage is incomplete",
+        ),
+        (
+            {"appearance_order": 2},
+            "pitching appearance order is incomplete",
+        ),
+        (
+            {"team_id": 999},
+            "pitching-stat coverage is incomplete",
+        ),
+    ),
+)
+def test_pitching_structure_corruption_still_fails_closed(
+    replacement,
+    expected_issue,
+) -> None:
+    complete = _complete_snapshot()
+    corrupted = replace(
+        complete.pitching_statistics[0],
+        **replacement,
+    )
+    snapshot = replace(
+        complete,
+        pitching_statistics=(
+            corrupted,
+            complete.pitching_statistics[1],
+        ),
+    )
+
+    assert any(
+        expected_issue in issue
         for issue in repository.validate_mlb_game_completeness(
             (snapshot,),
             as_of=NOW,

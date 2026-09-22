@@ -388,7 +388,7 @@ def _validate_pitching_statistics(
     metric_pairs = (
         ("pitching_outs", "pitching_outs"),
         ("runs_allowed", "runs_allowed"),
-        ("earned_runs_allowed", "earned_runs_allowed"),
+        # Rule 9.16(i) permits team and summed pitcher earned runs to differ.
         ("hits_allowed", "hits_allowed"),
         ("home_runs_allowed", "home_runs_allowed"),
         ("walks_allowed", "walks_allowed"),
