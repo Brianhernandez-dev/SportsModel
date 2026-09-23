@@ -358,6 +358,62 @@ def test_failed_evaluation_evidence_counts_require_exact_linkage(
         assert counts.entry_odds_runs == 1
         assert counts.linked_prediction_runs == 1
         assert counts.linked_entry_odds_runs == 1
+        assert counts.prediction_rows == 0
+        assert counts.failed_unlinked_empty_prediction_runs == 0
+        assert counts.market_evaluations == 0
+        assert counts.paper_candidates == 0
+        assert counts.settlements == 0
+    finally:
+        connection.close()
+
+
+@pytest.mark.skipif(
+    not os.getenv("SPORTSMODEL_TEST_DATABASE_URL"),
+    reason="requires disposable SPORTSMODEL_TEST_DATABASE_URL",
+)
+def test_failed_empty_official_run_is_counted_without_preview_run(
+    initialized_nfl_test_database,
+) -> None:
+    connection = psycopg2.connect(initialized_nfl_test_database)
+    target_date = date(2026, 9, 22)
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO moneyline_prediction_runs (
+                    target_date, model_version, feature_schema_version,
+                    model_artifact_sha256, completed_at, status,
+                    games_received, predictions_created, games_skipped,
+                    run_type
+                ) VALUES
+                    (
+                        %s, 'model', 'schema', %s, clock_timestamp(),
+                        'failed', 16, 0, 0, 'official'
+                    ),
+                    (
+                        %s, 'model', 'schema', %s, clock_timestamp(),
+                        'completed', 16, 16, 0, 'preview'
+                    );
+                """,
+                (target_date, "c" * 64, target_date, "d" * 64),
+            )
+        connection.commit()
+
+        with connection.cursor() as cursor:
+            counts = load_moneyline_daily_official_evidence_counts(
+                cursor,
+                target_date=target_date,
+                sport="baseball_mlb",
+                prediction_run_id=None,
+                odds_ingestion_run_id=None,
+            )
+
+        assert counts.prediction_runs == 1
+        assert counts.prediction_rows == 0
+        assert counts.failed_unlinked_empty_prediction_runs == 1
+        assert counts.entry_odds_runs == 0
+        assert counts.linked_prediction_runs == 0
+        assert counts.linked_entry_odds_runs == 0
         assert counts.market_evaluations == 0
         assert counts.paper_candidates == 0
         assert counts.settlements == 0

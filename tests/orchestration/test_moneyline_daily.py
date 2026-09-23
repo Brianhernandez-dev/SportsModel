@@ -1284,6 +1284,8 @@ def _no_official_evidence(**overrides):
         "entry_odds_runs": 0,
         "linked_prediction_runs": 0,
         "linked_entry_odds_runs": 0,
+        "prediction_rows": 0,
+        "failed_unlinked_empty_prediction_runs": 0,
         "market_evaluations": 0,
         "paper_candidates": 0,
         "settlements": 0,
@@ -1353,6 +1355,150 @@ def test_postgame_completes_legitimate_no_card_day(
     assert "completed without an official card" in output
     assert "official candidate settlement was skipped" in output
     assert "Early Entry evidence was reconciled independently" in output
+
+
+def test_postgame_processes_results_after_failed_empty_official_run(
+    monkeypatch,
+    capsys,
+) -> None:
+    calls = []
+    workflow = _no_card_workflow(
+        target_date=date(2026, 9, 21),
+        current_stage="prediction",
+        error_message="MLB historical completeness check failed.",
+    )
+    evidence = _no_official_evidence(
+        prediction_runs=1,
+        failed_unlinked_empty_prediction_runs=1,
+    )
+    workflow_before = vars(workflow).copy()
+    evidence_before = vars(evidence).copy()
+
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_get_or_create_workflow",
+        lambda **arguments: workflow,
+    )
+    monkeypatch.setattr(
+        moneyline_daily,
+        "_load_postgame_official_evidence_counts",
+        lambda **arguments: evidence,
+    )
+
+    def unexpected_official_call(**arguments):
+        raise AssertionError("Official settlement/audit must not run.")
+
+    result = moneyline_daily.run_moneyline_daily_postgame(
+        target_date=date(2026, 9, 21),
+        connection_factory=lambda: None,
+        results_fetcher=lambda **arguments: (
+            calls.append(("results", arguments))
+            or SimpleNamespace(
+                dates_failed=0,
+                boxscores_failed=0,
+                games_processed=3,
+                boxscores_processed=3,
+                finalized_game_pks=(823169, 824221, 824787),
+            )
+        ),
+        completeness_checker=lambda game_pks, **arguments: calls.append(
+            ("completeness", {
+                "game_pks": game_pks,
+                **arguments,
+            })
+        ),
+        settlement_runner=unexpected_official_call,
+        early_entry_settlement_runner=lambda **arguments: (
+            calls.append(("early_entry", arguments))
+            or SimpleNamespace(
+                cohort_settlements=(),
+                performance=SimpleNamespace(pending=0),
+            )
+        ),
+        pipeline_auditor=unexpected_official_call,
+    )
+
+    assert [item[0] for item in calls] == [
+        "results",
+        "completeness",
+        "early_entry",
+    ]
+    assert calls[1][1]["game_pks"] == (823169, 824221, 824787)
+    assert result.prediction_run_id is None
+    assert result.odds_ingestion_run_id is None
+    assert result.games_processed == 3
+    assert result.pipeline_state == "no_official_card"
+    assert vars(workflow) == workflow_before
+    assert vars(evidence) == evidence_before
+    assert "one failed empty official prediction-run record" in (
+        capsys.readouterr().out
+    )
+
+
+@pytest.mark.parametrize(
+    ("workflow_overrides", "evidence_overrides"),
+    (
+        ({}, {
+            "prediction_runs": 2,
+            "failed_unlinked_empty_prediction_runs": 2,
+        }),
+        ({}, {"prediction_runs": 1, "prediction_rows": 1}),
+        ({}, {
+            "prediction_runs": 1,
+            "failed_unlinked_empty_prediction_runs": 1,
+            "entry_odds_runs": 1,
+        }),
+        ({}, {
+            "prediction_runs": 1,
+            "failed_unlinked_empty_prediction_runs": 1,
+            "market_evaluations": 1,
+        }),
+        ({}, {
+            "prediction_runs": 1,
+            "failed_unlinked_empty_prediction_runs": 1,
+            "paper_candidates": 1,
+        }),
+        ({}, {
+            "prediction_runs": 1,
+            "failed_unlinked_empty_prediction_runs": 1,
+            "settlements": 1,
+        }),
+        ({}, {"prediction_runs": 1}),
+        ({"moneyline_prediction_run_id": 999}, {
+            "prediction_runs": 1,
+            "failed_unlinked_empty_prediction_runs": 1,
+        }),
+        ({"moneyline_prediction_run_id": 97}, {
+            "prediction_runs": 1,
+            "failed_unlinked_empty_prediction_runs": 0,
+        }),
+    ),
+    ids=(
+        "two-failed-runs",
+        "failed-run-with-prediction",
+        "entry-odds",
+        "evaluation",
+        "candidate",
+        "settlement",
+        "completed-official-run",
+        "ambiguous-workflow-linkage",
+        "failed-run-linked-to-workflow",
+    ),
+)
+def test_failed_empty_official_run_allowance_fails_closed(
+    workflow_overrides,
+    evidence_overrides,
+) -> None:
+    workflow = _no_card_workflow(
+        current_stage="prediction",
+        **workflow_overrides,
+    )
+    evidence = _no_official_evidence(**evidence_overrides)
+
+    assert not moneyline_daily._is_legitimate_no_card_workflow(
+        workflow=workflow,
+        official_evidence_counts=evidence,
+    )
 
 
 def test_postgame_preserves_failed_evaluation_as_no_card_incident(

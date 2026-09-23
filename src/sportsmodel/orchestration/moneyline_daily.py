@@ -745,6 +745,28 @@ def _is_legitimate_no_card_workflow(
         and official_evidence_counts.entry_odds_runs == 0
     )
 
+    failed_with_one_empty_official_run = (
+        workflow.status == "failed"
+        and workflow.current_stage == "prediction"
+        and workflow.moneyline_prediction_run_id is None
+        and workflow.odds_ingestion_run_id is None
+        and workflow.pregame_completed_at is None
+        and bool((workflow.error_message or "").strip())
+        and official_evidence_counts.prediction_runs == 1
+        and official_evidence_counts.prediction_rows == 0
+        and (
+            official_evidence_counts
+            .failed_unlinked_empty_prediction_runs
+            == 1
+        )
+        and official_evidence_counts.entry_odds_runs == 0
+        and official_evidence_counts.linked_prediction_runs == 0
+        and official_evidence_counts.linked_entry_odds_runs == 0
+        and official_evidence_counts.market_evaluations == 0
+        and official_evidence_counts.paper_candidates == 0
+        and official_evidence_counts.settlements == 0
+    )
+
     failed_before_official_card = (
         workflow.status == "failed"
         and workflow.current_stage == "evaluation"
@@ -761,7 +783,11 @@ def _is_legitimate_no_card_workflow(
         and official_evidence_counts.settlements == 0
     )
 
-    return failed_before_official_evidence or failed_before_official_card
+    return (
+        failed_before_official_evidence
+        or failed_with_one_empty_official_run
+        or failed_before_official_card
+    )
 
 
 def _fetch_and_validate_postgame_results(
@@ -850,6 +876,7 @@ def _run_no_card_postgame(
     results_fetcher: ResultsFetcher,
     completeness_checker: PostgameCompletenessChecker,
     early_entry_settlement_runner: EarlyEntrySettlementRunner,
+    official_evidence_counts: Any,
 ) -> MoneylineDailyPostgameResult:
     results_summary = _fetch_and_validate_postgame_results(
         target_date=target_date,
@@ -862,14 +889,18 @@ def _run_no_card_postgame(
         connection_factory=connection_factory,
     )
 
-    preserved_evidence = (
-        "no official prediction or entry-odds evidence"
-        if workflow.moneyline_prediction_run_id is None
-        else (
+    if workflow.moneyline_prediction_run_id is not None:
+        preserved_evidence = (
             "linked official prediction and entry-odds evidence, but no "
             "official market evaluation or candidate evidence"
         )
-    )
+    elif official_evidence_counts.prediction_runs == 1:
+        preserved_evidence = (
+            "one failed empty official prediction-run record, but no "
+            "official prediction, card, or entry-odds evidence"
+        )
+    else:
+        preserved_evidence = "no official prediction or entry-odds evidence"
 
     print(
         "Daily Moneyline Postgame completed without an official card for "
@@ -1023,6 +1054,7 @@ def run_moneyline_daily_postgame(
                 early_entry_settlement_runner=(
                     early_entry_settlement_runner
                 ),
+                official_evidence_counts=official_evidence_counts,
             )
 
     if (
@@ -1046,6 +1078,10 @@ def run_moneyline_daily_postgame(
             f"{official_evidence_counts.prediction_runs}, "
             "persisted_entry_odds_runs="
             f"{official_evidence_counts.entry_odds_runs}, "
+            "persisted_official_prediction_rows="
+            f"{official_evidence_counts.prediction_rows}, "
+            "failed_unlinked_empty_prediction_runs="
+            f"{official_evidence_counts.failed_unlinked_empty_prediction_runs}, "
             "persisted_market_evaluations="
             f"{official_evidence_counts.market_evaluations}, "
             "persisted_official_candidates="

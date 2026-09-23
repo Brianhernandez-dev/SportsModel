@@ -105,7 +105,7 @@ def test_raises_when_upsert_returns_no_row() -> None:
 
 
 def test_loads_official_evidence_counts_for_date_and_sport() -> None:
-    cursor = FakeCursor(returned_row=(1, 1, 1, 1, 0, 0, 0))
+    cursor = FakeCursor(returned_row=(1, 1, 1, 1, 0, 0, 0, 0, 0))
 
     counts = load_moneyline_daily_official_evidence_counts(
         cursor,
@@ -119,10 +119,15 @@ def test_loads_official_evidence_counts_for_date_and_sport() -> None:
     assert counts.entry_odds_runs == 1
     assert counts.linked_prediction_runs == 1
     assert counts.linked_entry_odds_runs == 1
+    assert counts.prediction_rows == 0
+    assert counts.failed_unlinked_empty_prediction_runs == 0
     assert counts.market_evaluations == 0
     assert counts.paper_candidates == 0
     assert counts.settlements == 0
     assert "run_type = 'official'" in cursor.executed_query
+    assert "prediction_run.status = 'failed'" in cursor.executed_query
+    assert "IS DISTINCT FROM %s" in cursor.executed_query
+    assert "NOT EXISTS" in cursor.executed_query
     assert "snapshot_role = 'entry'" in cursor.executed_query
     assert "sport = %s" in cursor.executed_query
     assert cursor.executed_parameters == (
@@ -134,12 +139,12 @@ def test_loads_official_evidence_counts_for_date_and_sport() -> None:
         182,
         TARGET_DATE,
         "baseball_mlb",
+        TARGET_DATE,
+        TARGET_DATE,
         25,
-        182,
-        25,
-        182,
-        25,
-        182,
+        TARGET_DATE,
+        TARGET_DATE,
+        TARGET_DATE,
     )
 
 
