@@ -1,15 +1,16 @@
 """Shared initialization for explicit disposable PostgreSQL integration tests."""
 
-import os
 from pathlib import Path
 
-import psycopg2
 import pytest
 
 from sportsmodel.database.migrations import (
     apply_pending_migrations,
     discover_migrations,
     ensure_schema_migrations_table,
+)
+from tests.database.disposable_postgres import (
+    open_verified_disposable_database,
 )
 
 
@@ -23,9 +24,12 @@ FOUNDATION = (
 def initialized_nfl_test_database() -> str:
     """Recreate the schema only in the explicitly configured disposable DB."""
 
-    database_url = _require_destructive_test_database_configuration()
-    connection = psycopg2.connect(database_url)
+    verified = open_verified_disposable_database()
+    database_url = verified.configuration.database_url
+    connection = verified.connection
     try:
+        # Identity was verified on this same connection immediately before
+        # the only repository-wide destructive test operation.
         with connection.cursor() as cursor:
             cursor.execute("DROP SCHEMA public CASCADE")
             cursor.execute("CREATE SCHEMA public")
@@ -39,26 +43,6 @@ def initialized_nfl_test_database() -> str:
         assert apply_pending_migrations(connection, migrations) == len(migrations) - 5
     finally:
         connection.close()
-    return database_url
-
-
-def _require_destructive_test_database_configuration() -> str:
-    """Require both explicit protections before any database connection."""
-
-    database_url = os.getenv("SPORTSMODEL_TEST_DATABASE_URL")
-    if not database_url:
-        pytest.skip("requires disposable SPORTSMODEL_TEST_DATABASE_URL")
-    if os.getenv("SPORTSMODEL_ALLOW_DESTRUCTIVE_TEST_DB") != "1":
-        pytest.skip(
-            "destructive disposable database initialization requires "
-            "SPORTSMODEL_ALLOW_DESTRUCTIVE_TEST_DB=1"
-        )
-    application_url = os.getenv("DATABASE_URL")
-    if application_url and database_url == application_url:
-        pytest.skip(
-            "SPORTSMODEL_TEST_DATABASE_URL must differ from application "
-            "DATABASE_URL before destructive initialization"
-        )
     return database_url
 
 

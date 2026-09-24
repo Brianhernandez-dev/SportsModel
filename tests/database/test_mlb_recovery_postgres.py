@@ -7,7 +7,6 @@ import os
 from pathlib import Path
 
 import psycopg2
-from psycopg2.extensions import parse_dsn
 import pytest
 
 from sportsmodel.ingest import mlb_recovery as recovery
@@ -32,15 +31,7 @@ PROTECTED = ('teams', 'games', 'game_sources', 'baseball_team_sources',
 
 @pytest.fixture
 def recovery_database(request):
-    url = os.getenv('SPORTSMODEL_TEST_DATABASE_URL')
-    if not url or os.getenv('SPORTSMODEL_ALLOW_DESTRUCTIVE_TEST_DB') != '1':
-        pytest.skip('requires explicitly authorized disposable PostgreSQL')
-    target = parse_dsn(url)
-    assert target.get('host') == '127.0.0.1'
-    assert target.get('port') == '55432'
-    assert target.get('dbname') == 'sportsmodel_test'
-    assert target.get('user') == 'sportsmodel_test'
-    # The positive target guard runs BEFORE the destructive shared fixture.
+    # The shared fixture positively verifies the disposable server before reset.
     url = request.getfixturevalue('initialized_nfl_test_database')
     connection = psycopg2.connect(url)
     with connection.cursor() as cursor:

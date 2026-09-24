@@ -4,13 +4,15 @@ import os
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
-import psycopg2
 import pytest
 
 from sportsmodel.database.mlb_completeness_repository import (
     FEATURE_TEAM_GAME_LIMIT,
     MLB_SOURCE_NAME,
     _load_required_feature_game_pks,
+)
+from tests.database.disposable_postgres import (
+    open_verified_disposable_database,
 )
 
 
@@ -33,37 +35,10 @@ class _NonClosingConnection:
         pass
 
 
-def _disposable_database_url() -> str:
-    database_url = os.environ["SPORTSMODEL_TEST_DATABASE_URL"]
-    if os.getenv("SPORTSMODEL_ALLOW_DESTRUCTIVE_TEST_DB") != "1":
-        pytest.skip(
-            "PostgreSQL integration test requires explicit disposable-DB "
-            "authorization"
-        )
-
-    application_url = os.getenv("DATABASE_URL")
-    if application_url and application_url == database_url:
-        pytest.fail(
-            "SPORTSMODEL_TEST_DATABASE_URL must differ from DATABASE_URL"
-        )
-
-    parameters = psycopg2.extensions.parse_dsn(database_url)
-    if (
-        parameters.get("host") not in {"127.0.0.1", "localhost"}
-        or parameters.get("port") != "55432"
-        or parameters.get("dbname") != "sportsmodel_test"
-    ):
-        pytest.fail(
-            "MLB completeness SQL test requires the proven loopback "
-            "sportsmodel_test target on port 55432"
-        )
-
-    return database_url
-
-
-def test_required_feature_games_use_exact_timestamp_and_window() -> None:
-    database_url = _disposable_database_url()
-    connection = psycopg2.connect(database_url)
+def test_required_feature_games_use_exact_timestamp_and_window(
+    initialized_nfl_test_database,
+) -> None:
+    connection = open_verified_disposable_database().connection
     cutoff = datetime(2026, 9, 20, 12, 0, tzinfo=timezone.utc)
     label = uuid4().hex
     first_game_pk = 910_000_000
