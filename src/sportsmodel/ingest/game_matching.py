@@ -2,6 +2,8 @@ from datetime import datetime, timedelta
 
 
 DEFAULT_GAME_TIME_TOLERANCE = timedelta(minutes=15)
+MLB_AUTHORITATIVE_SOURCE = "mlb_stats"
+MLB_ODDS_SOURCE = "odds_api"
 
 
 class CanonicalGameIdentityConflictError(ValueError):
@@ -122,12 +124,15 @@ def get_or_create_canonical_game(
 
     1. Existing source mapping, unless it conflicts with another nearby
        canonical identity.
-    2. One unambiguous same-orientation game within the configured time
+    2. For a new MLB Odds event, one unambiguous same-orientation,
+       MLB-authoritative game within the configured time window. Retained
+       Odds event IDs do not exclude this candidate.
+    3. One unambiguous same-orientation game within the configured time
        window, excluding games already mapped by this source.
-    3. One unambiguous same-orientation, same-Pacific-date game carrying
+    4. One unambiguous same-orientation, same-Pacific-date game carrying
        retained source identity. This permits schedule drift beyond the time
        tolerance without collapsing a doubleheader.
-    4. Create a new canonical game.
+    5. Create a new canonical game.
 
     The team orientation must match exactly. Reversed home and away teams
     are not treated as the same game.
@@ -212,30 +217,67 @@ def get_or_create_canonical_game(
     window_start = game_datetime - tolerance
     window_end = game_datetime + tolerance
 
-    candidate_count, game_id = _load_candidate_count(
-        cursor,
-        query="""
-            SELECT COUNT(*), MIN(candidate.game_id)
-            FROM games AS candidate
-            WHERE candidate.home_team_id = %s
-              AND candidate.away_team_id = %s
-              AND candidate.game_date BETWEEN %s AND %s
-              AND NOT EXISTS (
-                  SELECT 1
-                  FROM game_sources AS existing_mapping
-                  WHERE
-                      existing_mapping.game_id = candidate.game_id
-                      AND existing_mapping.source_name = %s
-              );
-        """,
-        parameters=(
-            home_team_id,
-            away_team_id,
-            window_start,
-            window_end,
-            source_name,
-        ),
-    )
+    candidate_count = 0
+    game_id = None
+
+    if source_name == MLB_ODDS_SOURCE:
+        candidate_count, game_id = _load_candidate_count(
+            cursor,
+            query="""
+                SELECT COUNT(*), MIN(candidate.game_id)
+                FROM games AS candidate
+                WHERE candidate.home_team_id = %s
+                  AND candidate.away_team_id = %s
+                  AND candidate.game_date BETWEEN %s AND %s
+                  AND EXISTS (
+                      SELECT 1
+                      FROM game_sources AS authoritative_source
+                      WHERE
+                          authoritative_source.game_id = candidate.game_id
+                          AND authoritative_source.source_name = %s
+                  );
+            """,
+            parameters=(
+                home_team_id,
+                away_team_id,
+                window_start,
+                window_end,
+                MLB_AUTHORITATIVE_SOURCE,
+            ),
+        )
+
+        if candidate_count > 1:
+            raise CanonicalGameIdentityConflictError(
+                "Multiple nearby MLB-authoritative games match the incoming "
+                "Odds event; identity is ambiguous: "
+                f"{source_name}/{external_game_id}."
+            )
+
+    if candidate_count == 0:
+        candidate_count, game_id = _load_candidate_count(
+            cursor,
+            query="""
+                SELECT COUNT(*), MIN(candidate.game_id)
+                FROM games AS candidate
+                WHERE candidate.home_team_id = %s
+                  AND candidate.away_team_id = %s
+                  AND candidate.game_date BETWEEN %s AND %s
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM game_sources AS existing_mapping
+                      WHERE
+                          existing_mapping.game_id = candidate.game_id
+                          AND existing_mapping.source_name = %s
+                  );
+            """,
+            parameters=(
+                home_team_id,
+                away_team_id,
+                window_start,
+                window_end,
+                source_name,
+            ),
+        )
 
     if candidate_count > 1:
         raise CanonicalGameIdentityConflictError(

@@ -228,6 +228,7 @@ def test_new_game_is_created_when_no_match_exists():
             None,
             (0, None),
             (0, None),
+            (0, None),
             (75,),
         ]
     )
@@ -242,9 +243,9 @@ def test_new_game_is_created_when_no_match_exists():
     )
 
     assert game_id == 75
-    assert len(cursor.executions) == 5
+    assert len(cursor.executions) == 6
 
-    insert_parameters = cursor.executions[3][1]
+    insert_parameters = cursor.executions[4][1]
 
     assert insert_parameters == (
         GAME_TIME,
@@ -340,6 +341,7 @@ def test_unique_same_date_source_game_survives_schedule_drift() -> None:
         fetch_results=[
             None,
             (0, None),
+            (0, None),
             (1, 51),
         ]
     )
@@ -354,15 +356,16 @@ def test_unique_same_date_source_game_survives_schedule_drift() -> None:
     )
 
     assert game_id == 51
-    assert "AT TIME ZONE 'America/Los_Angeles'" in cursor.executions[2][0]
-    assert "EXISTS" in cursor.executions[2][0]
-    assert len(cursor.executions) == 4
+    assert "AT TIME ZONE 'America/Los_Angeles'" in cursor.executions[3][0]
+    assert "EXISTS" in cursor.executions[3][0]
+    assert len(cursor.executions) == 5
 
 
 def test_same_date_doubleheader_ambiguity_fails_closed() -> None:
     cursor = FakeCursor(
         fetch_results=[
             None,
+            (0, None),
             (0, None),
             (2, 51),
         ]
@@ -386,6 +389,7 @@ def test_multiple_nearby_games_fail_closed() -> None:
     cursor = FakeCursor(
         fetch_results=[
             None,
+            (0, None),
             (2, 51),
         ]
     )
@@ -402,6 +406,110 @@ def test_multiple_nearby_games_fail_closed() -> None:
             home_team_id=10,
             away_team_id=20,
         )
+
+
+def test_replacement_odds_event_uses_unique_nearby_mlb_identity() -> None:
+    cursor = FakeCursor(
+        fetch_results=[
+            None,
+            (1, 11297),
+        ]
+    )
+
+    game_id = get_or_create_canonical_game(
+        cursor,
+        source_name="odds_api",
+        external_game_id="cc3886440708c8649f6f878183416628",
+        game_datetime=GAME_TIME + timedelta(minutes=1),
+        home_team_id=10,
+        away_team_id=20,
+    )
+
+    assert game_id == 11297
+    assert len(cursor.executions) == 3
+    authoritative_query, parameters = cursor.executions[1]
+    assert "authoritative_source.source_name = %s" in authoritative_query
+    assert "NOT EXISTS" not in authoritative_query
+    assert parameters == (
+        10,
+        20,
+        GAME_TIME - timedelta(minutes=14),
+        GAME_TIME + timedelta(minutes=16),
+        "mlb_stats",
+    )
+    assert cursor.executions[2][1] == (
+        11297,
+        "odds_api",
+        "cc3886440708c8649f6f878183416628",
+    )
+
+
+def test_replacement_odds_event_with_two_nearby_mlb_games_fails_closed() -> None:
+    cursor = FakeCursor(
+        fetch_results=[
+            None,
+            (2, 11297),
+        ]
+    )
+
+    with pytest.raises(
+        CanonicalGameIdentityConflictError,
+        match="Multiple nearby MLB-authoritative games",
+    ):
+        get_or_create_canonical_game(
+            cursor,
+            source_name="odds_api",
+            external_game_id="replacement-event",
+            game_datetime=GAME_TIME,
+            home_team_id=10,
+            away_team_id=20,
+        )
+
+
+def test_replacement_allowance_requires_mlb_authority() -> None:
+    cursor = FakeCursor(
+        fetch_results=[
+            None,
+            (0, None),
+            (1, 61),
+        ]
+    )
+
+    game_id = get_or_create_canonical_game(
+        cursor,
+        source_name="odds_api",
+        external_game_id="ordinary-event",
+        game_datetime=GAME_TIME,
+        home_team_id=10,
+        away_team_id=20,
+    )
+
+    assert game_id == 61
+    assert "authoritative_source.source_name = %s" in cursor.executions[1][0]
+    assert "NOT EXISTS" in cursor.executions[2][0]
+
+
+def test_replacement_allowance_does_not_reuse_out_of_window_identity() -> None:
+    cursor = FakeCursor(
+        fetch_results=[
+            None,
+            (0, None),
+            (0, None),
+            (0, None),
+            (75,),
+        ]
+    )
+
+    game_id = get_or_create_canonical_game(
+        cursor,
+        source_name="odds_api",
+        external_game_id="out-of-window-event",
+        game_datetime=GAME_TIME + timedelta(hours=5),
+        home_team_id=10,
+        away_team_id=20,
+    )
+
+    assert game_id == 75
 
 
 def test_stale_mapping_conflict_is_not_silently_trusted() -> None:

@@ -1109,7 +1109,7 @@ def test_manual_and_persistence_paths_require_schema_031_before_attempt(
     prediction = _seed_prediction(connection)
     odds = _seed_odds(connection, prediction)
     with connection.cursor() as cursor:
-        cursor.execute("DELETE FROM schema_migrations WHERE version = 31")
+        cursor.execute("DELETE FROM schema_migrations WHERE version >= 31")
     connection.commit()
     factory = _connect(initialized_nfl_test_database)
     with pytest.raises(OfficialMarketEvaluationError) as preview_error:
