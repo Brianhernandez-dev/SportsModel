@@ -363,18 +363,28 @@ def test_permanent_database_failure_does_not_retry(tmp_path: Path) -> None:
     assert "No database service was started automatically" in result.stderr
 
 
-def test_schema_rejection_prevents_simulated_workflow_execution(
+@pytest.mark.parametrize(
+    "activity_name",
+    (
+        "provider_access",
+        "run_reservation",
+        "persistence",
+        "effective_odds_reader",
+    ),
+)
+def test_schema_032_rejection_prevents_all_workflow_activity(
     tmp_path: Path,
+    activity_name: str,
 ) -> None:
-    workflow_marker = tmp_path / "workflow_executed.txt"
+    workflow_marker = tmp_path / f"{activity_name}.txt"
     result, attempts, _ = _run_readiness(
         tmp_path,
         succeeds_after=100,
         failure_exit_code=PERMANENT_EXIT_CODE,
         timeout_seconds=5,
         failure_message=(
-            "Observed production schema migration 026; required minimum "
-            "compatible migration 029. Execution was refused before "
+            "Observed production schema migration 032; required minimum "
+            "compatible migration 033. Execution was refused before "
             "live workflow or provider work began."
         ),
         workflow_marker_path=workflow_marker,
@@ -383,8 +393,8 @@ def test_schema_rejection_prevents_simulated_workflow_execution(
     assert result.returncode == 1
     assert attempts == 1
     assert not workflow_marker.exists()
-    assert "migration 026" in result.stderr
-    assert "migration 029" in result.stderr
+    assert "migration 032" in result.stderr
+    assert "migration 033" in result.stderr
     assert "before live workflow or provider work began" in result.stderr
 
 
@@ -547,27 +557,27 @@ def test_probe_accepts_writable_production_primary() -> None:
     )
 
     assert result.exit_code == READY_EXIT_CODE
-    assert "migration 029" in result.message
+    assert "migration 033" in result.message
 
 
 def test_probe_accepts_schema_newer_than_minimum() -> None:
     result = _result_for_row(
-        ("sportsmodel", 5432, False, "off", "off", 31, True)
+        ("sportsmodel", 5432, False, "off", "off", 34, True)
     )
 
     assert result.exit_code == READY_EXIT_CODE
-    assert "migration 031" in result.message
-    assert "migration 029" in result.message
+    assert "migration 034" in result.message
+    assert "migration 033" in result.message
 
 
 def test_probe_rejects_schema_below_minimum_as_permanent() -> None:
     result = _result_for_row(
-        ("sportsmodel", 5432, False, "off", "off", 26, False)
+        ("sportsmodel", 5432, False, "off", "off", 32, False)
     )
 
     assert result.exit_code == PERMANENT_EXIT_CODE
-    assert "migration 026" in result.message
-    assert "migration 029" in result.message
+    assert "migration 032" in result.message
+    assert "migration 033" in result.message
     assert "before live workflow or provider work began" in result.message
 
 
@@ -578,18 +588,18 @@ def test_probe_fails_closed_when_schema_version_is_unknown() -> None:
 
     assert result.exit_code == PERMANENT_EXIT_CODE
     assert "migration unavailable" in result.message
-    assert "migration 029" in result.message
+    assert "migration 033" in result.message
     assert "before live workflow or provider work began" in result.message
 
 
 def test_probe_rejects_missing_required_migration_despite_newer_max() -> None:
     result = _result_for_row(
-        ("sportsmodel", 5432, False, "off", "off", 31, False)
+        ("sportsmodel", 5432, False, "off", "off", 34, False)
     )
 
     assert result.exit_code == PERMANENT_EXIT_CODE
-    assert "migration 031" in result.message
-    assert "migration 029" in result.message
+    assert "migration 034" in result.message
+    assert "migration 033" in result.message
     assert "absent" in result.message
     assert "before live workflow or provider work began" in result.message
 
@@ -598,15 +608,15 @@ def test_probe_rejects_missing_required_migration_despite_newer_max() -> None:
     ("row", "message"),
     [
         (
-            ("sportsmodel", 5432, True, "off", "off", 29, True),
+            ("sportsmodel", 5432, True, "off", "off", 33, True),
             "recovery replica",
         ),
         (
-            ("sportsmodel", 5432, False, "on", "off", 29, True),
+            ("sportsmodel", 5432, False, "on", "off", 33, True),
             "transaction state is read-only",
         ),
         (
-            ("sportsmodel", 5432, False, "off", "on", 29, True),
+            ("sportsmodel", 5432, False, "off", "on", 33, True),
             "server default is read-only",
         ),
     ],

@@ -271,21 +271,22 @@ def _load_role_snapshots(
         """
         SELECT
             snapshot.odds_market_snapshot_id,
-            snapshot.game_id,
+            snapshot.effective_game_id,
             snapshot.sportsbook_id,
             snapshot.market_type,
             snapshot.selection_name,
             snapshot.line_value,
             snapshot.price,
             snapshot.snapshot_time,
+            snapshot.raw_acquisition_game_id,
             snapshot.odds_ingestion_run_id
-        FROM odds_market_snapshots AS snapshot
+        FROM odds_market_snapshots_effective AS snapshot
         WHERE
             snapshot.odds_ingestion_run_id = ANY(%s)
             AND snapshot.market_type = 'h2h'
         ORDER BY
             snapshot.snapshot_time,
-            snapshot.game_id,
+            snapshot.effective_game_id,
             snapshot.sportsbook_id,
             snapshot.selection_name,
             snapshot.odds_market_snapshot_id;
@@ -298,7 +299,7 @@ def _load_role_snapshots(
     ] = []
 
     for row in cursor.fetchall():
-        odds_ingestion_run_id = row[8]
+        odds_ingestion_run_id = row[9]
 
         snapshots.append(
             RoleTaggedMarketSnapshot(
@@ -311,6 +312,7 @@ def _load_role_snapshots(
                     line_value=row[5],
                     price=row[6],
                     snapshot_time=row[7],
+                    raw_acquisition_game_id=row[8],
                 ),
                 odds_ingestion_run_id=(
                     odds_ingestion_run_id

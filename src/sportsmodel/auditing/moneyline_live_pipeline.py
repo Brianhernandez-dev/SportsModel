@@ -56,12 +56,12 @@ AUDIT_QUERY = """
     snapshot_scope AS (
         SELECT
             snapshot.odds_market_snapshot_id,
-            snapshot.game_id
-        FROM odds_market_snapshots AS snapshot
+            snapshot.effective_game_id AS game_id
+        FROM odds_market_snapshots_effective AS snapshot
         WHERE
             snapshot.odds_ingestion_run_id = %s
             AND snapshot.market_type = 'h2h'
-            AND snapshot.game_id IN (
+            AND snapshot.effective_game_id IN (
                 SELECT game_id
                 FROM prediction_scope
             )

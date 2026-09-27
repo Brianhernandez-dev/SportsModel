@@ -795,9 +795,9 @@ def _audit_market_snapshots(
     cursor.execute(
         """
         SELECT COUNT(*)
-        FROM odds_market_snapshots oms
+        FROM odds_market_snapshots_effective oms
         JOIN games g
-            ON g.game_id = oms.game_id
+            ON g.game_id = oms.effective_game_id
         WHERE oms.snapshot_time < g.game_date;
         """
     )

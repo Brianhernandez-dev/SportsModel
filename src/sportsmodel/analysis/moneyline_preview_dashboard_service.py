@@ -778,28 +778,29 @@ def _load_opening_snapshots(
         """
         SELECT
             snapshot.odds_market_snapshot_id,
-            snapshot.game_id,
+            snapshot.effective_game_id,
             snapshot.sportsbook_id,
             snapshot.market_type,
             snapshot.selection_name,
             snapshot.line_value,
             snapshot.price,
             snapshot.snapshot_time,
+            snapshot.raw_acquisition_game_id,
             sportsbook.name
-        FROM odds_market_snapshots AS snapshot
+        FROM odds_market_snapshots_effective AS snapshot
         JOIN sportsbooks AS sportsbook
           ON sportsbook.sportsbook_id =
              snapshot.sportsbook_id
         WHERE
             snapshot.odds_ingestion_run_id = %s
             AND snapshot.market_type = 'h2h'
-            AND snapshot.game_id IN (
+            AND snapshot.effective_game_id IN (
                 SELECT game_id
                 FROM moneyline_game_predictions
                 WHERE moneyline_prediction_run_id = %s
             )
         ORDER BY
-            snapshot.game_id,
+            snapshot.effective_game_id,
             snapshot.sportsbook_id,
             snapshot.odds_market_snapshot_id;
         """,
@@ -827,10 +828,11 @@ def _load_opening_snapshots(
                 line_value=row[5],
                 price=row[6],
                 snapshot_time=row[7],
+                raw_acquisition_game_id=row[8],
             )
         )
 
-        sportsbook_names[sportsbook_id] = row[8]
+        sportsbook_names[sportsbook_id] = row[9]
 
     return (
         tuple(snapshots),

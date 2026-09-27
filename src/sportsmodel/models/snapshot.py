@@ -24,3 +24,5 @@ class MarketSnapshot:
     price: int
 
     snapshot_time: datetime
+
+    raw_acquisition_game_id: int | None = None

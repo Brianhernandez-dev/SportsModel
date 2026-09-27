@@ -24,10 +24,10 @@ def get_market_snapshots(
     parameters: list[object] = []
 
     if not include_live:
-        conditions.append("oms.snapshot_time < g.game_date")
+        conditions.append("snapshot.snapshot_time < g.game_date")
 
     if game_id is not None:
-        conditions.append("oms.game_id = %s")
+        conditions.append("snapshot.effective_game_id = %s")
         parameters.append(game_id)
 
     where_clause = ""
@@ -37,21 +37,22 @@ def get_market_snapshots(
 
     query = f"""
         SELECT
-            oms.odds_market_snapshot_id,
-            oms.game_id,
-            oms.sportsbook_id,
-            oms.market_type,
-            oms.selection_name,
-            oms.line_value,
-            oms.price,
-            oms.snapshot_time
-        FROM odds_market_snapshots oms
+            snapshot.odds_market_snapshot_id,
+            snapshot.effective_game_id,
+            snapshot.sportsbook_id,
+            snapshot.market_type,
+            snapshot.selection_name,
+            snapshot.line_value,
+            snapshot.price,
+            snapshot.snapshot_time,
+            snapshot.raw_acquisition_game_id
+        FROM odds_market_snapshots_effective AS snapshot
         JOIN games g
-            ON g.game_id = oms.game_id
+            ON g.game_id = snapshot.effective_game_id
         {where_clause}
         ORDER BY
-            oms.snapshot_time,
-            oms.odds_market_snapshot_id;
+            snapshot.snapshot_time,
+            snapshot.odds_market_snapshot_id;
     """
 
     connection = get_connection()
@@ -71,6 +72,7 @@ def get_market_snapshots(
                 line_value=row[5],
                 price=row[6],
                 snapshot_time=row[7],
+                raw_acquisition_game_id=row[8],
             )
             for row in rows
         ]

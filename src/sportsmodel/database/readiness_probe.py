@@ -14,7 +14,7 @@ from sportsmodel.database.connection import get_connection
 READY_EXIT_CODE = 0
 TRANSIENT_EXIT_CODE = 10
 PERMANENT_EXIT_CODE = 20
-MINIMUM_COMPATIBLE_PRODUCTION_MIGRATION = 29
+MINIMUM_COMPATIBLE_PRODUCTION_MIGRATION = 33
 
 _COMPATIBILITY_REFUSAL_MESSAGE = (
     "Execution was refused before live workflow or provider work began."

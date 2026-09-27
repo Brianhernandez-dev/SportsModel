@@ -38,16 +38,16 @@ def analyze_markets():
                     """
                     SELECT
                         odds_market_snapshot_id,
-                        game_id,
+                        effective_game_id,
                         sportsbook_id,
                         market_type,
                         selection_name,
                         line_value,
                         price,
                         snapshot_time
-                    FROM odds_market_snapshots
+                    FROM odds_market_snapshots_effective
                     ORDER BY
-                        game_id,
+                        effective_game_id,
                         market_type,
                         line_value,
                         snapshot_time,
