@@ -62,19 +62,28 @@ normalizing or modifying either payload, reporting deterministic differing paths
 and bounded values. It is diagnostic only; preview validation separately compares
 a recovery-relevant semantic projection while the raw diagnostic remains intact.
 
-## Version 1 eligibility and identity contract
+## Version 2 eligibility and identity contract
 
-`final-regular-or-explicit-exclusion-v1` requires every allowlisted event to be
+`final-regular-or-explicit-exclusion-v2` requires every allowlisted event to be
 returned exactly once. Final regular-season events are recoverable. Preview/live
-events, postponed/suspended games and recognized non-regular game types have
-explicit retained exclusions. Unknown states/types, malformed final games and
+events, explicit postponed/suspended/cancelled states, and recognized non-regular
+game types have retained exclusions. Explicit non-played terminal detail takes
+precedence over a contradictory abstract `Final` state. Unknown states/types,
+malformed final games and
 absent allowlisted events fail closed. Eligible outside events fail before writes;
 other outside events are reported, never persisted.
 
 Every allowlisted event, including exclusions, requires exactly one raw
 `mlb_stats` mapping, an existing canonical target, existing authoritative team
 sources and matching orientation. Canonical Pacific date must match the requested
-schedule date. Cross-date rescheduling is refused, not automatically reconciled.
+schedule date unless the disposition is exactly an explicit postponed, suspended
+or cancelled zero-write terminal exclusion. Preview/live and
+ineligible-game-type exclusions do not receive this exception and must retain the
+approved schedule date. A permitted terminal exclusion may refer to the same exact
+canonical identity after normal schedule reconciliation moved that game to its
+later completion date; terminal exclusions never produce result/stat writes.
+Eligible cross-date recovery is still refused until the canonical schedule date
+is reconciled.
 The existing-only MLB resolver accepts no source-name argument and never delegates
 to generic matching/creation. Ordinary Odds/cross-source matching is unchanged.
 
@@ -89,8 +98,10 @@ not recovery inputs and do not cause disagreement. Missing or differing required
 identity/statistical values still fail closed; this is not a general missing-field
 or path-ignore rule.
 Schedule/feed start, official date, game type, finality, participants and scores
-are validated. Positive game numbers and N/Y doubleheader flags must agree with
-schedule metadata when supplied; other flags require a separately reviewed contract.
+are validated. Positive game numbers and N/Y/S doubleheader flags must agree with
+schedule metadata when supplied. MLB `S` is the split-doubleheader source flag;
+the existing schema preserves its supported semantics as `doubleheader` plus the
+positive game number. Other flags require a separately reviewed contract.
 Exactly two oriented teams, one starter per team, unique pitcher
 identities and consistent team/pitcher outs are required.
 

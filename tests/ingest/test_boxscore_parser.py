@@ -1,4 +1,5 @@
 import sportsmodel.ingest.boxscore_parser as boxscore_parser
+import pytest
 
 from sportsmodel.ingest.boxscore_parser import (
     parse_game_metadata,
@@ -10,12 +11,16 @@ from sportsmodel.models.player_game_pitching_statistics import (
 )
 
 
-def test_parse_game_metadata() -> None:
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [("N", False), ("Y", True), ("S", True)],
+)
+def test_parse_game_metadata(code: str, expected: bool) -> None:
     live_feed = {
         "gameData": {
             "game": {
                 "gameNumber": 2,
-                "doubleHeader": "Y",
+                "doubleHeader": code,
             }
         }
     }
@@ -23,7 +28,21 @@ def test_parse_game_metadata() -> None:
     game_number, double_header = parse_game_metadata(live_feed)
 
     assert game_number == 2
-    assert double_header is True
+    assert double_header is expected
+
+
+def test_parse_game_metadata_rejects_unknown_doubleheader_code() -> None:
+    live_feed = {
+        "gameData": {
+            "game": {
+                "gameNumber": 1,
+                "doubleHeader": "?",
+            }
+        }
+    }
+
+    with pytest.raises(ValueError, match="Unsupported MLB doubleheader metadata"):
+        parse_game_metadata(live_feed)
 
 
 def test_parse_team_statistics() -> None:

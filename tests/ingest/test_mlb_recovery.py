@@ -340,7 +340,11 @@ def test_invalid_payloads_fail_before_connection_or_write(change):
     ({'abstractGameState': 'Preview'}, 'R', 'excluded-nonfinal'),
     ({'abstractGameState': 'Live'}, 'R', 'excluded-nonfinal'),
     ({'detailedState': 'Postponed'}, 'R', 'excluded-postponed'),
+    ({'abstractGameState': 'Final', 'detailedState': 'Postponed'}, 'R',
+     'excluded-postponed'),
     ({'detailedState': 'Suspended'}, 'R', 'excluded-suspended'),
+    ({'abstractGameState': 'Final', 'detailedState': 'Cancelled'}, 'R',
+     'excluded-cancelled'),
     ({'abstractGameState': 'Final'}, 'A', 'excluded-ineligible-game-type'),
 ])
 def test_deterministic_explicit_exclusions(status, game_type, reason):
@@ -351,6 +355,108 @@ def test_deterministic_explicit_exclusions(status, game_type, reason):
     manifest = recovery.build_manifest(spec(), payload, snap)
     assert manifest['excluded'] == [dict(game_pk=800, reason=reason)]
     assert manifest['eligible_game_pks'] == []
+
+
+@pytest.mark.parametrize('game_number', [1, 2])
+def test_split_doubleheader_is_preserved_as_doubleheader(game_number):
+    payload = bundle()
+    event = payload['schedule']['dates'][0]['games'][0]
+    pinned = payload['games']['800']
+    event.update(gameNumber=game_number, doubleHeader='S')
+    pinned['feed']['gameData']['game'].update(
+        gameNumber=game_number, doubleHeader='S')
+
+    manifest = recovery.build_manifest(spec(), payload, snapshot())
+
+    assert manifest['games'][0]['game_metadata'] == {
+        'game_number': game_number,
+        'doubleheader_status': 'doubleheader',
+    }
+    assert manifest['games'][0]['boxscore']['game_number'] == game_number
+    assert manifest['games'][0]['boxscore']['double_header'] is True
+
+
+def test_cross_date_final_requires_canonical_schedule_reconciliation():
+    payload = bundle()
+    payload['schedule']['dates'][0]['date'] = '2025-08-02'
+    payload['schedule']['dates'][0]['games'][0]['gameDate'] = '2025-08-02T19:00:00Z'
+    pinned = payload['games']['800']
+    pinned['schedule_date'] = '2025-08-02'
+    pinned['feed']['gameData']['datetime'].update(
+        officialDate='2025-08-02', dateTime='2025-08-02T19:00:00Z')
+    cross_date_spec = recovery.RecoverySpecification(
+        date(2025, 8, 2), (800,), REVISION)
+    stale_snapshot = snapshot()
+
+    with pytest.raises(
+        ValueError, match='Canonical game is outside the approved schedule date'
+    ):
+        recovery.build_manifest(cross_date_spec, payload, stale_snapshot)
+
+    reconciled_snapshot = snapshot()
+    reconciled_snapshot['games']['800']['start'] = '2025-08-02T19:00:00+00:00'
+    manifest = recovery.build_manifest(
+        cross_date_spec, payload, reconciled_snapshot)
+
+    assert manifest['eligible_game_pks'] == [800]
+
+
+@pytest.mark.parametrize(
+    ('detailed_state', 'reason'),
+    [
+        ('Postponed', 'excluded-postponed'),
+        ('Suspended', 'excluded-suspended'),
+        ('Cancelled', 'excluded-cancelled'),
+    ],
+)
+def test_terminal_observation_allows_later_reconciled_canonical_date(
+        detailed_state, reason):
+    payload = bundle()
+    event = payload['schedule']['dates'][0]['games'][0]
+    event['status'] = {
+        'abstractGameState': 'Final',
+        'detailedState': detailed_state,
+    }
+    payload['games'], payload['people'] = {}, []
+    reconciled_snapshot = snapshot()
+    reconciled_snapshot['games']['800']['start'] = '2025-08-02T19:00:00+00:00'
+    reconciled_snapshot['players'] = {}
+
+    manifest = recovery.build_manifest(spec(), payload, reconciled_snapshot)
+
+    assert manifest['eligible_game_pks'] == []
+    assert manifest['excluded'] == [
+        {'game_pk': 800, 'reason': reason}
+    ]
+    assert manifest['games'][0]['identity']['game_id'] == 1
+    assert 'result' not in manifest['games'][0]
+    assert 'boxscore' not in manifest['games'][0]
+    assert 'game_metadata' not in manifest['games'][0]
+    assert manifest['missing_player_ids'] == []
+    assert manifest['player_sync'] == []
+
+
+@pytest.mark.parametrize(
+    ('status', 'game_type'),
+    [
+        ({'abstractGameState': 'Preview'}, 'R'),
+        ({'abstractGameState': 'Live'}, 'R'),
+        ({'abstractGameState': 'Final'}, 'A'),
+    ],
+)
+def test_cross_date_nonterminal_exclusions_fail_closed(status, game_type):
+    payload = bundle()
+    event = payload['schedule']['dates'][0]['games'][0]
+    event.update(status=status, gameType=game_type)
+    payload['games'], payload['people'] = {}, []
+    cross_date_snapshot = snapshot()
+    cross_date_snapshot['games']['800']['start'] = '2025-08-02T19:00:00+00:00'
+    cross_date_snapshot['players'] = {}
+
+    with pytest.raises(
+        ValueError, match='Canonical game is outside the approved schedule date'
+    ):
+        recovery.build_manifest(spec(), payload, cross_date_snapshot)
 
 
 def test_manifest_byte_stability_and_hash_checks():

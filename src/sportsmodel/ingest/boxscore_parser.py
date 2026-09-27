@@ -173,7 +173,10 @@ def parse_game_metadata(
     game = live_feed["gameData"]["game"]
 
     game_number = int(game["gameNumber"])
-    double_header = game["doubleHeader"] == "Y"
+    double_header_code = game["doubleHeader"]
+    if double_header_code not in ("N", "Y", "S"):
+        raise ValueError("Unsupported MLB doubleheader metadata")
+    double_header = double_header_code in ("Y", "S")
 
     return game_number, double_header
 

@@ -23,10 +23,19 @@ from sportsmodel.ingest.mlb_stats import _parse_finalized_schedule_game
 
 
 VERSION = 1
-CONTRACT = 'final-regular-or-explicit-exclusion-v1'
+CONTRACT = 'final-regular-or-explicit-exclusion-v2'
 MUTATIONS = ['historical_games', 'team_game_statistics',
              'player_game_pitching_statistics', 'games.result_metadata',
              'baseball_players.missing_only', 'baseball_player_sources.missing_only']
+EXCLUDED_TERMINAL_STATES = {
+    'Postponed': 'excluded-postponed',
+    'Suspended': 'excluded-suspended',
+    'Cancelled': 'excluded-cancelled',
+    'Canceled': 'excluded-cancelled',
+}
+CROSS_DATE_ZERO_WRITE_EXCLUSIONS = frozenset(
+    EXCLUDED_TERMINAL_STATES.values())
+SUPPORTED_DOUBLEHEADER_CODES = frozenset(('N', 'Y', 'S'))
 
 
 def _json_default(value):
@@ -130,12 +139,13 @@ def _disposition(event):
         raise ValueError('Unknown game type cannot silently become an exclusion')
     if event['gameType'] != 'R':
         return 'excluded-ineligible-game-type'
+    detailed_state = status.get('detailedState')
+    if detailed_state in EXCLUDED_TERMINAL_STATES:
+        return EXCLUDED_TERMINAL_STATES[detailed_state]
     if status.get('abstractGameState') == 'Final' or status.get('detailedState') == 'Final':
         if _parse_finalized_schedule_game(event) is None:
             raise ValueError('Malformed finalized schedule event')
         return 'eligible'
-    if status.get('detailedState') in ('Postponed', 'Suspended'):
-        return 'excluded-' + status['detailedState'].lower()
     if status.get('abstractGameState') in ('Preview', 'Live'):
         return 'excluded-nonfinal'
     raise ValueError('Unknown status cannot silently become an exclusion')
@@ -218,7 +228,7 @@ def _validate_box(event, pinned):
         raise ValueError('Feed game type mismatch')
     metadata = feed['gameData']['game']
     _positive(metadata['gameNumber'])
-    if metadata['doubleHeader'] not in ('N', 'Y'):
+    if metadata['doubleHeader'] not in SUPPORTED_DOUBLEHEADER_CODES:
         raise ValueError('Unsupported doubleheader metadata contract')
     for key in ('gameNumber', 'doubleHeader'):
         if key in event and event[key] != metadata[key]:
@@ -258,7 +268,10 @@ def build_manifest(spec, bundle, snapshot, *, protected_references=None):
                                 game_type=event['gameType'], status=event['status']))
             continue
         identity = snapshot['games'][str(pk)]
-        if _aware(identity['start']).astimezone(ZoneInfo('America/Los_Angeles')).date() != spec.schedule_date:
+        canonical_date = _aware(identity['start']).astimezone(
+            ZoneInfo('America/Los_Angeles')).date()
+        if (canonical_date != spec.schedule_date
+                and disposition not in CROSS_DATE_ZERO_WRITE_EXCLUSIONS):
             raise ValueError('Canonical game is outside the approved schedule date')
         participants = _participants(event)
         teams = {k: snapshot['teams'][str(v)] for k, v in participants.items()}
