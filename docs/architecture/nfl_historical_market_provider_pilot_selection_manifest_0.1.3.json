@@ -1,0 +1,968 @@
+{
+  "assertions": {
+    "api_key_used": false,
+    "market_data_queried": false,
+    "outcome_model_performance_data_used": false,
+    "provider_called": false,
+    "scores_queried": false,
+    "selection_frozen_no_recomputation": true
+  },
+  "created_utc": "2026-10-02T01:17:29.254Z",
+  "deduplicated_primary_request_count": 20,
+  "governing_protocol": {
+    "identity": "nfl_historical_market_research_0.2.5",
+    "sha256": "09FB79F12FD9B555E4C6A362DA5E459D45F91295DB42F0582E8B1FA7E461DAA7"
+  },
+  "kickoff_authority": {
+    "authority_ledger_sha256": "4A1C2962FF2526924FFA8AFC0275788B423B4848318043609BFF194C0049063D",
+    "kickoff_field": "historical_scheduled_kickoff_effective_at_decision_time",
+    "package_zip": "NFL_Kickoff_Authority_Reconciliation_0.2.0.zip",
+    "package_zip_sha256": "2422D97F2A21D9171286AD6F62D5F7D1957993476872AAD936DC627474A2D971",
+    "version_semantics": "latest exact official schedule version published no later than its resulting T-60 boundary"
+  },
+  "manifest_aliases": {
+    "selected_targets[].authority_version_chain": "manifest alias for normative projected authority_versions, sourced without content changes from authority-ledger chronological_kickoff_version_chain"
+  },
+  "manifest_id": "nfl_historical_market_provider_pilot_selection_manifest_0.1.3",
+  "normalization": {
+    "canonical_id_order": "unsigned UTF-8 byte ordinal",
+    "canonical_id_type": "UTF-8 string",
+    "timezone": "America/New_York",
+    "tzdata_version": "2026.2",
+    "utc_precision": "whole_second"
+  },
+  "pilot_spec": {
+    "identity": "nfl_historical_market_provider_pilot_spec_0.1.3",
+    "sha256": "9D7DF04DF7076C3C0A397BCD1FB3719D37C7434508EA33FA9154A165EEA628E6"
+  },
+  "population": {
+    "eligible_population_count": 1359,
+    "eligible_population_sha256": "38B71B797782DB67DDA9CB5770762618BB99CAAD29FD3E4607B275537052B39F",
+    "excluded_provenance_failure_game_ids": [],
+    "game_type": "REG",
+    "seasons": [
+      2021,
+      2022,
+      2023,
+      2024,
+      2025
+    ],
+    "source_population_count": 1359,
+    "source_population_sha256": "38B71B797782DB67DDA9CB5770762618BB99CAAD29FD3E4607B275537052B39F",
+    "stratum_counts": {
+      "2021": {
+        "OTHER_STANDALONE_OR_WINDOW": 63,
+        "SUNDAY_EARLY": 140,
+        "SUNDAY_LATE": 69
+      },
+      "2022": {
+        "OTHER_STANDALONE_OR_WINDOW": 74,
+        "SUNDAY_EARLY": 134,
+        "SUNDAY_LATE": 63
+      },
+      "2023": {
+        "OTHER_STANDALONE_OR_WINDOW": 72,
+        "SUNDAY_EARLY": 132,
+        "SUNDAY_LATE": 68
+      },
+      "2024": {
+        "OTHER_STANDALONE_OR_WINDOW": 73,
+        "SUNDAY_EARLY": 132,
+        "SUNDAY_LATE": 67
+      },
+      "2025": {
+        "OTHER_STANDALONE_OR_WINDOW": 74,
+        "SUNDAY_EARLY": 131,
+        "SUNDAY_LATE": 67
+      }
+    }
+  },
+  "population_hash_contract": {
+    "authority_version_nested_key_order_result": [
+      "authority_effective_at",
+      "authority_source_ids",
+      "scheduled_kickoff_utc",
+      "state"
+    ],
+    "bom": false,
+    "canonical_game_order": "unsigned UTF-8 byte ordinal",
+    "encoding": "UTF-8",
+    "nested_object_key_order": "ordinal Unicode code point",
+    "newline": "LF after every row including final row",
+    "per_source_row_hash_scope": "one canonical projected row including terminal LF",
+    "population_hash_scope": "concatenated canonical projected rows in canonical game order",
+    "projection_field_order": [
+      "canonical_game_id",
+      "season",
+      "week",
+      "away_team",
+      "home_team",
+      "kickoff_utc",
+      "authority_disposition",
+      "authority_versions"
+    ],
+    "separator": "compact JSON separators comma and colon with no added whitespace",
+    "source_field_mapping": {
+      "authority_versions": "chronological_kickoff_version_chain",
+      "kickoff_utc": "historical_scheduled_kickoff_effective_at_decision_time"
+    },
+    "timestamp_format": "kickoff_utc is RFC3339 UTC whole seconds with uppercase Z; authority_versions preserve ledger timestamp strings",
+    "top_level_key_order": "exactly projection_field_order; do not sort top-level projected fields"
+  },
+  "request_groups": [
+    {
+      "canonical_game_ids": [
+        "2021_09_HOU_MIA"
+      ],
+      "requested_date": "2021-11-07T17:00:00Z"
+    },
+    {
+      "canonical_game_ids": [
+        "2021_10_CAR_ARI"
+      ],
+      "requested_date": "2021-11-14T20:05:00Z"
+    },
+    {
+      "canonical_game_ids": [
+        "2021_10_LA_SF"
+      ],
+      "requested_date": "2021-11-16T00:15:00Z"
+    },
+    {
+      "canonical_game_ids": [
+        "2021_15_WAS_PHI"
+      ],
+      "requested_date": "2021-12-21T23:00:00Z"
+    },
+    {
+      "canonical_game_ids": [
+        "2022_09_CAR_CIN"
+      ],
+      "requested_date": "2022-11-06T17:00:00Z"
+    },
+    {
+      "canonical_game_ids": [
+        "2022_09_LA_TB"
+      ],
+      "requested_date": "2022-11-06T20:25:00Z"
+    },
+    {
+      "canonical_game_ids": [
+        "2022_11_KC_LAC"
+      ],
+      "requested_date": "2022-11-21T00:20:00Z"
+    },
+    {
+      "canonical_game_ids": [
+        "2022_17_PIT_BAL"
+      ],
+      "requested_date": "2023-01-02T00:20:00Z"
+    },
+    {
+      "canonical_game_ids": [
+        "2023_09_MIN_ATL"
+      ],
+      "requested_date": "2023-11-05T17:00:00Z"
+    },
+    {
+      "canonical_game_ids": [
+        "2023_09_NYG_LV"
+      ],
+      "requested_date": "2023-11-05T20:25:00Z"
+    },
+    {
+      "canonical_game_ids": [
+        "2023_10_NYJ_LV"
+      ],
+      "requested_date": "2023-11-13T00:20:00Z"
+    },
+    {
+      "canonical_game_ids": [
+        "2023_15_KC_NE"
+      ],
+      "requested_date": "2023-12-17T17:00:00Z"
+    },
+    {
+      "canonical_game_ids": [
+        "2024_09_NE_TEN"
+      ],
+      "requested_date": "2024-11-03T17:00:00Z"
+    },
+    {
+      "canonical_game_ids": [
+        "2024_09_JAX_PHI"
+      ],
+      "requested_date": "2024-11-03T20:05:00Z"
+    },
+    {
+      "canonical_game_ids": [
+        "2024_10_DET_HOU"
+      ],
+      "requested_date": "2024-11-11T00:20:00Z"
+    },
+    {
+      "canonical_game_ids": [
+        "2024_16_DEN_LAC"
+      ],
+      "requested_date": "2024-12-20T00:15:00Z"
+    },
+    {
+      "canonical_game_ids": [
+        "2025_09_MIN_DET"
+      ],
+      "requested_date": "2025-11-02T17:00:00Z"
+    },
+    {
+      "canonical_game_ids": [
+        "2025_10_LV_DEN"
+      ],
+      "requested_date": "2025-11-07T00:15:00Z"
+    },
+    {
+      "canonical_game_ids": [
+        "2025_10_DET_WAS"
+      ],
+      "requested_date": "2025-11-09T20:25:00Z"
+    },
+    {
+      "canonical_game_ids": [
+        "2025_16_CIN_MIA"
+      ],
+      "requested_date": "2025-12-21T17:00:00Z"
+    }
+  ],
+  "selected_target_count": 20,
+  "selected_targets": [
+    {
+      "authority_version_chain": [
+        {
+          "authority_effective_at": "2021-05-13T00:00:00Z",
+          "authority_source_ids": [
+            "INIT_2021_SCHEDULE_PDF",
+            "RELEASE_2021"
+          ],
+          "scheduled_kickoff_utc": "2021-11-07T18:00:00Z",
+          "state": "EXACT"
+        }
+      ],
+      "away_team": "HOU",
+      "canonical_game_id": "2021_09_HOU_MIA",
+      "canonical_provider_request": "GET\n/v4/historical/sports/americanfootball_nfl/odds\nbookmakers=draftkings%2Cfanduel%2Cbetmgm%2Cbetrivers&date=2021-11-07T17:00:00Z&markets=h2h&oddsFormat=decimal",
+      "canonical_provider_request_sha256": "758700ECBF01AD2B211773F14A894500B72F8CC00D5B0037145EEACB9777EAE8",
+      "home_team": "MIA",
+      "kickoff_authority_field": "historical_scheduled_kickoff_effective_at_decision_time",
+      "kickoff_utc": "2021-11-07T18:00:00Z",
+      "requested_date": "2021-11-07T17:00:00Z",
+      "season": 2021,
+      "selection_reasons": [
+        {
+          "season": 2021,
+          "stratum": "SUNDAY_EARLY",
+          "stratum_size": 140,
+          "type": "LOWER_MEDIAN",
+          "zero_based_index": 69
+        }
+      ],
+      "source_row_sha256": "E09D39A1361EF39BD7702A310A3238AF8963BD7E1585541FACB215AF7259D44A",
+      "week": 9
+    },
+    {
+      "authority_version_chain": [
+        {
+          "authority_effective_at": "2021-05-13T00:00:00Z",
+          "authority_source_ids": [
+            "INIT_2021_SCHEDULE_PDF",
+            "RELEASE_2021"
+          ],
+          "scheduled_kickoff_utc": "2021-11-14T21:05:00Z",
+          "state": "EXACT"
+        }
+      ],
+      "away_team": "CAR",
+      "canonical_game_id": "2021_10_CAR_ARI",
+      "canonical_provider_request": "GET\n/v4/historical/sports/americanfootball_nfl/odds\nbookmakers=draftkings%2Cfanduel%2Cbetmgm%2Cbetrivers&date=2021-11-14T20:05:00Z&markets=h2h&oddsFormat=decimal",
+      "canonical_provider_request_sha256": "3D0EF481BE12A3E148A0190FB934F4CC71E3DC927A2757C149200D79F57B19C5",
+      "home_team": "ARI",
+      "kickoff_authority_field": "historical_scheduled_kickoff_effective_at_decision_time",
+      "kickoff_utc": "2021-11-14T21:05:00Z",
+      "requested_date": "2021-11-14T20:05:00Z",
+      "season": 2021,
+      "selection_reasons": [
+        {
+          "season": 2021,
+          "stratum": "SUNDAY_LATE",
+          "stratum_size": 69,
+          "type": "LOWER_MEDIAN",
+          "zero_based_index": 34
+        }
+      ],
+      "source_row_sha256": "48AA77C8D955377BE12B58844439C42916D8AB7BCB14925BDAB354BB17C3960E",
+      "week": 10
+    },
+    {
+      "authority_version_chain": [
+        {
+          "authority_effective_at": "2021-05-13T00:00:00Z",
+          "authority_source_ids": [
+            "INIT_2021_SCHEDULE_PDF",
+            "RELEASE_2021"
+          ],
+          "scheduled_kickoff_utc": "2021-11-16T01:15:00Z",
+          "state": "EXACT"
+        }
+      ],
+      "away_team": "LA",
+      "canonical_game_id": "2021_10_LA_SF",
+      "canonical_provider_request": "GET\n/v4/historical/sports/americanfootball_nfl/odds\nbookmakers=draftkings%2Cfanduel%2Cbetmgm%2Cbetrivers&date=2021-11-16T00:15:00Z&markets=h2h&oddsFormat=decimal",
+      "canonical_provider_request_sha256": "7FF16806159AE84C77AB3665F35F6E5CFFF51EC0B71B60DB1AA8960B55C7B4FA",
+      "home_team": "SF",
+      "kickoff_authority_field": "historical_scheduled_kickoff_effective_at_decision_time",
+      "kickoff_utc": "2021-11-16T01:15:00Z",
+      "requested_date": "2021-11-16T00:15:00Z",
+      "season": 2021,
+      "selection_reasons": [
+        {
+          "season": 2021,
+          "stratum": "OTHER_STANDALONE_OR_WINDOW",
+          "stratum_size": 63,
+          "type": "LOWER_MEDIAN",
+          "zero_based_index": 31
+        }
+      ],
+      "source_row_sha256": "3CB266EA2E5F1C93271CD38DA4CC5F122D853B940570FD441F64FDF4C7640BA8",
+      "week": 10
+    },
+    {
+      "authority_version_chain": [
+        {
+          "authority_effective_at": "2021-05-13T00:00:00Z",
+          "authority_source_ids": [
+            "INIT_2021_SCHEDULE_PDF",
+            "RELEASE_2021"
+          ],
+          "scheduled_kickoff_utc": null,
+          "state": "TBD_OR_CONDITIONAL"
+        },
+        {
+          "authority_effective_at": "2021-11-23T20:11:12.265Z",
+          "authority_source_ids": [
+            "W15_2021_FINALIZATION"
+          ],
+          "scheduled_kickoff_utc": "2021-12-19T18:00:00Z",
+          "state": "EXACT"
+        },
+        {
+          "authority_effective_at": "2021-12-17T20:17:09.72Z",
+          "authority_source_ids": [
+            "W15_2021_RESCHEDULE"
+          ],
+          "scheduled_kickoff_utc": "2021-12-22T00:00:00Z",
+          "state": "EXACT"
+        }
+      ],
+      "away_team": "WAS",
+      "canonical_game_id": "2021_15_WAS_PHI",
+      "canonical_provider_request": "GET\n/v4/historical/sports/americanfootball_nfl/odds\nbookmakers=draftkings%2Cfanduel%2Cbetmgm%2Cbetrivers&date=2021-12-21T23:00:00Z&markets=h2h&oddsFormat=decimal",
+      "canonical_provider_request_sha256": "B990988999D10BCBD6D643F4CE18952A0BDA80C52BDBE15C0177A0A1F8267EAB",
+      "home_team": "PHI",
+      "kickoff_authority_field": "historical_scheduled_kickoff_effective_at_decision_time",
+      "kickoff_utc": "2021-12-22T00:00:00Z",
+      "requested_date": "2021-12-21T23:00:00Z",
+      "season": 2021,
+      "selection_reasons": [
+        {
+          "absolute_change_seconds": 194400,
+          "season": 2021,
+          "tie_break": "canonical_game_id_ordinal",
+          "type": "GREATEST_SCHEDULE_CHANGE"
+        }
+      ],
+      "source_row_sha256": "78229260F49886971C7B87100A1AE2953848AD9A1DB1D239153A213661038FA6",
+      "week": 15
+    },
+    {
+      "authority_version_chain": [
+        {
+          "authority_effective_at": "2022-05-13T00:00:00Z",
+          "authority_source_ids": [
+            "INIT_2022_SCHEDULE_PDF",
+            "RELEASE_2022"
+          ],
+          "scheduled_kickoff_utc": "2022-11-06T18:00:00Z",
+          "state": "EXACT"
+        }
+      ],
+      "away_team": "CAR",
+      "canonical_game_id": "2022_09_CAR_CIN",
+      "canonical_provider_request": "GET\n/v4/historical/sports/americanfootball_nfl/odds\nbookmakers=draftkings%2Cfanduel%2Cbetmgm%2Cbetrivers&date=2022-11-06T17:00:00Z&markets=h2h&oddsFormat=decimal",
+      "canonical_provider_request_sha256": "81F52ECA6928B4EFB35CB76EC705A523566DD7AE7F1205EF77AF559C65319EEC",
+      "home_team": "CIN",
+      "kickoff_authority_field": "historical_scheduled_kickoff_effective_at_decision_time",
+      "kickoff_utc": "2022-11-06T18:00:00Z",
+      "requested_date": "2022-11-06T17:00:00Z",
+      "season": 2022,
+      "selection_reasons": [
+        {
+          "season": 2022,
+          "stratum": "SUNDAY_EARLY",
+          "stratum_size": 134,
+          "type": "LOWER_MEDIAN",
+          "zero_based_index": 66
+        }
+      ],
+      "source_row_sha256": "22068AD2BB8E87E29E9743AB08C0A25F3CEF40CD05A623BD58120D0E206CEAB6",
+      "week": 9
+    },
+    {
+      "authority_version_chain": [
+        {
+          "authority_effective_at": "2022-05-13T00:00:00Z",
+          "authority_source_ids": [
+            "INIT_2022_SCHEDULE_PDF",
+            "RELEASE_2022"
+          ],
+          "scheduled_kickoff_utc": "2022-11-06T21:25:00Z",
+          "state": "EXACT"
+        }
+      ],
+      "away_team": "LA",
+      "canonical_game_id": "2022_09_LA_TB",
+      "canonical_provider_request": "GET\n/v4/historical/sports/americanfootball_nfl/odds\nbookmakers=draftkings%2Cfanduel%2Cbetmgm%2Cbetrivers&date=2022-11-06T20:25:00Z&markets=h2h&oddsFormat=decimal",
+      "canonical_provider_request_sha256": "B6819C243769100DF7DE948B498F7842A68168C16D82830A63F2BA5D243CEFFA",
+      "home_team": "TB",
+      "kickoff_authority_field": "historical_scheduled_kickoff_effective_at_decision_time",
+      "kickoff_utc": "2022-11-06T21:25:00Z",
+      "requested_date": "2022-11-06T20:25:00Z",
+      "season": 2022,
+      "selection_reasons": [
+        {
+          "season": 2022,
+          "stratum": "SUNDAY_LATE",
+          "stratum_size": 63,
+          "type": "LOWER_MEDIAN",
+          "zero_based_index": 31
+        }
+      ],
+      "source_row_sha256": "2FB2955CEECE290DC99A277FEDF485D1DAC0B9724205FB55CF41398B9CECF154",
+      "week": 9
+    },
+    {
+      "authority_version_chain": [
+        {
+          "authority_effective_at": "2022-05-13T00:00:00Z",
+          "authority_source_ids": [
+            "INIT_2022_SCHEDULE_PDF",
+            "RELEASE_2022"
+          ],
+          "scheduled_kickoff_utc": "2022-11-20T21:25:00Z",
+          "state": "EXACT"
+        },
+        {
+          "authority_effective_at": "2022-11-08T16:04:14.463Z",
+          "authority_source_ids": [
+            "CHANGE_2022_W11"
+          ],
+          "scheduled_kickoff_utc": "2022-11-21T01:20:00Z",
+          "state": "EXACT"
+        }
+      ],
+      "away_team": "KC",
+      "canonical_game_id": "2022_11_KC_LAC",
+      "canonical_provider_request": "GET\n/v4/historical/sports/americanfootball_nfl/odds\nbookmakers=draftkings%2Cfanduel%2Cbetmgm%2Cbetrivers&date=2022-11-21T00:20:00Z&markets=h2h&oddsFormat=decimal",
+      "canonical_provider_request_sha256": "3F8F79EE0272B0B744EC61B47CC25C3304C884D39E83D3C5D1ED88C092CF9F36",
+      "home_team": "LAC",
+      "kickoff_authority_field": "historical_scheduled_kickoff_effective_at_decision_time",
+      "kickoff_utc": "2022-11-21T01:20:00Z",
+      "requested_date": "2022-11-21T00:20:00Z",
+      "season": 2022,
+      "selection_reasons": [
+        {
+          "season": 2022,
+          "stratum": "OTHER_STANDALONE_OR_WINDOW",
+          "stratum_size": 74,
+          "type": "LOWER_MEDIAN",
+          "zero_based_index": 36
+        }
+      ],
+      "source_row_sha256": "A888196B80AF4CA925C4D96E89593B5559BB3AA417A8B9406A149E91D500698F",
+      "week": 11
+    },
+    {
+      "authority_version_chain": [
+        {
+          "authority_effective_at": "2022-05-13T00:00:00Z",
+          "authority_source_ids": [
+            "INIT_2022_SCHEDULE_PDF",
+            "RELEASE_2022"
+          ],
+          "scheduled_kickoff_utc": "2023-01-01T18:00:00Z",
+          "state": "EXACT"
+        },
+        {
+          "authority_effective_at": "2022-12-25T23:07:13.813Z",
+          "authority_source_ids": [
+            "CHANGE_2022_W17"
+          ],
+          "scheduled_kickoff_utc": "2023-01-02T01:20:00Z",
+          "state": "EXACT"
+        }
+      ],
+      "away_team": "PIT",
+      "canonical_game_id": "2022_17_PIT_BAL",
+      "canonical_provider_request": "GET\n/v4/historical/sports/americanfootball_nfl/odds\nbookmakers=draftkings%2Cfanduel%2Cbetmgm%2Cbetrivers&date=2023-01-02T00:20:00Z&markets=h2h&oddsFormat=decimal",
+      "canonical_provider_request_sha256": "FCAAA47D2D3320FEE7087CC5862B9E61ADC5067D11B93A0F7BEFDFA3AF4C225F",
+      "home_team": "BAL",
+      "kickoff_authority_field": "historical_scheduled_kickoff_effective_at_decision_time",
+      "kickoff_utc": "2023-01-02T01:20:00Z",
+      "requested_date": "2023-01-02T00:20:00Z",
+      "season": 2022,
+      "selection_reasons": [
+        {
+          "absolute_change_seconds": 26400,
+          "season": 2022,
+          "tie_break": "canonical_game_id_ordinal",
+          "type": "GREATEST_SCHEDULE_CHANGE"
+        }
+      ],
+      "source_row_sha256": "EC6FE534EB54282048086038B3FF73036B25DE13F66583ACB91671D4AA8C7086",
+      "week": 17
+    },
+    {
+      "authority_version_chain": [
+        {
+          "authority_effective_at": "2023-05-12T00:00:00Z",
+          "authority_source_ids": [
+            "INIT_2023_SCHEDULE_PDF",
+            "RELEASE_2023"
+          ],
+          "scheduled_kickoff_utc": "2023-11-05T18:00:00Z",
+          "state": "EXACT"
+        }
+      ],
+      "away_team": "MIN",
+      "canonical_game_id": "2023_09_MIN_ATL",
+      "canonical_provider_request": "GET\n/v4/historical/sports/americanfootball_nfl/odds\nbookmakers=draftkings%2Cfanduel%2Cbetmgm%2Cbetrivers&date=2023-11-05T17:00:00Z&markets=h2h&oddsFormat=decimal",
+      "canonical_provider_request_sha256": "43A60EBA1B3214A0019DAFCDCBB8358605E5536D5A4A14EC56FBBB772D803FF8",
+      "home_team": "ATL",
+      "kickoff_authority_field": "historical_scheduled_kickoff_effective_at_decision_time",
+      "kickoff_utc": "2023-11-05T18:00:00Z",
+      "requested_date": "2023-11-05T17:00:00Z",
+      "season": 2023,
+      "selection_reasons": [
+        {
+          "season": 2023,
+          "stratum": "SUNDAY_EARLY",
+          "stratum_size": 132,
+          "type": "LOWER_MEDIAN",
+          "zero_based_index": 65
+        }
+      ],
+      "source_row_sha256": "B0342B73695944BAF23CED2012F92C3C5EEEE85BC31460842773ED2CA931C5B9",
+      "week": 9
+    },
+    {
+      "authority_version_chain": [
+        {
+          "authority_effective_at": "2023-05-12T00:00:00Z",
+          "authority_source_ids": [
+            "INIT_2023_SCHEDULE_PDF",
+            "RELEASE_2023"
+          ],
+          "scheduled_kickoff_utc": "2023-11-05T21:25:00Z",
+          "state": "EXACT"
+        }
+      ],
+      "away_team": "NYG",
+      "canonical_game_id": "2023_09_NYG_LV",
+      "canonical_provider_request": "GET\n/v4/historical/sports/americanfootball_nfl/odds\nbookmakers=draftkings%2Cfanduel%2Cbetmgm%2Cbetrivers&date=2023-11-05T20:25:00Z&markets=h2h&oddsFormat=decimal",
+      "canonical_provider_request_sha256": "64622CEB975A0A88B95A4F0759FE8EF0F28C291CE37A97055DC48311313E7498",
+      "home_team": "LV",
+      "kickoff_authority_field": "historical_scheduled_kickoff_effective_at_decision_time",
+      "kickoff_utc": "2023-11-05T21:25:00Z",
+      "requested_date": "2023-11-05T20:25:00Z",
+      "season": 2023,
+      "selection_reasons": [
+        {
+          "season": 2023,
+          "stratum": "SUNDAY_LATE",
+          "stratum_size": 68,
+          "type": "LOWER_MEDIAN",
+          "zero_based_index": 33
+        }
+      ],
+      "source_row_sha256": "C3DB57C6348CFBC3F8D13CD45AAF3E9C3F722DFA61E0E3F0F7E5540631FBAD73",
+      "week": 9
+    },
+    {
+      "authority_version_chain": [
+        {
+          "authority_effective_at": "2023-05-12T00:00:00Z",
+          "authority_source_ids": [
+            "INIT_2023_SCHEDULE_PDF",
+            "RELEASE_2023"
+          ],
+          "scheduled_kickoff_utc": "2023-11-13T01:20:00Z",
+          "state": "EXACT"
+        }
+      ],
+      "away_team": "NYJ",
+      "canonical_game_id": "2023_10_NYJ_LV",
+      "canonical_provider_request": "GET\n/v4/historical/sports/americanfootball_nfl/odds\nbookmakers=draftkings%2Cfanduel%2Cbetmgm%2Cbetrivers&date=2023-11-13T00:20:00Z&markets=h2h&oddsFormat=decimal",
+      "canonical_provider_request_sha256": "6D0D226D240DFBB1A230A4867A6884A918E643231AD5B080840A9E3516C249A7",
+      "home_team": "LV",
+      "kickoff_authority_field": "historical_scheduled_kickoff_effective_at_decision_time",
+      "kickoff_utc": "2023-11-13T01:20:00Z",
+      "requested_date": "2023-11-13T00:20:00Z",
+      "season": 2023,
+      "selection_reasons": [
+        {
+          "season": 2023,
+          "stratum": "OTHER_STANDALONE_OR_WINDOW",
+          "stratum_size": 72,
+          "type": "LOWER_MEDIAN",
+          "zero_based_index": 35
+        }
+      ],
+      "source_row_sha256": "A729A0F8CD9A144A2DF28B119B3271ACA9776D8FE382195CAE06180DA5856ADE",
+      "week": 10
+    },
+    {
+      "authority_version_chain": [
+        {
+          "authority_effective_at": "2023-05-12T00:00:00Z",
+          "authority_source_ids": [
+            "INIT_2023_SCHEDULE_PDF",
+            "RELEASE_2023"
+          ],
+          "scheduled_kickoff_utc": "2023-12-19T01:15:00Z",
+          "state": "EXACT"
+        },
+        {
+          "authority_effective_at": "2023-11-30T20:02:50.316Z",
+          "authority_source_ids": [
+            "W15_2023_FINALIZATION"
+          ],
+          "scheduled_kickoff_utc": "2023-12-17T18:00:00Z",
+          "state": "EXACT"
+        }
+      ],
+      "away_team": "KC",
+      "canonical_game_id": "2023_15_KC_NE",
+      "canonical_provider_request": "GET\n/v4/historical/sports/americanfootball_nfl/odds\nbookmakers=draftkings%2Cfanduel%2Cbetmgm%2Cbetrivers&date=2023-12-17T17:00:00Z&markets=h2h&oddsFormat=decimal",
+      "canonical_provider_request_sha256": "A085E4DCB04153ED0419035701B5B370FACF13A1AE561908616EC38101D7B4A3",
+      "home_team": "NE",
+      "kickoff_authority_field": "historical_scheduled_kickoff_effective_at_decision_time",
+      "kickoff_utc": "2023-12-17T18:00:00Z",
+      "requested_date": "2023-12-17T17:00:00Z",
+      "season": 2023,
+      "selection_reasons": [
+        {
+          "absolute_change_seconds": 112500,
+          "season": 2023,
+          "tie_break": "canonical_game_id_ordinal",
+          "type": "GREATEST_SCHEDULE_CHANGE"
+        }
+      ],
+      "source_row_sha256": "1A1CAADF2ACEF760C53C5FCE2DDD6AFFA842696E121FE212876B2FF916BA9E81",
+      "week": 15
+    },
+    {
+      "authority_version_chain": [
+        {
+          "authority_effective_at": "2024-05-16T00:00:00Z",
+          "authority_source_ids": [
+            "INIT_2024_SCHEDULE_PDF",
+            "RELEASE_2024"
+          ],
+          "scheduled_kickoff_utc": "2024-11-03T18:00:00Z",
+          "state": "EXACT"
+        }
+      ],
+      "away_team": "NE",
+      "canonical_game_id": "2024_09_NE_TEN",
+      "canonical_provider_request": "GET\n/v4/historical/sports/americanfootball_nfl/odds\nbookmakers=draftkings%2Cfanduel%2Cbetmgm%2Cbetrivers&date=2024-11-03T17:00:00Z&markets=h2h&oddsFormat=decimal",
+      "canonical_provider_request_sha256": "6DEE62FD310435075DE2359B7752E8BA572A5A69909BBC9B448C247DD1B4D957",
+      "home_team": "TEN",
+      "kickoff_authority_field": "historical_scheduled_kickoff_effective_at_decision_time",
+      "kickoff_utc": "2024-11-03T18:00:00Z",
+      "requested_date": "2024-11-03T17:00:00Z",
+      "season": 2024,
+      "selection_reasons": [
+        {
+          "season": 2024,
+          "stratum": "SUNDAY_EARLY",
+          "stratum_size": 132,
+          "type": "LOWER_MEDIAN",
+          "zero_based_index": 65
+        }
+      ],
+      "source_row_sha256": "62887EC0B724D7B27DECF181BFB5B97F7817D30287D45068CF751613D6A67118",
+      "week": 9
+    },
+    {
+      "authority_version_chain": [
+        {
+          "authority_effective_at": "2024-05-16T00:00:00Z",
+          "authority_source_ids": [
+            "INIT_2024_SCHEDULE_PDF",
+            "RELEASE_2024"
+          ],
+          "scheduled_kickoff_utc": "2024-11-04T01:20:00Z",
+          "state": "EXACT"
+        },
+        {
+          "authority_effective_at": "2024-10-21T18:06:05.64Z",
+          "authority_source_ids": [
+            "CHANGE_2024_W09"
+          ],
+          "scheduled_kickoff_utc": "2024-11-03T21:05:00Z",
+          "state": "EXACT"
+        }
+      ],
+      "away_team": "JAX",
+      "canonical_game_id": "2024_09_JAX_PHI",
+      "canonical_provider_request": "GET\n/v4/historical/sports/americanfootball_nfl/odds\nbookmakers=draftkings%2Cfanduel%2Cbetmgm%2Cbetrivers&date=2024-11-03T20:05:00Z&markets=h2h&oddsFormat=decimal",
+      "canonical_provider_request_sha256": "1D9DF20D6AC2F7D9E5138640CDB3B5D21FBA868A198F7E8A62F87ED3581A4143",
+      "home_team": "PHI",
+      "kickoff_authority_field": "historical_scheduled_kickoff_effective_at_decision_time",
+      "kickoff_utc": "2024-11-03T21:05:00Z",
+      "requested_date": "2024-11-03T20:05:00Z",
+      "season": 2024,
+      "selection_reasons": [
+        {
+          "season": 2024,
+          "stratum": "SUNDAY_LATE",
+          "stratum_size": 67,
+          "type": "LOWER_MEDIAN",
+          "zero_based_index": 33
+        }
+      ],
+      "source_row_sha256": "2E8A01E1CCCDF526FDB8A357CC118CFB6E8AE65B79D7A92D014C586932C7C599",
+      "week": 9
+    },
+    {
+      "authority_version_chain": [
+        {
+          "authority_effective_at": "2024-05-16T00:00:00Z",
+          "authority_source_ids": [
+            "INIT_2024_SCHEDULE_PDF",
+            "RELEASE_2024"
+          ],
+          "scheduled_kickoff_utc": "2024-11-11T01:20:00Z",
+          "state": "EXACT"
+        }
+      ],
+      "away_team": "DET",
+      "canonical_game_id": "2024_10_DET_HOU",
+      "canonical_provider_request": "GET\n/v4/historical/sports/americanfootball_nfl/odds\nbookmakers=draftkings%2Cfanduel%2Cbetmgm%2Cbetrivers&date=2024-11-11T00:20:00Z&markets=h2h&oddsFormat=decimal",
+      "canonical_provider_request_sha256": "FE314359B14E32A327FD6C2D2FD9BBAB5FF515C24D6C16371EA1A5E2D3F23AA8",
+      "home_team": "HOU",
+      "kickoff_authority_field": "historical_scheduled_kickoff_effective_at_decision_time",
+      "kickoff_utc": "2024-11-11T01:20:00Z",
+      "requested_date": "2024-11-11T00:20:00Z",
+      "season": 2024,
+      "selection_reasons": [
+        {
+          "season": 2024,
+          "stratum": "OTHER_STANDALONE_OR_WINDOW",
+          "stratum_size": 73,
+          "type": "LOWER_MEDIAN",
+          "zero_based_index": 36
+        }
+      ],
+      "source_row_sha256": "54D182F94D2F5BA3B3BC1417F26015AA498368CB57E29B58C31333CA7E0187AF",
+      "week": 10
+    },
+    {
+      "authority_version_chain": [
+        {
+          "authority_effective_at": "2024-05-16T00:00:00Z",
+          "authority_source_ids": [
+            "INIT_2024_SCHEDULE_PDF",
+            "RELEASE_2024"
+          ],
+          "scheduled_kickoff_utc": "2024-12-22T21:05:00Z",
+          "state": "EXACT"
+        },
+        {
+          "authority_effective_at": "2024-11-22T16:05:53.47Z",
+          "authority_source_ids": [
+            "W16_2024_DEN_LAC_FLEX"
+          ],
+          "scheduled_kickoff_utc": "2024-12-20T01:15:00Z",
+          "state": "EXACT"
+        }
+      ],
+      "away_team": "DEN",
+      "canonical_game_id": "2024_16_DEN_LAC",
+      "canonical_provider_request": "GET\n/v4/historical/sports/americanfootball_nfl/odds\nbookmakers=draftkings%2Cfanduel%2Cbetmgm%2Cbetrivers&date=2024-12-20T00:15:00Z&markets=h2h&oddsFormat=decimal",
+      "canonical_provider_request_sha256": "592B6E60FF2A014BF31578E8FEEE34DF3E7FFA3275A071A1E2B856023D8C867C",
+      "home_team": "LAC",
+      "kickoff_authority_field": "historical_scheduled_kickoff_effective_at_decision_time",
+      "kickoff_utc": "2024-12-20T01:15:00Z",
+      "requested_date": "2024-12-20T00:15:00Z",
+      "season": 2024,
+      "selection_reasons": [
+        {
+          "absolute_change_seconds": 244200,
+          "season": 2024,
+          "tie_break": "canonical_game_id_ordinal",
+          "type": "GREATEST_SCHEDULE_CHANGE"
+        }
+      ],
+      "source_row_sha256": "322784988F0D425DD608541F4510DD457C2629F89E7F21FA0896B6C16C8D4CE2",
+      "week": 16
+    },
+    {
+      "authority_version_chain": [
+        {
+          "authority_effective_at": "2025-05-15T00:00:00Z",
+          "authority_source_ids": [
+            "INIT_2025_SCHEDULE_PDF",
+            "RELEASE_2025"
+          ],
+          "scheduled_kickoff_utc": "2025-11-02T18:00:00Z",
+          "state": "EXACT"
+        }
+      ],
+      "away_team": "MIN",
+      "canonical_game_id": "2025_09_MIN_DET",
+      "canonical_provider_request": "GET\n/v4/historical/sports/americanfootball_nfl/odds\nbookmakers=draftkings%2Cfanduel%2Cbetmgm%2Cbetrivers&date=2025-11-02T17:00:00Z&markets=h2h&oddsFormat=decimal",
+      "canonical_provider_request_sha256": "D62FB58D899709C96C52A56AF859E3F93152D7E5CFCBFB3B60998507CD48C8F1",
+      "home_team": "DET",
+      "kickoff_authority_field": "historical_scheduled_kickoff_effective_at_decision_time",
+      "kickoff_utc": "2025-11-02T18:00:00Z",
+      "requested_date": "2025-11-02T17:00:00Z",
+      "season": 2025,
+      "selection_reasons": [
+        {
+          "season": 2025,
+          "stratum": "SUNDAY_EARLY",
+          "stratum_size": 131,
+          "type": "LOWER_MEDIAN",
+          "zero_based_index": 65
+        }
+      ],
+      "source_row_sha256": "8165E7E1A2B075B3B792FE05D614EA2846D2A06318046543180B61C52F659D03",
+      "week": 9
+    },
+    {
+      "authority_version_chain": [
+        {
+          "authority_effective_at": "2025-05-15T00:00:00Z",
+          "authority_source_ids": [
+            "INIT_2025_SCHEDULE_PDF",
+            "RELEASE_2025"
+          ],
+          "scheduled_kickoff_utc": "2025-11-07T01:15:00Z",
+          "state": "EXACT"
+        }
+      ],
+      "away_team": "LV",
+      "canonical_game_id": "2025_10_LV_DEN",
+      "canonical_provider_request": "GET\n/v4/historical/sports/americanfootball_nfl/odds\nbookmakers=draftkings%2Cfanduel%2Cbetmgm%2Cbetrivers&date=2025-11-07T00:15:00Z&markets=h2h&oddsFormat=decimal",
+      "canonical_provider_request_sha256": "2009C0866A163F84158DF16FFCAAA41155FADE3849FD0E58F3D8B6016F678DBE",
+      "home_team": "DEN",
+      "kickoff_authority_field": "historical_scheduled_kickoff_effective_at_decision_time",
+      "kickoff_utc": "2025-11-07T01:15:00Z",
+      "requested_date": "2025-11-07T00:15:00Z",
+      "season": 2025,
+      "selection_reasons": [
+        {
+          "season": 2025,
+          "stratum": "OTHER_STANDALONE_OR_WINDOW",
+          "stratum_size": 74,
+          "type": "LOWER_MEDIAN",
+          "zero_based_index": 36
+        }
+      ],
+      "source_row_sha256": "D0813365DC38590F6DD6087BA3CDC37125D8194E8A8E84D1A82EB49DC43F5095",
+      "week": 10
+    },
+    {
+      "authority_version_chain": [
+        {
+          "authority_effective_at": "2025-05-15T00:00:00Z",
+          "authority_source_ids": [
+            "INIT_2025_SCHEDULE_PDF",
+            "RELEASE_2025"
+          ],
+          "scheduled_kickoff_utc": "2025-11-09T21:25:00Z",
+          "state": "EXACT"
+        }
+      ],
+      "away_team": "DET",
+      "canonical_game_id": "2025_10_DET_WAS",
+      "canonical_provider_request": "GET\n/v4/historical/sports/americanfootball_nfl/odds\nbookmakers=draftkings%2Cfanduel%2Cbetmgm%2Cbetrivers&date=2025-11-09T20:25:00Z&markets=h2h&oddsFormat=decimal",
+      "canonical_provider_request_sha256": "C97DEF865D550C51CCD485E99E060B55621CDC952166C88F68E74664F0FE4D7A",
+      "home_team": "WAS",
+      "kickoff_authority_field": "historical_scheduled_kickoff_effective_at_decision_time",
+      "kickoff_utc": "2025-11-09T21:25:00Z",
+      "requested_date": "2025-11-09T20:25:00Z",
+      "season": 2025,
+      "selection_reasons": [
+        {
+          "season": 2025,
+          "stratum": "SUNDAY_LATE",
+          "stratum_size": 67,
+          "type": "LOWER_MEDIAN",
+          "zero_based_index": 33
+        }
+      ],
+      "source_row_sha256": "B79360A7944C6CC827241CC9AA2A29239965B07790E123FA4401755C3D78D92B",
+      "week": 10
+    },
+    {
+      "authority_version_chain": [
+        {
+          "authority_effective_at": "2025-05-15T00:00:00Z",
+          "authority_source_ids": [
+            "INIT_2025_SCHEDULE_PDF",
+            "RELEASE_2025"
+          ],
+          "scheduled_kickoff_utc": "2025-12-22T01:20:00Z",
+          "state": "EXACT"
+        },
+        {
+          "authority_effective_at": "2025-12-08T22:02:56.809Z",
+          "authority_source_ids": [
+            "CHANGE_2025_W16"
+          ],
+          "scheduled_kickoff_utc": "2025-12-21T18:00:00Z",
+          "state": "EXACT"
+        }
+      ],
+      "away_team": "CIN",
+      "canonical_game_id": "2025_16_CIN_MIA",
+      "canonical_provider_request": "GET\n/v4/historical/sports/americanfootball_nfl/odds\nbookmakers=draftkings%2Cfanduel%2Cbetmgm%2Cbetrivers&date=2025-12-21T17:00:00Z&markets=h2h&oddsFormat=decimal",
+      "canonical_provider_request_sha256": "03ACFC07A05478B4D521D5BD7B9C68ADA0652050503DC0F79CF0895BCAAAE34B",
+      "home_team": "MIA",
+      "kickoff_authority_field": "historical_scheduled_kickoff_effective_at_decision_time",
+      "kickoff_utc": "2025-12-21T18:00:00Z",
+      "requested_date": "2025-12-21T17:00:00Z",
+      "season": 2025,
+      "selection_reasons": [
+        {
+          "absolute_change_seconds": 26400,
+          "season": 2025,
+          "tie_break": "canonical_game_id_ordinal",
+          "type": "GREATEST_SCHEDULE_CHANGE"
+        }
+      ],
+      "source_row_sha256": "5ADCBECBCA24572ECBF2406407A9F6854500F9761AA5BD48AC1D5D6C209CA3DC",
+      "week": 16
+    }
+  ],
+  "selection_algorithm": {
+    "base_strata": [
+      "SUNDAY_EARLY",
+      "SUNDAY_LATE",
+      "OTHER_STANDALONE_OR_WINDOW"
+    ],
+    "change_tie_break": "canonical_game_id ordinal",
+    "identity": "three_lower_medians_plus_greatest_exact_kickoff_change_per_season_0.1.3",
+    "median": "zero-based floor((n-1)/2)",
+    "replacement": "FORBIDDEN"
+  },
+  "validity_state": "FROZEN_CANDIDATE_VALID_NOT_EXECUTION_AUTHORITY"
+}
