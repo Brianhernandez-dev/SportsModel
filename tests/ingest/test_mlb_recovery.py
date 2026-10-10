@@ -47,6 +47,45 @@ def spec():
     return recovery.RecoverySpecification(date(2025, 8, 1), (800,), REVISION)
 
 
+@pytest.mark.parametrize("game_type", ["F", "D", "L", "W"])
+def test_postseason_recovery_preserves_existing_only_identity_and_mutation_envelope(game_type):
+    payload, snap = bundle(), snapshot()
+    event = payload["schedule"]["dates"][0]["games"][0]
+    event.update(gameType=game_type, ifNecessary="N")
+    pinned = payload["games"]["800"]
+    pinned["feed"]["gameData"]["game"]["type"] = game_type
+    for side, provider_id in (("home", 145), ("away", 114)):
+        name = "Chicago White Sox" if side == "home" else "Cleveland Guardians"
+        event["teams"][side]["team"]["id"] = provider_id
+        event["teams"][side]["team"]["name"] = name
+        pinned["feed"]["gameData"]["teams"][side]["id"] = provider_id
+        pinned["feed"]["gameData"]["teams"][side]["name"] = name
+        pinned["boxscore"]["teams"][side]["team"]["id"] = provider_id
+        pinned["boxscore"]["teams"][side]["team"]["name"] = name
+        pinned["feed"]["liveData"]["boxscore"]["teams"][side]["team"]["id"] = provider_id
+        pinned["feed"]["liveData"]["boxscore"]["teams"][side]["team"]["name"] = name
+    snap["teams"] = {"145": 1, "114": 2}
+    first = recovery.build_manifest(spec(), payload, snap)
+    second = recovery.build_manifest(spec(), payload, snap)
+    assert first == second
+    assert first["eligible_game_pks"] == [800]
+    assert first["specification"]["eligibility_contract"] == "final-championship-or-explicit-exclusion-v3"
+    assert first["games"][0]["identity"]["game_id"] == 1
+    assert recovery.MUTATIONS == [
+        "historical_games", "team_game_statistics", "player_game_pitching_statistics",
+        "games.result_metadata", "baseball_players.missing_only",
+        "baseball_player_sources.missing_only",
+    ]
+    assert not any("prediction" in name or "candidate" in name or "odds" in name
+                   for name in recovery.MUTATIONS)
+
+
+def test_old_recovery_eligibility_contract_is_not_reinterpreted():
+    with pytest.raises(ValueError, match="Unsupported manifest/eligibility"):
+        recovery.RecoverySpecification(date(2025, 8, 1), (800,), REVISION,
+            eligibility_contract="final-regular-or-explicit-exclusion-v2")
+
+
 def preview_args(tmp_path, *, game_pk='800', output=None, evidence_name='provider-evidence'):
     output = output or tmp_path / 'manifest.json'
     return ['preview', '--date', '2025-08-01', '--game-pks', game_pk,
@@ -1115,7 +1154,8 @@ def test_defensive_shared_canonical_check_without_weakening_db_constraints(monke
         recovery.read_snapshot(ReadOnlyCursor(), recovery.RecoverySpecification(date(2025,8,1),(800,801),REVISION), payload)
 
 
-@pytest.mark.parametrize('dependency', ['database/connection.py', 'ingest/boxscore_parser.py'])
+@pytest.mark.parametrize('dependency', ['database/connection.py', 'ingest/boxscore_parser.py',
+                                      'ingest/mlb_game_policy.py'])
 def test_execution_dependency_bytes_change_fingerprint(monkeypatch, tmp_path, dependency):
     # Exercise real file contents in an isolated source tree, never edit the
     # actual connection module or load its synthetic replacement.
@@ -1123,6 +1163,7 @@ def test_execution_dependency_bytes_change_fingerprint(monkeypatch, tmp_path, de
     paths = ['ingest/mlb_recovery.py', 'database/mlb_recovery_repository.py',
              'ingest/mlb_recovery_cli.py', 'database/connection.py',
              'ingest/boxscore_parser.py', 'ingest/mlb_players.py', 'ingest/mlb_stats.py',
+             'ingest/mlb_game_policy.py',
              'database/boxscore_repository.py', 'models/parsed_boxscore.py',
              'models/team_game_statistics.py', 'models/player_game_pitching_statistics.py']
     for path in paths:

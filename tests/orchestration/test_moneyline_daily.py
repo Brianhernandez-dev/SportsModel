@@ -13,6 +13,14 @@ from sportsmodel.ingest.mlb_schedule import (
 from sportsmodel.orchestration import moneyline_daily
 
 
+@pytest.fixture(autouse=True)
+def isolate_retained_slate_query(monkeypatch):
+    # Existing orchestration tests use connection_factory=lambda: None and mock
+    # all repository boundaries. Tests with a retained slate override this stub.
+    monkeypatch.setattr(moneyline_daily, "load_mlb_game_pks_for_pacific_date",
+                        lambda *args, **kwargs: ())
+
+
 class FakeCursor:
     def __enter__(self):
         return self
@@ -513,6 +521,34 @@ def test_stops_when_required_schedule_date_is_not_reported() -> None:
             ),
             required_dates=frozenset({date(2026, 8, 2)}),
         )
+
+
+@pytest.mark.parametrize("prediction_count", [0, 1])
+def test_supported_slate_cannot_be_empty_but_predictions_can_have_no_picks(monkeypatch, prediction_count):
+    updates = []
+    monkeypatch.setattr(moneyline_daily, "_update_workflow",
+                        lambda **arguments: updates.append(arguments))
+    arguments = dict(
+        workflow_run_id=12, target_date=date(2026, 10, 7), schedule_days_ahead=0,
+        connection_factory=lambda: None,
+        schedule_syncer=lambda **kwargs: _schedule_summary(ScheduleSyncDateSummary(
+            schedule_date=date(2026, 10, 7), games_received=1,
+            games_synchronized=1, games_skipped=0)),
+        prediction_runner=lambda **kwargs: SimpleNamespace(
+            moneyline_prediction_run_id=25, predictions_created=prediction_count),
+    )
+    if prediction_count == 0:
+        with pytest.raises(RuntimeError, match="zero predictions"):
+            moneyline_daily._run_schedule_and_prediction(**arguments)
+        assert len(updates) == 1  # No empty prediction run linked to workflow.
+    else:
+        result = moneyline_daily._run_schedule_and_prediction(**arguments)
+        assert result.predictions_created == 1
+        assert updates[-1]["prediction_run_id"] == 25
+        audit = SimpleNamespace(integrity_issues=(), predictions=1,
+            evaluated_predictions=1, evaluations=1, paper_candidates=0,
+            settlements=0, pipeline_state="complete")
+        moneyline_daily._validate_pregame_audit(audit)
 
 
 def test_runs_odds_ingestion_and_persists_quota(
@@ -2326,4 +2362,75 @@ def test_postgame_ignores_nonfinal_events_not_reported_as_finalized(
         pipeline_auditor=lambda **arguments: audit,
     )
 
+    assert checked == [()]
+
+
+@pytest.mark.parametrize("retained,finalized", [((800,), ()), ((800, 801), (800,))])
+def test_postgame_empty_or_partial_provider_slate_cannot_complete(monkeypatch, retained, finalized):
+    updates, settlements = [], []
+    workflow = SimpleNamespace(moneyline_daily_workflow_run_id=12, target_date=date(2026, 10, 7),
+        status="awaiting_results", current_stage="results_ingestion",
+        moneyline_prediction_run_id=25, odds_ingestion_run_id=182)
+    monkeypatch.setattr(moneyline_daily, "_get_or_create_workflow", lambda **kw: workflow)
+    monkeypatch.setattr(moneyline_daily, "_update_workflow", lambda **kw: updates.append(kw))
+    monkeypatch.setattr(moneyline_daily, "load_mlb_game_pks_for_pacific_date", lambda *args, **kw: retained)
+    def incomplete(game_pks, **kw):
+        assert game_pks == retained
+        raise MlbCompletenessError("retained played game has missing authoritative history")
+    with pytest.raises(MlbCompletenessError, match="retained played game"):
+        moneyline_daily.run_moneyline_daily_postgame(target_date=workflow.target_date,
+            connection_factory=lambda: None,
+            results_fetcher=lambda **kw: SimpleNamespace(dates_failed=0, boxscores_failed=0,
+                games_processed=len(finalized), boxscores_processed=0, finalized_game_pks=finalized),
+            completeness_checker=incomplete, settlement_runner=lambda **kw: settlements.append(kw))
+    assert settlements == []
+    assert updates[-1]["updater"] is moneyline_daily.mark_moneyline_daily_workflow_failed
+    assert not any(u["updater"] is moneyline_daily.mark_moneyline_daily_workflow_completed for u in updates)
+
+
+def test_postgame_retains_pre_ingestion_identity_if_slate_changes(monkeypatch):
+    slates = iter(((800,), (801,)))
+    checked = []
+    monkeypatch.setattr(moneyline_daily, "load_mlb_game_pks_for_pacific_date", lambda *args, **kw: next(slates))
+    moneyline_daily._fetch_and_validate_postgame_results(target_date=date(2026, 10, 7),
+        connection_factory=lambda: None,
+        results_fetcher=lambda **kw: SimpleNamespace(dates_failed=0, boxscores_failed=0, finalized_game_pks=(801,)),
+        completeness_checker=lambda ids, **kw: checked.append(ids))
+    assert checked == [(800, 801)]
+
+
+def test_postgame_complete_retained_slate_allows_a_no_pick_card(monkeypatch):
+    workflow = SimpleNamespace(moneyline_daily_workflow_run_id=12, target_date=date(2026, 10, 7),
+        status="awaiting_results", current_stage="results_ingestion",
+        moneyline_prediction_run_id=25, odds_ingestion_run_id=182)
+    updates, checked = [], []
+    monkeypatch.setattr(moneyline_daily, "_get_or_create_workflow", lambda **kw: workflow)
+    monkeypatch.setattr(moneyline_daily, "_update_workflow", lambda **kw: updates.append(kw))
+    monkeypatch.setattr(moneyline_daily, "load_mlb_game_pks_for_pacific_date", lambda *args, **kw: (800, 801))
+    result = moneyline_daily.run_moneyline_daily_postgame(target_date=workflow.target_date,
+        connection_factory=lambda: None,
+        results_fetcher=lambda **kw: SimpleNamespace(dates_failed=0, boxscores_failed=0,
+            games_processed=2, boxscores_processed=2, finalized_game_pks=(800, 801)),
+        completeness_checker=lambda ids, **kw: checked.append(ids),
+        settlement_runner=lambda **kw: SimpleNamespace(report=SimpleNamespace(settlements_saved=0, pending_candidates=0)),
+        early_entry_settlement_runner=lambda **kw: SimpleNamespace(performance=SimpleNamespace(pending=0)),
+        pipeline_auditor=lambda **kw: SimpleNamespace(integrity_issues=(), predictions=2,
+            evaluated_predictions=2, evaluations=2, paper_candidates=0, settlements=0, pipeline_state="complete"))
+    assert checked == [(800, 801)]
+    assert result.pipeline_state == "complete" and result.settlements_saved == 0
+    assert any(u["updater"] is moneyline_daily.mark_moneyline_daily_workflow_completed for u in updates)
+
+
+def test_postgame_validates_explicit_non_played_exclusion_before_subtracting(monkeypatch):
+    from sportsmodel.database.mlb_completeness_repository import NonPlayedMlbGame
+    exclusion = NonPlayedMlbGame(800, "Home", "Away", "Cancelled")
+    checked = []
+    monkeypatch.setattr(moneyline_daily, "load_mlb_game_pks_for_pacific_date", lambda *args, **kw: (800,))
+    monkeypatch.setattr(moneyline_daily, "validate_mlb_non_played_games",
+        lambda games, **kw: (800,) if games == (exclusion,) else pytest.fail("Exclusion evidence lost"))
+    moneyline_daily._fetch_and_validate_postgame_results(target_date=date(2026, 10, 7),
+        connection_factory=lambda: None,
+        results_fetcher=lambda **kw: SimpleNamespace(dates_failed=0, boxscores_failed=0,
+            finalized_game_pks=(), non_played_games=(exclusion,)),
+        completeness_checker=lambda ids, **kw: checked.append(ids))
     assert checked == [()]

@@ -32,6 +32,9 @@ class RecordingCursor:
         ("Athletics", "Athletics"),
         ("Oakland Athletics", "Athletics"),
         ("  Oakland   Athletics  ", "Athletics"),
+        ("Cleveland Guardians", "Cleveland Guardians"),
+        ("Cleveland Indians", "Cleveland Guardians"),
+        ("  Cleveland   Indians  ", "Cleveland Guardians"),
         ("Chicago Cubs", "Chicago Cubs"),
     ],
 )
@@ -82,3 +85,38 @@ def test_ingestion_team_resolvers_use_canonical_name(
         ("Athletics",),
         ("Athletics",),
     ]
+
+
+class PersistingTeamCursor:
+    def __init__(self) -> None:
+        self.team_ids: dict[str, int] = {}
+        self.selected_name: str | None = None
+
+    def execute(self, query: str, parameters: tuple[str]) -> None:
+        team_name = parameters[0]
+        if "INSERT INTO teams" in query:
+            self.team_ids.setdefault(team_name, len(self.team_ids) + 1)
+        elif "SELECT team_id" in query:
+            self.selected_name = team_name
+
+    def fetchone(self) -> tuple[int] | None:
+        if self.selected_name is None:
+            return None
+        return (self.team_ids[self.selected_name],)
+
+
+@pytest.mark.parametrize(
+    "resolver",
+    [
+        get_mlb_stats_team_id,
+        get_odds_api_team_id,
+    ],
+)
+def test_cleveland_historical_alias_cannot_create_a_second_team(resolver) -> None:
+    cursor = PersistingTeamCursor()
+
+    guardians_id = resolver(cursor, "Cleveland Guardians")
+    historical_id = resolver(cursor, "Cleveland Indians")
+
+    assert guardians_id == historical_id == 1
+    assert cursor.team_ids == {"Cleveland Guardians": 1}

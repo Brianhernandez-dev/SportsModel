@@ -62,12 +62,17 @@ normalizing or modifying either payload, reporting deterministic differing paths
 and bounded values. It is diagnostic only; preview validation separately compares
 a recovery-relevant semantic projection while the raw diagnostic remains intact.
 
-## Version 2 eligibility and identity contract
+## Version 3 championship eligibility and identity contract
 
-`final-regular-or-explicit-exclusion-v2` requires every allowlisted event to be
-returned exactly once. Final regular-season events are recoverable. Preview/live
-events, explicit postponed/suspended/cancelled states, and recognized non-regular
-game types have retained exclusions. Explicit non-played terminal detail takes
+`final-championship-or-explicit-exclusion-v3` requires every allowlisted event to be
+returned exactly once. Final confirmed R/F/D/L/W events are eligible. Preview/live
+events, conditional/unresolved postseason events, explicit postponed/suspended/
+cancelled states, and known non-model S/E/A/I games have retained exclusions.
+Unknown/malformed types, including generic P/C, are errors. Shared confirmation
+policy is documented in [the postseason candidate contract](mlb_postseason_canonical_schedule.md).
+Policy bytes are pinned in the implementation fingerprint; v2 manifests are
+refused rather than reinterpreted. This local candidate does not authorize recovery.
+Explicit non-played terminal detail takes
 precedence over a contradictory abstract `Final` state. Unknown states/types,
 malformed final games and
 absent allowlisted events fail closed. Eligible outside events fail before writes;
@@ -143,34 +148,52 @@ normalized MLB mapping can be reused for idempotency; conflicting metadata/mappi
 refuse execution. Unique constraints remain intact. Concurrent player-source
 insertion can fail/roll back that transaction; it does not remap or commit an orphan.
 Distinct allowlisted MLB identities must not share a canonical target, and legacy
-MLB IDs must agree when present. Existing historical result keys/dates must match
-the approved identity before the maintained upsert. Serializable execution protects
+MLB IDs must agree when present. Every eligible target must have no existing
+historical result, team statistics or pitching statistics. The guarded recovery
+path inserts absent targets; it is not a populated/partial-history upsert repair.
+Serializable execution protects
 absent result-key predicates against concurrent conflicting inserts; serialization
 failures are reported, never automatically retried against a changed observation.
 
 ## Transaction and failure contract
 
-Results commit once for the requested date; boxscores commit independently per
-game. Whole recovery is NOT atomic. For recovery only, missing players and their
-sources are created in the associated boxscore transaction. This deliberate
-tightening prevents orphan metadata after a failed guarded boxscore and keeps
-identity locks on the caller-owned transaction. Normal ingestion is unchanged.
+One approved date/manifest executes in one all-or-zero SERIALIZABLE transaction:
+all eligible results, boxscores, enumerated missing players/source rows and result
+metadata commit together. Canonical UPDATE and source SHARE row locks remain held
+through that commit; the absent-target and approval bindings are revalidated
+before mutation. There is no advisory lock in this path. Serializable predicate
+protection and uniqueness constraints can refuse concurrent conflicting inserts;
+they are not an exhaustive stress-test or global maintenance interlock. Different
+date manifests are not one transaction. Normal ingestion is unchanged.
 
 Structured output reports committed result gamePks, committed boxscore gamePks,
 performed player synchronization, failed gamePks, phase and approved hash:
 
 - `complete`: all planned eligible operations committed; explicit exclusions remain.
-- `partial`: an earlier transaction committed, or a commit acknowledgement is uncertain.
+- `rolled-back`: writes started, but the transaction is known to have rolled back.
+- `unknown-commit-state`: commit acknowledgement or rollback outcome is uncertain.
 - `failed-before-write`: no recovery transaction is known to have committed;
   failed SQL may have rolled back and consumed sequence values.
 
 Incomplete execution returns nonzero. `uncertain_commits` requires checking actual
 database state before retry; connection loss at commit is not confirmed rollback.
-Upserts preserve maintained identities/counts, not update timestamps. Extraneous
-old pitcher rows are not silently deleted; verify the exact expected appearance
-set after recovery. Verify all protected identities and card/run fingerprints,
+Repeated complete execution is safely refused by the populated-target guard,
+not silently rewritten. An eligible populated or partially populated date scope
+requires a separately reviewed amendment; never remove/filter rows to satisfy
+that guard. Verify the exact expected appearance set, all protected identities
+and card/run fingerprints,
 required result/stat coverage, older unresolved gaps and current production health.
 
 Recovered history was not available to predictions made before recovery. Never
 regenerate/relabel their point-in-time evidence. Freshness/provenance guards,
 orchestration defects, migrations and scheduler changes are separate patches.
+
+## Development operator preparation
+
+The existing-only pinned schedule preview/execute and read-only feature-history
+operator tools are described in [MLB operator tooling](mlb_postseason_operator_tools.md).
+Their separate identity mutation envelope does not broaden this result/statistics
+recovery contract. Preview is mandatory and active provider acquisition is not
+part of those tools. INFERENCE_PUBLICATION_HOLD remains in force; Preview/Early
+Entry is not a proven safe shadow mode. Late Night stderr truncation is a separate
+post-recovery observability item, untouched by this tooling.

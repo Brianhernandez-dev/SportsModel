@@ -20,10 +20,14 @@ from sportsmodel.ingest.boxscore_parser import (
 )
 from sportsmodel.ingest.mlb_players import normalize_mlb_player
 from sportsmodel.ingest.mlb_stats import _parse_finalized_schedule_game
+from sportsmodel.ingest.mlb_game_policy import (
+    championship_game_type,
+    confirmed_championship_game,
+)
 
 
 VERSION = 1
-CONTRACT = 'final-regular-or-explicit-exclusion-v2'
+CONTRACT = 'final-championship-or-explicit-exclusion-v3'
 MUTATIONS = ['historical_games', 'team_game_statistics',
              'player_game_pitching_statistics', 'games.result_metadata',
              'baseball_players.missing_only', 'baseball_player_sources.missing_only']
@@ -60,6 +64,7 @@ def implementation_hash():
     paths = ['ingest/mlb_recovery.py', 'database/mlb_recovery_repository.py',
              'ingest/mlb_recovery_cli.py', 'database/connection.py',
              'ingest/boxscore_parser.py', 'ingest/mlb_players.py', 'ingest/mlb_stats.py',
+             'ingest/mlb_game_policy.py',
              'database/boxscore_repository.py', 'models/parsed_boxscore.py',
              'models/team_game_statistics.py', 'models/player_game_pitching_statistics.py']
     return digest({p: sha256((root / p).read_bytes()).hexdigest() for p in paths})
@@ -135,13 +140,13 @@ def _events(spec, bundle):
 
 def _disposition(event):
     status = event['status']
-    if event['gameType'] not in ('R', 'S', 'F', 'D', 'L', 'W', 'C', 'A', 'E'):
-        raise ValueError('Unknown game type cannot silently become an exclusion')
-    if event['gameType'] != 'R':
+    if not championship_game_type(event):
         return 'excluded-ineligible-game-type'
     detailed_state = status.get('detailedState')
     if detailed_state in EXCLUDED_TERMINAL_STATES:
         return EXCLUDED_TERMINAL_STATES[detailed_state]
+    if not confirmed_championship_game(event):
+        return 'excluded-unconfirmed-postseason'
     if status.get('abstractGameState') == 'Final' or status.get('detailedState') == 'Final':
         if _parse_finalized_schedule_game(event) is None:
             raise ValueError('Malformed finalized schedule event')

@@ -51,7 +51,8 @@ class FakeConnection:
         self.closed = True
 
 
-def test_backfill_processes_and_skips_complete_boxscores() -> None:
+@pytest.mark.parametrize("game_type", ["R", "F", "D", "L", "W"])
+def test_backfill_processes_and_skips_complete_boxscores(game_type) -> None:
     connection = FakeConnection()
     ingested_boxscores: list[tuple[int, int]] = []
     saved_results: list[int] = []
@@ -70,14 +71,17 @@ def test_backfill_processes_and_skips_complete_boxscores() -> None:
         schedule_fetcher=lambda _: {
             "dates": [
                 {
+                    "date": "2025-04-01",
                     "games": [
                         _game(
                             game_pk=1,
                             final=True,
+                            game_type=game_type,
                         ),
                         _game(
                             game_pk=2,
                             final=True,
+                            game_type=game_type,
                         ),
                         _game(
                             game_pk=3,
@@ -89,7 +93,7 @@ def test_backfill_processes_and_skips_complete_boxscores() -> None:
         },
         connection_factory=lambda: connection,
         team_id_resolver=lambda cursor, name: (
-            10 if name == "Home" else 20
+            10 if name in ("Home", "Chicago White Sox") else 20
         ),
         canonical_game_resolver=(
             lambda cursor, **kwargs: next(game_ids)
@@ -145,7 +149,8 @@ def test_backfill_processes_and_skips_complete_boxscores() -> None:
     assert connection.closed is True
 
 
-def test_backfill_defaults_to_authoritative_mlb_source_mapping() -> None:
+@pytest.mark.parametrize("game_type", ["R", "F", "D", "L", "W"])
+def test_backfill_defaults_to_authoritative_mlb_source_mapping(game_type) -> None:
     connection = FakeConnection()
     connection.cursor_instance = AuthoritativeMappingCursor()
     saved_game_ids = []
@@ -157,10 +162,12 @@ def test_backfill_defaults_to_authoritative_mlb_source_mapping() -> None:
         schedule_fetcher=lambda _: {
             "dates": [
                 {
+                    "date": "2025-04-01",
                     "games": [
                         _game(
                             game_pk=1,
                             final=True,
+                            game_type=game_type,
                         ),
                     ]
                 }
@@ -168,7 +175,7 @@ def test_backfill_defaults_to_authoritative_mlb_source_mapping() -> None:
         },
         connection_factory=lambda: connection,
         team_id_resolver=lambda cursor, name: (
-            10 if name == "Home" else 20
+            10 if name in ("Home", "Chicago White Sox") else 20
         ),
         historical_result_saver=lambda **kwargs: saved_game_ids.append(
             kwargs["game_id"]
@@ -226,6 +233,35 @@ def test_schedule_failure_does_not_stop_later_dates() -> None:
     assert connections[0].closed is True
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"dates": [{"date": "2025-04-01"}]},
+        {"dates": [{"date": "2025-04-02", "games": []}]},
+    ],
+    ids=["malformed-envelope", "wrong-returned-date"],
+)
+def test_results_schedule_envelope_failure_reports_no_writes(payload) -> None:
+    connections: list[FakeConnection] = []
+    writes = []
+
+    summary = fetch_historical_results(
+        start_date=date(2025, 4, 1),
+        end_date=date(2025, 4, 1),
+        progress_callback=None,
+        schedule_fetcher=lambda _: payload,
+        connection_factory=lambda: connections.append(FakeConnection()),
+        historical_result_saver=lambda **kwargs: writes.append(kwargs),
+    )
+
+    assert summary.dates_failed == 1
+    assert summary.games_processed == 0
+    assert summary.date_summaries[0].schedule_error is not None
+    assert summary.date_summaries[0].nonretryable_failures == 1
+    assert connections == []
+    assert writes == []
+
+
 def test_database_failure_rolls_back_one_date() -> None:
     connection = FakeConnection()
     boxscore_called = False
@@ -249,6 +285,7 @@ def test_database_failure_rolls_back_one_date() -> None:
         schedule_fetcher=lambda _: {
             "dates": [
                 {
+                    "date": "2025-04-01",
                     "games": [
                         _game(
                             game_pk=1,
@@ -285,6 +322,27 @@ def test_backfill_rejects_reversed_date_range() -> None:
         )
 
 
+@pytest.mark.parametrize("game_type", ["?", "P", "C", None, [], {}])
+def test_results_unknown_type_fails_date_before_authoritative_writes(game_type):
+    game = _game(game_pk=1, final=True)
+    game["gameType"] = game_type
+    connection = FakeConnection()
+    writes = []
+    summary = fetch_historical_results(
+        start_date=date(2025, 4, 1), end_date=date(2025, 4, 1),
+        progress_callback=None,
+        schedule_fetcher=lambda _: {
+            "dates": [{"date": "2025-04-01", "games": [game]}]
+        },
+        connection_factory=lambda: connection,
+        historical_result_saver=lambda **kwargs: writes.append(kwargs),
+    )
+    assert summary.dates_failed == 1
+    assert summary.games_processed == 0
+    assert not writes
+    assert connection.rolled_back and not connection.committed
+
+
 def _game(
     *,
     game_pk: int,
@@ -294,6 +352,7 @@ def _game(
     return {
         "gamePk": game_pk,
         "gameType": game_type,
+        "ifNecessary": "N",
         "gameDate": "2025-04-01T19:05:00Z",
         "status": {
             "detailedState": (
@@ -310,20 +369,22 @@ def _game(
         "teams": {
             "home": {
                 "team": {
-                    "name": "Home",
+                    "name": "Home" if game_type == "R" else "Chicago White Sox",
+                    "id": 145,
                 },
                 "score": 5,
             },
             "away": {
                 "team": {
-                    "name": "Away",
+                    "name": "Away" if game_type == "R" else "Cleveland Guardians",
+                    "id": 114,
                 },
                 "score": 3,
             },
         },
     }
 
-def test_backfill_skips_non_regular_season_games() -> None:
+def test_backfill_skips_non_model_competition_games() -> None:
     connection = FakeConnection()
     boxscore_called = False
 
@@ -338,6 +399,7 @@ def test_backfill_skips_non_regular_season_games() -> None:
         schedule_fetcher=lambda _: {
             "dates": [
                 {
+                    "date": "2025-03-01",
                     "games": [
                         _game(
                             game_pk=1,
@@ -363,4 +425,20 @@ def test_backfill_skips_non_regular_season_games() -> None:
     assert connection.committed is True
     assert connection.rolled_back is False
     assert connection.closed is True
+
+
+@pytest.mark.parametrize("state", ["Postponed", "Suspended", "Cancelled", "Canceled"])
+def test_results_retains_explicit_non_played_evidence_without_writes(state):
+    game = _game(game_pk=800, final=True, game_type="D")
+    game["status"]["detailedState"] = state
+    connection = FakeConnection()
+    writes = []
+    summary = fetch_historical_results(start_date=date(2025, 4, 1), end_date=date(2025, 4, 1),
+        progress_callback=None, schedule_fetcher=lambda _: {"dates": [{"date": "2025-04-01", "games": [game]}]},
+        connection_factory=lambda: connection, team_id_resolver=lambda *args: pytest.fail("Non-played team write"),
+        historical_result_saver=lambda **kw: writes.append(kw), boxscore_ingestor=lambda **kw: pytest.fail("Non-played boxscore"))
+    assert summary.dates_failed == 0 and summary.finalized_game_pks == ()
+    assert summary.non_played_games[0].game_pk == 800
+    assert summary.non_played_games[0].detailed_state == state
+    assert not writes and connection.committed
 

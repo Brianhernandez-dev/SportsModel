@@ -99,6 +99,15 @@ application retry boundary and its logs are authoritative.
 
 ### 1. Synchronize the schedule
 
+The development candidate shares confirmed championship admission (`R/F/D/L/W`)
+across canonical schedule, predictions, normal results, and recovery v3, retaining
+`mlb_stats` authority and failing closed on malformed/mismatched schedule-date
+envelopes, unknown types, and empty supported slates. `{"dates": []}` remains a
+valid no-game response; an all-conditional postseason date deliberately defers
+and fails the preview/card rather than completing as a successful empty slate.
+This is not production deployment or recovery authority. See
+[the canonical schedule contract and review-only recovery proposal](mlb_postseason_canonical_schedule.md).
+
     D:\SportsModel\.venv\Scripts\python.exe .\scripts\sync_mlb_schedule.py --start-date YYYY-MM-DD --days-ahead 7
 
 ### 2. Generate predictions
@@ -175,13 +184,19 @@ workflow and any partial official-card evidence remain failed and preserved.
 
 Postgame workflow completion is not evidence that historical results and
 statistics are complete. Every Postgame invocation, including a workflow already
-marked complete, rechecks the target date and then audits each finalized
-regular-season MLB event. The audit requires one unambiguous MLB-to-canonical
+marked complete, requires the retained canonical `mlb_stats` Pacific-date slate
+(read before and after ingestion) together with returned finalized IDs. Empty or
+partial provider responses cannot remove retained games from this audit.
+The audit requires one unambiguous MLB-to-canonical
 mapping, one matching historical result, correctly oriented statistics for both
 teams, one starter per team, contiguous pitching appearances, and pitcher totals
-that reconcile to the team pitching totals. Non-final, postponed, and
-non-regular-season events are not completeness targets until the authoritative
-schedule identifies them as finalized regular-season games.
+that reconcile to the team pitching totals. An explicit current-date
+Postponed/Suspended/Cancelled/Canceled exclusion may remove a target only when
+canonical participants agree, identity is unambiguous, and no played history
+conflicts. Never-admitted conditional and known non-model events create no
+canonical requirement. Other retained events with missing history remain
+unresolved and fail Postgame, including no-pick/no-card handling. Unknown game
+types continue to fail closed.
 
 Official Pregame prediction generation is gated separately. For each scheduled
 target team, the gate audits every canonical MLB event in the same 200-game

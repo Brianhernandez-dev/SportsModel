@@ -135,7 +135,8 @@ def test_required_schedule_invariant_failure_is_permanent() -> None:
     assert not isinstance(error.value, RetryableOperationalError)
 
 
-def test_postgame_provider_failure_is_retryable() -> None:
+def test_postgame_provider_failure_is_retryable(monkeypatch) -> None:
+    monkeypatch.setattr(moneyline_daily, "load_mlb_game_pks_for_pacific_date", lambda *args, **kw: ())
     target_date = date(2026, 9, 1)
     summary = HistoricalResultsBackfillSummary(
         start_date=target_date,

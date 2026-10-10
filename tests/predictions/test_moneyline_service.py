@@ -114,8 +114,10 @@ class FakeModel:
         return 0.60
 
 
+@pytest.mark.parametrize("game_type", ["R", "F", "D", "L", "W"])
 def test_daily_prediction_run_persists_future_game(
     monkeypatch,
+    game_type,
 ) -> None:
     connection = FakeConnection()
     inserted_predictions = []
@@ -125,9 +127,7 @@ def test_daily_prediction_run_persists_future_game(
     _patch_common_dependencies(
         monkeypatch,
         connection=connection,
-        schedule_payload=_schedule_payload(
-            game_time="2026-07-30T17:40:00Z",
-        ),
+        schedule_payload=_championship_payload(game_type),
     )
 
     monkeypatch.setattr(
@@ -246,6 +246,7 @@ def test_started_game_is_skipped(
     payload = {
         "dates": [
             {
+                "date": "2026-07-30",
                 "games": [
                     _schedule_game(
                         game_pk=1001,
@@ -359,6 +360,48 @@ def test_prediction_failure_rolls_back_and_marks_run_failed(
     ] == 0
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"dates": [{"date": "2026-07-30"}]},
+        {"dates": [{"date": "2026-07-29", "games": []}]},
+    ],
+    ids=["malformed-envelope", "wrong-returned-date"],
+)
+def test_prediction_run_fails_from_invalid_schedule_envelope(monkeypatch, payload):
+    connection = FakeConnection()
+    failed_calls = []
+    completed_calls = []
+    _patch_common_dependencies(
+        monkeypatch,
+        connection=connection,
+        schedule_payload=payload,
+    )
+    monkeypatch.setattr(
+        service,
+        "mark_moneyline_prediction_run_failed",
+        lambda connection, **kwargs: failed_calls.append(kwargs),
+    )
+    monkeypatch.setattr(
+        service,
+        "mark_moneyline_prediction_run_completed",
+        lambda cursor, **kwargs: completed_calls.append(kwargs),
+    )
+
+    with pytest.raises(ValueError):
+        service.run_moneyline_predictions(
+            target_date=date(2026, 7, 30),
+            prediction_time=PREDICTION_TIME,
+            connection_factory=lambda: connection,
+            feature_generation_service=FakeFeatureService(),
+        )
+
+    assert failed_calls and not completed_calls
+    assert failed_calls[0]["predictions_created"] == 0
+    assert connection.rollbacks == 1
+    assert connection.commits == 0
+
+
 def test_model_package_rejects_hash_mismatch(
     tmp_path: Path,
 ) -> None:
@@ -406,6 +449,8 @@ def _patch_common_dependencies(
     connection: FakeConnection,
     schedule_payload: dict,
 ) -> None:
+    monkeypatch.setattr(service, "get_earliest_mlb_game_start_for_pacific_date",
+                        lambda *args, **kwargs: None)
     monkeypatch.setattr(
         service,
         "load_moneyline_model_package",
@@ -502,6 +547,91 @@ def _patch_common_dependencies(
 
 
 
+def _championship_payload(game_type):
+    payload = _schedule_payload(game_time="2026-07-30T17:40:00Z")
+    game = payload["dates"][0]["games"][0]
+    game.update(gameType=game_type, ifNecessary="N")
+    game["status"] = {"abstractGameState": "Preview", "detailedState": "Scheduled", "startTimeTBD": False}
+    game["teams"]["home"]["team"]["id"] = 145
+    game["teams"]["away"]["team"]["id"] = 114
+    game["teams"]["home"]["team"]["name"] = "Chicago White Sox"
+    game["teams"]["away"]["team"]["name"] = "Cleveland Guardians"
+    return payload
+
+
+@pytest.mark.parametrize("game_type", ["D", "?", None, [], "P", "C"])
+def test_supported_or_unknown_slate_cannot_complete_empty(monkeypatch, game_type):
+    connection = FakeConnection()
+    failures, completions = [], []
+    _patch_common_dependencies(monkeypatch, connection=connection,
+                               schedule_payload=_championship_payload(game_type))
+    monkeypatch.setattr(service, "mark_moneyline_prediction_run_failed",
+                        lambda connection, **kwargs: failures.append(kwargs))
+    monkeypatch.setattr(service, "mark_moneyline_prediction_run_completed",
+                        lambda cursor, **kwargs: completions.append(kwargs))
+    if game_type == "D":
+        monkeypatch.setattr(service, "_parse_hydrated_schedule_game", lambda _: None)
+    with pytest.raises((ValueError, RuntimeError)):
+        service.run_moneyline_predictions(target_date=date(2026, 7, 30),
+            prediction_time=PREDICTION_TIME, connection_factory=lambda: connection,
+            feature_generation_service=FakeFeatureService())
+    assert failures and not completions
+    assert connection.rollbacks == 1
+
+
+@pytest.mark.parametrize("game_type", ["S", "E", "A", "I"])
+def test_non_model_game_is_not_prediction_eligible(game_type):
+    assert service._parse_hydrated_schedule_game(
+        _championship_payload(game_type)["dates"][0]["games"][0]) is None
+
+
+def test_conditional_preview_cannot_complete_empty(monkeypatch):
+    payload = _championship_payload("D")
+    payload["dates"][0]["games"][0]["ifNecessary"] = "Y"
+    connection = FakeConnection()
+    failures = []
+    _patch_common_dependencies(monkeypatch, connection=connection, schedule_payload=payload)
+    monkeypatch.setattr(service, "mark_moneyline_prediction_run_failed",
+                        lambda connection, **kwargs: failures.append(kwargs))
+    with pytest.raises(RuntimeError, match="zero eligible predictions"):
+        service.run_moneyline_predictions(target_date=date(2026, 7, 30),
+            prediction_time=PREDICTION_TIME, run_type="preview",
+            connection_factory=lambda: connection,
+            feature_generation_service=FakeFeatureService())
+    assert failures
+
+
+@pytest.mark.parametrize("game_type", ["F", "D", "L", "W"])
+def test_postseason_starters_are_available_to_early_entry_market_checks(monkeypatch, game_type):
+    monkeypatch.setattr(service, "fetch_hydrated_schedule_for_date",
+                        lambda _: _championship_payload(game_type))
+    assert service.load_current_probable_starters(date(2026, 7, 30)) == {1001: (202, 101)}
+
+
+@pytest.mark.parametrize("state", ["Live", "Final"])
+def test_played_postseason_game_is_not_a_new_prediction_even_with_future_timestamp(state):
+    payload = _championship_payload("D")
+    game = payload["dates"][0]["games"][0]
+    game["status"]["abstractGameState"] = state
+    assert service._parse_hydrated_schedule_game(game) is None
+
+
+def test_retained_canonical_slate_blocks_later_empty_provider_payload(monkeypatch):
+    connection = FakeConnection()
+    failures = []
+    _patch_common_dependencies(monkeypatch, connection=connection,
+                               schedule_payload={"dates": []})
+    monkeypatch.setattr(service, "get_earliest_mlb_game_start_for_pacific_date",
+                        lambda *args, **kwargs: datetime(2026, 7, 30, 17, 40, tzinfo=timezone.utc))
+    monkeypatch.setattr(service, "mark_moneyline_prediction_run_failed",
+                        lambda connection, **kwargs: failures.append(kwargs))
+    with pytest.raises(RuntimeError, match="zero eligible predictions"):
+        service.run_moneyline_predictions(target_date=date(2026, 7, 30),
+            prediction_time=PREDICTION_TIME, connection_factory=lambda: connection,
+            feature_generation_service=FakeFeatureService())
+    assert failures and connection.rollbacks == 1
+
+
 def _schedule_payload(
     *,
     game_time: str,
@@ -509,6 +639,7 @@ def _schedule_payload(
     return {
         "dates": [
             {
+                "date": "2026-07-30",
                 "games": [
                     _schedule_game(
                         game_pk=1001,

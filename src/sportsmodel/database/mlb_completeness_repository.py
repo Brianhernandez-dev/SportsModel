@@ -3,10 +3,12 @@
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from sportsmodel.database.connection import get_connection
+from sportsmodel.ingest.team_identity import normalize_team_name
 
 
 ConnectionFactory = Callable[[], Any]
@@ -74,6 +76,105 @@ class MlbGameCompletenessSnapshot:
 
 class MlbCompletenessError(RuntimeError):
     """Raised when authoritative MLB history is not event-complete."""
+
+
+@dataclass(frozen=True)
+class NonPlayedMlbGame:
+    game_pk: int
+    home_team: str
+    away_team: str
+    detailed_state: str
+
+
+def load_mlb_game_pks_for_pacific_date(
+    target_date: date,
+    *,
+    connection_factory: ConnectionFactory = get_connection,
+) -> tuple[int, ...]:
+    """Read retained MLB-authoritative IDs using the canonical Pacific interval."""
+    zone = ZoneInfo("America/Los_Angeles")
+    start = datetime.combine(target_date, time.min, zone).astimezone(timezone.utc)
+    end = datetime.combine(target_date + timedelta(days=1), time.min, zone).astimezone(timezone.utc)
+    connection = connection_factory()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT source.external_game_id
+                FROM games AS game
+                JOIN game_sources AS source ON source.game_id = game.game_id
+                WHERE source.source_name = %s
+                  AND game.game_date >= %s AND game.game_date < %s
+                ORDER BY source.external_game_id;
+                """,
+                (MLB_SOURCE_NAME, start, end),
+            )
+            values = tuple(row[0] for row in cursor.fetchall())
+    finally:
+        connection.close()
+    if any(not isinstance(value, str) or not value.isdigit() or int(value) <= 0 for value in values):
+        raise MlbCompletenessError("Retained MLB slate contains an invalid source ID.")
+    return _normalize_game_pks(tuple(int(value) for value in values))
+
+
+def validate_mlb_non_played_games(
+    games: Iterable[NonPlayedMlbGame],
+    *,
+    connection_factory: ConnectionFactory = get_connection,
+) -> tuple[int, ...]:
+    """Allow explicit terminal exclusions without erasing conflicting played history."""
+    materialized = tuple(games)
+    if not materialized:
+        return ()
+    from sportsmodel.ingest.mlb_game_policy import NON_PLAYED_STATES
+
+    if any(not isinstance(game, NonPlayedMlbGame) or game.detailed_state not in NON_PLAYED_STATES
+           for game in materialized):
+        raise MlbCompletenessError("MLB non-played exclusion evidence is invalid.")
+    game_pks = _normalize_game_pks(tuple(game.game_pk for game in materialized))
+    if len(game_pks) != len(materialized):
+        raise MlbCompletenessError("Duplicate MLB non-played exclusion evidence.")
+    connection = connection_factory()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT source.external_game_id, game.game_id, home.team_name, away.team_name,
+                       (EXISTS (SELECT 1 FROM historical_games h WHERE h.game_id = game.game_id)
+                        OR EXISTS (SELECT 1 FROM team_game_statistics t WHERE t.game_id = game.game_id)
+                        OR EXISTS (SELECT 1 FROM player_game_pitching_statistics p WHERE p.game_id = game.game_id)),
+                       (SELECT COUNT(*) FROM game_sources s
+                        WHERE s.game_id = game.game_id AND s.source_name = %s)
+                FROM game_sources source
+                LEFT JOIN games game ON game.game_id = source.game_id
+                LEFT JOIN teams home ON home.team_id = game.home_team_id
+                LEFT JOIN teams away ON away.team_id = game.away_team_id
+                WHERE source.source_name = %s AND source.external_game_id = ANY(%s);
+                """,
+                (MLB_SOURCE_NAME, MLB_SOURCE_NAME, [str(pk) for pk in game_pks]),
+            )
+            rows = cursor.fetchall()
+    finally:
+        connection.close()
+    by_pk = defaultdict(list)
+    for row in rows:
+        by_pk[int(row[0])].append(row)
+    validated = []
+    for game in materialized:
+        mapped = by_pk[game.game_pk]
+        # An excluded event absent from canonical identity imposes no history requirement.
+        if not mapped:
+            continue
+        if len(mapped) != 1 or mapped[0][5] != 1:
+            raise MlbCompletenessError("MLB non-played exclusion has ambiguous canonical identity.")
+        _, _, home, away, played_history, _ = mapped[0]
+        if (normalize_team_name(game.home_team) != home
+                or normalize_team_name(game.away_team) != away or home == away):
+            raise MlbCompletenessError("MLB non-played exclusion conflicts with canonical participants.")
+        if played_history:
+            raise MlbCompletenessError("MLB non-played exclusion conflicts with retained played history.")
+        validated.append(game.game_pk)
+    return tuple(validated)
 
 
 def validate_mlb_game_completeness(

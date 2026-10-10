@@ -27,7 +27,7 @@ def main(
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Synchronize upcoming regular-season MLB "
+            "Synchronize upcoming regular-season and postseason MLB "
             "games into the canonical games table."
         )
     )

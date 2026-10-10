@@ -4,7 +4,7 @@ from datetime import date, datetime, timezone
 from hashlib import sha256
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import requests
 
@@ -13,6 +13,9 @@ from sportsmodel.database.connection import (
 )
 from sportsmodel.database.mlb_completeness_repository import (
     assert_mlb_feature_history_complete,
+)
+from sportsmodel.database.scheduled_execution_repository import (
+    get_earliest_mlb_game_start_for_pacific_date,
 )
 from sportsmodel.database.moneyline_prediction_repository import (
     create_moneyline_prediction_run,
@@ -40,6 +43,11 @@ from sportsmodel.ingest.mlb_stats import (
     MLB_SCHEDULE_URL,
     parse_game_datetime,
 )
+from sportsmodel.ingest.mlb_game_policy import (
+    championship_game_type,
+    confirmed_championship_game,
+    extract_schedule_games,
+)
 from sportsmodel.models.baseball_game import (
     BaseballGame,
 )
@@ -57,7 +65,6 @@ DEFAULT_MODEL_DIRECTORY = Path(
 
 GAME_SOURCE_NAME = "mlb_stats"
 
-REGULAR_SEASON_GAME_TYPE = "R"
 
 
 ConnectionFactory = Callable[[], Any]
@@ -84,7 +91,7 @@ class LoadedMoneylineModelPackage:
 @dataclass(frozen=True)
 class HydratedScheduleGame:
     """
-    One valid regular-season MLB game with probable pitchers.
+    One confirmed championship-season MLB game with probable pitchers.
     """
 
     mlb_game_id: int
@@ -206,7 +213,10 @@ def load_current_probable_starters(
     payload = fetch_hydrated_schedule_for_date(target_date)
     starters: dict[int, tuple[int | None, int | None]] = {}
 
-    for raw_game in _extract_schedule_games(payload):
+    for raw_game in _extract_schedule_games(
+        payload,
+        expected_date=target_date,
+    ):
         game = _parse_hydrated_schedule_game(raw_game)
         if game is None:
             continue
@@ -465,13 +475,16 @@ def run_moneyline_predictions(
 
         raw_schedule_games = (
             _extract_schedule_games(
-                schedule_payload
+                schedule_payload,
+                expected_date=target_date,
             )
         )
 
         games_received = len(
             raw_schedule_games
         )
+
+        supported_count = sum(championship_game_type(game) for game in raw_schedule_games)
 
         prediction_games: list[
             HydratedScheduleGame
@@ -497,6 +510,19 @@ def run_moneyline_predictions(
 
             prediction_games.append(
                 schedule_game
+            )
+
+        canonical_slate_exists = False
+        if not prediction_games and not supported_count and not getattr(schedule_summary, "games_synchronized", 0):
+            # A later empty provider payload must not erase retained canonical
+            # supported-game evidence for this Pacific date.
+            canonical_slate_exists = get_earliest_mlb_game_start_for_pacific_date(
+                target_date, connection_factory=connection_factory,
+            ) is not None
+        if (supported_count or getattr(schedule_summary, "games_synchronized", 0) or canonical_slate_exists) and not prediction_games:
+            raise RuntimeError(
+                "Supported MLB slate produced zero eligible predictions; "
+                "resolve conditional/participant/timing/filtering issues, not a no-pick card."
             )
 
         probable_pitcher_ids = sorted(
@@ -902,43 +928,27 @@ def run_moneyline_predictions(
 
 
 def _extract_schedule_games(
-    schedule_payload: dict[str, Any],
-) -> tuple[dict[str, Any], ...]:
-    date_blocks = schedule_payload.get(
-        "dates"
+    schedule_payload: Any,
+    *,
+    expected_date: date,
+) -> tuple[Mapping[str, Any], ...]:
+    return extract_schedule_games(
+        schedule_payload,
+        expected_date=expected_date,
     )
-
-    if not isinstance(date_blocks, list):
-        return ()
-
-    games: list[dict[str, Any]] = []
-
-    for date_block in date_blocks:
-        if not isinstance(date_block, dict):
-            continue
-
-        date_games = date_block.get(
-            "games"
-        )
-
-        if not isinstance(date_games, list):
-            continue
-
-        games.extend(
-            game
-            for game in date_games
-            if isinstance(game, dict)
-        )
-
-    return tuple(games)
 
 
 def _parse_hydrated_schedule_game(
     game: dict[str, Any],
 ) -> HydratedScheduleGame | None:
-    if (
-        game.get("gameType")
-        != REGULAR_SEASON_GAME_TYPE
+    if not confirmed_championship_game(game):
+        return None
+
+    # Played evidence confirms results, never a new pregame prediction.
+    status = game.get("status", {})
+    if game["gameType"] != "R" and (
+        status.get("abstractGameState") in ("Live", "Final")
+        or status.get("detailedState") == "Final"
     ):
         return None
 

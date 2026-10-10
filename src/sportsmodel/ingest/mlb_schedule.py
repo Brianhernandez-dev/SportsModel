@@ -1,7 +1,7 @@
 ﻿from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from typing import Any
+from typing import Any, Mapping
 
 from sportsmodel.database.connection import get_connection
 from sportsmodel.ingest.game_matching import (
@@ -13,10 +13,14 @@ from sportsmodel.ingest.mlb_stats import (
     parse_game_datetime,
 )
 from sportsmodel.utils.transient_errors import is_retryable_provider_error
+from sportsmodel.ingest.mlb_game_policy import (
+    CHAMPIONSHIP_SEASON_GAME_TYPES,
+    confirmed_championship_game,
+    extract_schedule_games,
+)
 
 
 SOURCE_NAME = "mlb_stats"
-REGULAR_SEASON_GAME_TYPE = "R"
 
 
 ScheduleFetcher = Callable[
@@ -33,7 +37,7 @@ ProgressCallback = Callable[[str], None]
 @dataclass(frozen=True)
 class ScheduledMlbGame:
     """
-    Valid regular-season game parsed from an MLB schedule response.
+    Valid championship-season game parsed from an MLB schedule response.
     """
 
     game_pk: int
@@ -130,7 +134,7 @@ def sync_mlb_schedule(
     canonical_game_updater: CanonicalGameUpdater | None = None,
 ) -> ScheduleSyncSummary:
     """
-    Synchronize regular-season MLB games into the canonical game table.
+    Synchronize regular-season and postseason MLB games into the canonical table.
 
     days_ahead is inclusive. A value of seven processes the start date
     through seven calendar days after the start date.
@@ -237,8 +241,10 @@ def _sync_schedule_date(
     canonical_game_updater: CanonicalGameUpdater,
 ) -> ScheduleSyncDateSummary:
     try:
-        schedule_data = schedule_fetcher(
-            schedule_date
+        schedule_data = schedule_fetcher(schedule_date)
+        schedule_games = _extract_schedule_games(
+            schedule_data,
+            expected_date=schedule_date,
         )
     except Exception as error:
         return ScheduleSyncDateSummary(
@@ -249,10 +255,6 @@ def _sync_schedule_date(
             error_message=_format_error(error),
             failure_is_retryable=is_retryable_provider_error(error),
         )
-
-    schedule_games = _extract_schedule_games(
-        schedule_data
-    )
 
     try:
         connection = connection_factory()
@@ -351,40 +353,20 @@ def _date_range(
 
 
 def _extract_schedule_games(
-    schedule_data: dict[str, Any],
-) -> tuple[dict[str, Any], ...]:
-    date_blocks = schedule_data.get("dates")
-
-    if not isinstance(date_blocks, list):
-        return ()
-
-    games: list[dict[str, Any]] = []
-
-    for date_block in date_blocks:
-        if not isinstance(date_block, dict):
-            continue
-
-        date_games = date_block.get("games")
-
-        if not isinstance(date_games, list):
-            continue
-
-        games.extend(
-            game
-            for game in date_games
-            if isinstance(game, dict)
-        )
-
-    return tuple(games)
+    schedule_data: Any,
+    *,
+    expected_date: date,
+) -> tuple[Mapping[str, Any], ...]:
+    return extract_schedule_games(
+        schedule_data,
+        expected_date=expected_date,
+    )
 
 
 def _parse_scheduled_game(
     game: dict[str, Any],
 ) -> ScheduledMlbGame | None:
-    if (
-        game.get("gameType")
-        != REGULAR_SEASON_GAME_TYPE
-    ):
+    if not confirmed_championship_game(game):
         return None
 
     game_pk = game.get("gamePk")

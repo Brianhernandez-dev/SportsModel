@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "domain": "MLB",
+  "target_date": "2026-10-07",
+  "payload_sha256": "202141c4c67972d4c41add37e03c9661281cdd3e551575b20a2c9ae0fa1e1fa6",
+  "games": [{
+    "game_pk": 800,
+    "home_team": "Chicago White Sox",
+    "away_team": "Cleveland Guardians",
+    "expected_start": "2026-10-07T19:00:00Z",
+    "existing_game_id": 7,
+    "current_sources": [{"source_name": "odds_api", "external_game_id": "SYNTHETIC_EVENT"}],
+    "resulting_sources": [
+      {"source_name": "odds_api", "external_game_id": "SYNTHETIC_EVENT"},
+      {"source_name": "mlb_stats", "external_game_id": "800"}
+    ]
+  }]
+}

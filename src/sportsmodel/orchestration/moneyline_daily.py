@@ -12,6 +12,8 @@ from sportsmodel.auditing.moneyline_live_pipeline import (
 from sportsmodel.database.connection import get_connection
 from sportsmodel.database.mlb_completeness_repository import (
     assert_mlb_games_complete,
+    load_mlb_game_pks_for_pacific_date,
+    validate_mlb_non_played_games,
 )
 from sportsmodel.database.moneyline_daily_workflow_repository import (
     advance_moneyline_daily_workflow_stage,
@@ -374,6 +376,15 @@ def _run_schedule_and_prediction(
     prediction_result = prediction_runner(
         target_date=target_date,
     )
+
+    synchronized = sum(
+        item.games_synchronized for item in schedule_summary.date_summaries
+        if item.schedule_date == target_date
+    )
+    if synchronized and getattr(prediction_result, "predictions_created", None) == 0:
+        raise RuntimeError(
+            "Canonical supported MLB slate returned zero predictions; refusing an empty official card."
+        )
 
     _update_workflow(
         connection_factory=connection_factory,
@@ -799,6 +810,9 @@ def _fetch_and_validate_postgame_results(
         assert_mlb_games_complete
     ),
 ):
+    retained_before = load_mlb_game_pks_for_pacific_date(
+        target_date, connection_factory=connection_factory,
+    )
     results_summary = results_fetcher(
         start_date=target_date,
         end_date=target_date,
@@ -833,8 +847,21 @@ def _fetch_and_validate_postgame_results(
             "MLB results ingestion did not report finalized game IDs."
         )
 
+    retained_after = load_mlb_game_pks_for_pacific_date(
+        target_date, connection_factory=connection_factory,
+    )
+    non_played = validate_mlb_non_played_games(
+        getattr(results_summary, "non_played_games", ()),
+        connection_factory=connection_factory,
+    )
+    if set(non_played).intersection(finalized_game_pks):
+        raise RuntimeError("MLB results contain conflicting played/non-played evidence.")
+    required_game_pks = tuple(dict.fromkeys(
+        pk for pk in (*retained_before, *retained_after, *finalized_game_pks)
+        if pk not in non_played
+    ))
     completeness_checker(
-        finalized_game_pks,
+        required_game_pks,
         connection_factory=connection_factory,
     )
 

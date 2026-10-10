@@ -1,7 +1,7 @@
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Mapping
 
 import requests
 
@@ -9,17 +9,23 @@ from sportsmodel.database.boxscore_status_repository import (
     get_complete_box_score_game_ids,
 )
 from sportsmodel.database.connection import get_connection
+from sportsmodel.database.mlb_completeness_repository import NonPlayedMlbGame
 from sportsmodel.ingest.boxscore_ingestion import ingest_boxscore
 from sportsmodel.ingest.game_matching import (
     get_or_create_authoritative_source_game,
 )
 from sportsmodel.ingest.team_identity import normalize_team_name
 from sportsmodel.utils.transient_errors import is_retryable_provider_error
+from sportsmodel.ingest.mlb_game_policy import (
+    championship_game_type,
+    confirmed_championship_game,
+    extract_schedule_games,
+    NON_PLAYED_STATES,
+)
 
 
 SOURCE_NAME = "mlb_stats"
 MLB_SCHEDULE_URL = "https://statsapi.mlb.com/api/v1/schedule"
-REGULAR_SEASON_GAME_TYPE = "R"
 
 
 ScheduleFetcher = Callable[[date], dict[str, Any]]
@@ -94,6 +100,7 @@ class HistoricalResultsDateSummary:
     nonretryable_failures: int = 0
 
     finalized_game_pks: tuple[int, ...] = ()
+    non_played_games: tuple[NonPlayedMlbGame, ...] = ()
 
     @property
     def failed(self) -> bool:
@@ -173,13 +180,17 @@ class HistoricalResultsBackfillSummary:
 
     @property
     def finalized_game_pks(self) -> tuple[int, ...]:
-        """Return finalized regular-season MLB IDs in date order."""
+        """Return finalized championship-season MLB IDs in date order."""
 
         return tuple(
             game_pk
             for summary in self.date_summaries
             for game_pk in summary.finalized_game_pks
         )
+
+    @property
+    def non_played_games(self) -> tuple[NonPlayedMlbGame, ...]:
+        return tuple(game for summary in self.date_summaries for game in summary.non_played_games)
 
     @property
     def failures_are_retryable(self) -> bool:
@@ -435,8 +446,10 @@ def _process_schedule_date(
     boxscore_ingestor: BoxScoreIngestor,
 ) -> HistoricalResultsDateSummary:
     try:
-        schedule_data = schedule_fetcher(
-            schedule_date
+        schedule_data = schedule_fetcher(schedule_date)
+        schedule_games = _extract_schedule_games(
+            schedule_data,
+            expected_date=schedule_date,
         )
     except Exception as error:
         retryable = is_retryable_provider_error(error)
@@ -453,11 +466,8 @@ def _process_schedule_date(
             nonretryable_failures=int(not retryable),
         )
 
-    schedule_games = _extract_schedule_games(
-        schedule_data
-    )
-
     references: list[HistoricalGameReference] = []
+    non_played_games: list[NonPlayedMlbGame] = []
     games_skipped = 0
 
     try:
@@ -480,6 +490,11 @@ def _process_schedule_date(
     try:
         with connection.cursor() as cursor:
             for game in schedule_games:
+                non_played = _parse_non_played_schedule_game(game)
+                if non_played is not None:
+                    non_played_games.append(non_played)
+                    games_skipped += 1
+                    continue
                 finalized_game = (
                     _parse_finalized_schedule_game(
                         game
@@ -629,40 +644,46 @@ def _process_schedule_date(
             reference.game_pk
             for reference in references
         ),
+        non_played_games=tuple(non_played_games),
     )
 
 
 def _extract_schedule_games(
-    schedule_data: dict[str, Any],
-) -> tuple[dict[str, Any], ...]:
-    dates = schedule_data.get("dates")
+    schedule_data: Any,
+    *,
+    expected_date: date,
+) -> tuple[Mapping[str, Any], ...]:
+    return extract_schedule_games(
+        schedule_data,
+        expected_date=expected_date,
+    )
 
-    if not isinstance(dates, list):
-        return ()
 
-    games: list[dict[str, Any]] = []
-
-    for date_block in dates:
-        if not isinstance(date_block, dict):
-            continue
-
-        date_games = date_block.get("games")
-
-        if not isinstance(date_games, list):
-            continue
-
-        games.extend(
-            game
-            for game in date_games
-            if isinstance(game, dict)
-        )
-
-    return tuple(games)
+def _parse_non_played_schedule_game(game: dict[str, Any]) -> NonPlayedMlbGame | None:
+    if not championship_game_type(game):
+        return None
+    status = game.get("status")
+    if not isinstance(status, dict) or status.get("detailedState") not in NON_PLAYED_STATES:
+        return None
+    game_pk = game.get("gamePk")
+    teams = game.get("teams")
+    if type(game_pk) is not int or game_pk <= 0 or not isinstance(teams, dict):
+        raise ValueError("Non-played MLB event has invalid identity.")
+    home, away = teams.get("home"), teams.get("away")
+    if not isinstance(home, dict) or not isinstance(away, dict):
+        raise ValueError("Non-played MLB event has invalid participants.")
+    home_name, away_name = _extract_team_name(home), _extract_team_name(away)
+    if home_name is None or away_name is None:
+        raise ValueError("Non-played MLB event has invalid participants.")
+    return NonPlayedMlbGame(game_pk, home_name, away_name, status["detailedState"])
 
 
 def _parse_finalized_schedule_game(
     game: dict[str, Any],
 ) -> FinalizedScheduleGame | None:
+    # Validate types even for nonfinal events: unknown slates are not exclusions.
+    if not championship_game_type(game):
+        return None
     status = game.get("status")
 
     if not isinstance(status, dict):
@@ -676,7 +697,9 @@ def _parse_finalized_schedule_game(
     if not is_final:
         return None
 
-    if game.get("gameType") != REGULAR_SEASON_GAME_TYPE:
+    if status.get("detailedState") in NON_PLAYED_STATES:
+        return None
+    if not confirmed_championship_game(game):
         return None
 
     game_pk = game.get("gamePk")

@@ -1,5 +1,5 @@
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
@@ -422,3 +422,87 @@ def test_feature_guard_blocks_interior_gap_despite_complete_newest_game(
             cutoff_time=NOW,
             connection_factory=lambda: None,
         )
+
+
+class SlateCursor:
+    def __init__(self, rows):
+        self.rows = rows
+        self.calls = []
+    def __enter__(self): return self
+    def __exit__(self, *args): return False
+    def execute(self, sql, params): self.calls.append((sql, params))
+    def fetchall(self): return self.rows
+
+
+class SlateConnection:
+    def __init__(self, rows):
+        self.cur = SlateCursor(rows)
+        self.closed = False
+    def cursor(self): return self.cur
+    def close(self): self.closed = True
+
+
+def test_retained_postgame_slate_uses_mlb_authority_and_pacific_half_open_date():
+    connection = SlateConnection([("800",), ("801",)])
+    assert repository.load_mlb_game_pks_for_pacific_date(date(2026, 10, 7),
+        connection_factory=lambda: connection) == (800, 801)
+    sql, params = connection.cur.calls[0]
+    assert params == ("mlb_stats", datetime(2026, 10, 7, 7, tzinfo=timezone.utc),
+                      datetime(2026, 10, 8, 7, tzinfo=timezone.utc))
+    assert "game.game_date >= %s AND game.game_date < %s" in sql
+    assert connection.closed
+
+
+@pytest.mark.parametrize("rows", [[], [("not-an-mlb-id",)]])
+def test_retained_postgame_slate_empty_is_valid_but_malformed_identity_fails(rows):
+    connection = SlateConnection(rows)
+    if rows:
+        with pytest.raises(repository.MlbCompletenessError, match="invalid source ID"):
+            repository.load_mlb_game_pks_for_pacific_date(date(2026, 10, 7), connection_factory=lambda: connection)
+    else:
+        assert repository.load_mlb_game_pks_for_pacific_date(date(2026, 10, 7), connection_factory=lambda: connection) == ()
+
+
+@pytest.mark.parametrize("state", ["Postponed", "Suspended", "Cancelled", "Canceled"])
+def test_terminal_non_played_exclusion_preserves_canonical_identity_without_played_history(state):
+    connection = SlateConnection([("800", 1, "Chicago White Sox", "Cleveland Guardians", False, 1)])
+    event = repository.NonPlayedMlbGame(800, "Chicago White Sox", "Cleveland Indians", state)
+    assert repository.validate_mlb_non_played_games((event,), connection_factory=lambda: connection) == (800,)
+    assert connection.closed
+
+
+@pytest.mark.parametrize("row", [
+    ("800", 1, "Chicago White Sox", "Cleveland Guardians", True, 1),
+    ("800", 1, "Cleveland Guardians", "Chicago White Sox", False, 1),
+    ("800", 1, "Chicago White Sox", "Cleveland Guardians", False, 2),
+])
+def test_terminal_exclusion_cannot_erase_played_or_conflicting_identity(row):
+    event = repository.NonPlayedMlbGame(800, "Chicago White Sox", "Cleveland Guardians", "Cancelled")
+    with pytest.raises(repository.MlbCompletenessError):
+        repository.validate_mlb_non_played_games((event,), connection_factory=lambda: SlateConnection([row]))
+
+
+def test_noncanonical_non_played_event_does_not_exempt_a_lost_retained_mapping():
+    event = repository.NonPlayedMlbGame(800, "Home", "Away", "Postponed")
+    assert repository.validate_mlb_non_played_games((event,), connection_factory=lambda: SlateConnection([])) == ()
+
+
+def test_explicit_empty_completeness_contract_remains_valid_for_other_callers():
+    repository.assert_mlb_games_complete((), connection_factory=lambda: pytest.fail("Unexpected connection"))
+
+
+def test_h1_ordering_preserved_without_claiming_odds_only_history_is_authoritative(monkeypatch):
+    target = replace(_complete_snapshot(game_pk=900001, game_id=201),
+        results=(), team_statistics=(), pitching_statistics=())
+    prior = replace(_complete_snapshot(), results=(), team_statistics=(), pitching_statistics=())
+    state = {"required": (), "prior": prior}
+    monkeypatch.setattr(repository, "_load_required_feature_game_pks", lambda **kw: state["required"])
+    monkeypatch.setattr(repository, "_load_completeness_snapshots", lambda ids, **kw: (target,) if ids == (900001,) else (state["prior"],))
+    probe = lambda: repository.assert_mlb_feature_history_complete(target_game_pks=(900001,), cutoff_time=NOW,
+                                                                  connection_factory=lambda: None)
+    probe()  # Odds-only history remains outside MLB-authoritative selection.
+    state["required"] = (800001,)
+    with pytest.raises(repository.MlbCompletenessError, match="historical result coverage"):
+        probe()
+    state["prior"] = _complete_snapshot()
+    probe()

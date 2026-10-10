@@ -6,6 +6,8 @@ Canonical team-name handling shared by ingestion sources.
 _CANONICAL_TEAM_NAMES_BY_ALIAS = {
     "athletics": "Athletics",
     "oakland athletics": "Athletics",
+    "cleveland guardians": "Cleveland Guardians",
+    "cleveland indians": "Cleveland Guardians",
 }
 
 

@@ -116,6 +116,8 @@ def get_or_create_canonical_game(
     home_team_id: int,
     away_team_id: int,
     tolerance: timedelta = DEFAULT_GAME_TIME_TOLERANCE,
+    existing_only: bool = False,
+    persist_mapping: bool = True,
 ) -> int:
     """
     Return the canonical game ID for an external event.
@@ -137,12 +139,20 @@ def get_or_create_canonical_game(
     The team orientation must match exactly. Reversed home and away teams
     are not treated as the same game.
 
+    Optional operator modes preserve these same selection rules: existing_only
+    refuses creation, and persist_mapping=False requires existing_only and makes
+    selection SELECT-only. Defaults retain normal creation/source persistence.
+
     Candidate counts fail closed when more than one game qualifies. Excluding
     an existing mapping from the same source prevents distinct doubleheader
     events from sharing one canonical game ID. A unique game mapped by another
     source remains eligible for cross-source matching.
     """
 
+    if type(existing_only) is not bool or type(persist_mapping) is not bool:
+        raise ValueError("Canonical matching mode flags must be boolean.")
+    if not persist_mapping and not existing_only:
+        raise ValueError("Read-only canonical selection requires existing-only mode.")
     external_game_id = str(external_game_id)
 
     cursor.execute(
@@ -329,6 +339,10 @@ def get_or_create_canonical_game(
             )
 
     if candidate_count == 0:
+        if existing_only:
+            raise CanonicalGameIdentityConflictError(
+                "No existing canonical game matches the bounded identity."
+            )
         cursor.execute(
             """
             INSERT INTO games (
@@ -352,6 +366,9 @@ def get_or_create_canonical_game(
         raise RuntimeError(
             "Canonical game matching selected no game identity."
         )
+
+    if not persist_mapping:
+        return game_id
 
     cursor.execute(
         """

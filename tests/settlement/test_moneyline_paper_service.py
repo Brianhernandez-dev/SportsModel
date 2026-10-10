@@ -6,6 +6,7 @@ import pytest
 from sportsmodel.models.game_result import (
     GameResult,
 )
+from sportsmodel.ingest.mlb_stats import _parse_finalized_schedule_game
 from sportsmodel.models.moneyline_paper_settlement import (
     MoneylinePaperCandidate,
 )
@@ -57,17 +58,31 @@ class FakeConnection:
         self.closed = True
 
 
+@pytest.mark.parametrize("game_type", ["R", "F", "D", "L", "W"])
 def test_settles_completed_candidate(
     monkeypatch,
+    game_type,
 ) -> None:
     connection = FakeConnection()
     persisted = []
+    final = _parse_finalized_schedule_game({
+        "gamePk": 849833, "gameType": game_type, "ifNecessary": "N",
+        "gameDate": "2026-07-30T17:40:00Z",
+        "status": {"abstractGameState": "Final", "detailedState": "Final"},
+        "teams": {
+            "home": {"team": {"id": 145, "name": "Chicago White Sox"}, "score": 2},
+            "away": {"team": {"id": 114, "name": "Cleveland Guardians"}, "score": 5},
+        },
+    })
+    assert final is not None
+    authoritative_result = GameResult(game_id=1, home_team=final.home_team,
+        away_team=final.away_team, home_score=final.home_score, away_score=final.away_score)
 
     monkeypatch.setattr(
         service,
         "_load_paper_candidates",
         lambda cursor, **kwargs: (
-            _candidate(),
+            _candidate(selection_name=final.away_team),
         ),
     )
 
@@ -75,7 +90,7 @@ def test_settles_completed_candidate(
         service,
         "_load_completed_results",
         lambda cursor, **kwargs: (
-            _result(),
+            authoritative_result,
         ),
     )
 
