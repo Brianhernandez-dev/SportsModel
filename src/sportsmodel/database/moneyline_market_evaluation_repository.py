@@ -1,5 +1,6 @@
 ﻿from typing import Any
 
+from sportsmodel.database.mlb_identity_disposition_repository import assert_decision_write
 from sportsmodel.models.moneyline_market_evaluation import (
     MoneylineModelMarketEvaluation,
 )
@@ -31,6 +32,9 @@ def upsert_moneyline_market_evaluation(
         value=odds_ingestion_run_id,
         field_name="Odds ingestion run ID",
     )
+
+    assert_decision_write(cursor, moneyline_game_prediction_id=moneyline_game_prediction_id,
+                          odds_market_snapshot_id=evaluation.odds_market_snapshot_id)
 
     cursor.execute(
         """

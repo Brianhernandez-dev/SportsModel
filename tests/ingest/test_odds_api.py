@@ -3,6 +3,11 @@ from datetime import date, datetime, timezone
 import pytest
 
 from sportsmodel.ingest import odds_api
+
+
+@pytest.fixture(autouse=True)
+def valid_offline_schema_capability(monkeypatch):
+    monkeypatch.setattr(odds_api, 'require_schema034', lambda factory: None)
 from sportsmodel.ingest.odds_provenance import (
     ProviderSportsbookIdentity,
 )

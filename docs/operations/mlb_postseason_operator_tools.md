@@ -1,4 +1,43 @@
-# MLB postseason operator-tooling candidate 0.6.2
+# MLB postseason operator-tooling candidate 1.1.0
+
+Successor requires schema 001–034 and reconciliation preview format 2. See
+[mlb_identity_disposition.md](mlb_identity_disposition.md). Historical 0.5/0.6
+records retain their original review context, not executable authority.
+
+History operator revision 1.1.1 captures committed identity knowledge in a fresh
+separate READ ONLY transaction using the same explicit connection factory, then
+passes that sealed object to H-1. H-1 verifies the explicit target and revalidates
+the ledger fingerprint. A capture newer than the requested cutoff, missing or
+malformed proof, or a changed ledger refuses when any case exists. Cutoffs are
+never adjusted. A ledger that has never contained a case retains historical
+behavior; a revoked case is not empty. Use a separately approved prospective
+cutoff whose capture is available by that cutoff; a still-future cutoff also
+refuses. This is read-only operator plumbing, not inference release.
+
+Revision 1.1.2 adds explicit history-only `--wait-for-cutoff`. HISTORICAL CUTOFF:
+knowledge first captured later cannot certify it; historical Oct 6/7/8 after a
+later disposition still refuses. PROSPECTIVE CUTOFF: capture must occur before
+the exact operator-supplied cutoff. With the flag, the CLI may wait at most
+30 seconds until the guarded target's PostgreSQL clock_timestamp() reaches it,
+then run H-1 with the original sealed capture and unchanged cutoff. Do not depend
+on connection latency/race timing. Without the flag, a still-future cutoff
+continues to refuse. Cutoffs farther than 30 seconds refuse without long sleep.
+
+Connection A captures in READ ONLY and closes. Connection B verifies the explicit
+target and polls in READ ONLY autocommit (no transaction/cursor spans sleep),
+with a one-second statement timeout and monotonic 30-second wait budget; local
+monotonic time limits duration but never certifies the cutoff. B closes before
+Connection C runs the existing READ ONLY H-1 verification/fingerprint/PIT checks.
+Ledger change while waiting refuses at H-1. Ctrl-C closes connections and returns
+nonzero without a partial report or DB mutation. The report retains the original
+cutoff argument plus trusted DB time reached. No capture attestation is recreated,
+serialized or backdated. Empty-ledger historical behavior remains unchanged when
+not requesting wait; explicit wait still requires a valid capture at/before cutoff.
+
+INFERENCE_PUBLICATION_HOLD remains. Scheduled prediction/Pregame/daily callers
+are not automatically wired to capture knowledge; any future inference release
+requires separate reviewed wiring and explicit authorization. No production
+operator execution is authorized by this revision.
 
 DEVELOPMENT / independent review only. No production read/write, provider,
 deployment, commit, task or workflow authority is granted by these commands.
@@ -18,8 +57,8 @@ Target schema: fields host (literal loopback IP), port (client), database,
 server_address (literal IP), server_port (may differ through Docker forwarding),
 postmaster_started_at (aware ISO timestamp), identity_kind native/isolated,
 system_identifier (isolated only), domain exactly MLB, migration_boundary exactly
-33. Values must come from separately approved observed target evidence, not guesses.
-The full 001-033 inventory, filenames and migration checksums must match reviewed
+34. Values must come from separately approved observed target evidence, not guesses.
+The full 001-034 inventory, filenames and migration checksums must match reviewed
 repository bytes; MAX(version) is insufficient. Newer/missing versions refuse.
 
 Native production requires 127.0.0.1:5432/sportsmodel, pinned postmaster epoch,

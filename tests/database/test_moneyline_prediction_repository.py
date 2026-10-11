@@ -126,7 +126,9 @@ def test_insert_prediction_returns_identifier() -> None:
 
     assert prediction_id == 77
 
-    query, parameters = cursor.executions[0]
+    query, parameters = cursor.executions[-1]
+    assert cursor.executions[0][0] == 'SELECT mlb_identity_gate(false)'
+    assert 'mlb_identity_assert_decision_links' in cursor.executions[1][0]
 
     assert (
         "INSERT INTO moneyline_game_predictions"

@@ -55,6 +55,7 @@ GET_COMPLETED_GAMES_BEFORE_QUERY = """
     JOIN games g
         ON g.game_id = tgs.game_id
     WHERE tgs.team_id = %s
+      AND NOT mlb_identity_is_stale(g.game_id) AND mlb_identity_history_guard()
       AND g.game_date < %s
       AND tgs.created_at <= %s
       AND (
@@ -131,6 +132,8 @@ class PostgresTeamStatisticsRepository(
 
         try:
             with connection.cursor() as cursor:
+                # This must run even when the filtered history has no rows.
+                cursor.execute('SELECT mlb_identity_history_guard()', ())
                 cursor.execute(
                     GET_COMPLETED_GAMES_BEFORE_QUERY,
                     (

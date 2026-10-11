@@ -1,6 +1,7 @@
 """Existing-only MLB identities and narrowly scoped recovery persistence."""
 
 from dataclasses import asdict
+from sportsmodel.database.mlb_identity_disposition_repository import acquire_writer_gate
 
 from sportsmodel.database.boxscore_repository import insert_parsed_boxscore_with_cursor
 from sportsmodel.ingest.mlb_players import normalize_mlb_player
@@ -10,6 +11,8 @@ def load_mlb_identity(cursor, game_pk: int, *, lock: bool = False) -> dict:
     """Count raw MLB mappings before checking their target; never match/create."""
     if type(game_pk) is not int or game_pk <= 0:
         raise ValueError('MLB gamePk must be a positive integer')
+    if lock:
+        acquire_writer_gate(cursor)
     cursor.execute(
         "SELECT game_source_id, game_id FROM game_sources "
         "WHERE source_name='mlb_stats' AND external_game_id=%s "
@@ -21,7 +24,7 @@ def load_mlb_identity(cursor, game_pk: int, *, lock: bool = False) -> dict:
         raise ValueError(f"MLB {game_pk}: expected exactly one raw mapping")
     source_id, game_id = rows[0]
     cursor.execute(
-        "SELECT game_date,home_team_id,away_team_id,mlb_game_id,odds_api_event_id "
+        "SELECT CASE WHEN mlb_identity_assert_active(game_id) THEN game_date END,home_team_id,away_team_id,mlb_game_id,odds_api_event_id "
         "FROM games WHERE game_id=%s" + (" FOR UPDATE" if lock else ""),
         (game_id,),
     )

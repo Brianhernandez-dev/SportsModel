@@ -13,6 +13,12 @@ from sportsmodel.operations import mlb_operator_cli as cli
 STAMP = datetime(2026, 10, 1, tzinfo=timezone.utc)
 
 
+@pytest.fixture(autouse=True)
+def valid_offline_catalog(monkeypatch):
+    from sportsmodel.database import mlb_identity_disposition_repository as identity
+    monkeypatch.setattr(identity,'verify_capabilities',lambda cursor:True)
+
+
 def target(**changes):
     values = dict(host="127.0.0.1", port=5432, database="sportsmodel",
                   server_address="127.0.0.1", server_port=5432,
@@ -53,7 +59,7 @@ class Connection:
 
 
 @pytest.mark.parametrize("changes", [
-    {"domain": "NFL"}, {"migration_boundary": 34}, {"host": "localhost"},
+    {"domain": "NFL"}, {"migration_boundary": 33}, {"migration_boundary": 35}, {"host": "localhost"},
     {"database": "other"}, {"port": 55499}, {"server_port": 55499},
     {"postmaster_started_at": "2026-10-01"}, {"identity_kind": "unknown"},
     {"port": True}, {"database": ""}, {"server_address": "alias"},
@@ -177,10 +183,86 @@ def test_bad_preview_binding_refused_before_connection():
 
 def test_cli_history_fail_is_nonzero(tmp_path,monkeypatch):
     from sportsmodel.operations import mlb_history_check
+    from sportsmodel.database import mlb_identity_disposition_repository
     path=tmp_path/"target.json";path.write_text(guard.canonical_json(target().artifact()))
     monkeypatch.setattr(mlb_history_check,"check_feature_history",lambda **kw:{"status":"FAIL","issues":["synthetic missing identity"]})
+    monkeypatch.setattr(mlb_identity_disposition_repository,"capture_identity_knowledge",lambda **kw:object())
     code=cli.main(["history","--target",str(path),"--db-user","synthetic","--output",str(tmp_path/"out.json"),"--acknowledge-db-read","--date","2026-10-07","--game-ids","1","--starter-ids","1","2","--cutoff","2026-10-07T00:00:00Z"],connector=lambda **kw:None,password_reader=lambda _:"SYNTHETIC_DB_SENTINEL")
     assert code==1 and guard.strict_json((tmp_path/"out.json").read_bytes())["status"]=="FAIL"
+
+
+def test_history_cli_passes_exact_capture_and_preserves_cutoff(tmp_path,monkeypatch):
+    from sportsmodel.operations import mlb_history_check
+    from sportsmodel.database import mlb_identity_disposition_repository as identity
+    path=tmp_path/'target.json';path.write_text(guard.canonical_json(target().artifact()))
+    capture=identity.IdentityKnowledgeSnapshot('a'*64,STAMP.isoformat(),'b'*64)
+    calls=[];factory_seen=[]
+    def captured(*,connection_factory):
+        calls.append('capture');factory_seen.append(connection_factory);return capture
+    def checked(**kwargs):
+        calls.append('check')
+        assert kwargs['identity_knowledge'] is capture
+        assert kwargs['connection_factory'] is factory_seen[0]
+        assert kwargs['target']==target() and kwargs['cutoff_time']==STAMP
+        return {'status':'PASS'}
+    monkeypatch.setattr(identity,'capture_identity_knowledge',captured)
+    monkeypatch.setattr(mlb_history_check,'check_feature_history',checked)
+    def connection(**kwargs):
+        pytest.fail('Unit plumbing test unexpectedly connected')
+    assert cli.main(['history','--target',str(path),'--db-user','synthetic','--output',str(tmp_path/'out.json'),
+        '--acknowledge-db-read','--date','2026-10-07','--game-ids','1','--starter-ids','1','2',
+        '--cutoff',STAMP.isoformat()],connector=connection,password_reader=lambda _:'SYNTHETIC_DB_SENTINEL')==0
+    assert calls==['capture','check']
+
+
+@pytest.mark.parametrize('case',['success','already_satisfied','too_far','historical','naive','malformed','bad_clock','expired','interrupted'])
+def test_bounded_wait_uses_db_clock_and_closes_connection(monkeypatch,case):
+    from datetime import timedelta
+    from sportsmodel.database import mlb_identity_disposition_repository as identity
+    body=dict(version=1,ledger_fingerprint='a'*64,available_at=STAMP.isoformat())
+    knowledge=identity.IdentityKnowledgeSnapshot(body['ledger_fingerprint'],body['available_at'],identity._knowledge_hash(body),identity._COMMITTED_CAPTURE)
+    cutoff=STAMP+timedelta(seconds=1)
+    if case=='too_far':cutoff=STAMP+timedelta(seconds=31)
+    if case=='historical':cutoff=STAMP-timedelta(seconds=1)
+    if case=='naive':cutoff=cutoff.replace(tzinfo=None)
+    if case=='malformed':knowledge=None
+    clocks=iter([cutoff] if case=='already_satisfied' else [STAMP,cutoff]);events=[]
+    class WaitConnection:
+        def set_session(self,**kw):
+            assert kw==dict(readonly=True,isolation_level='REPEATABLE READ',autocommit=True)
+        def cursor(self):return self
+        def __enter__(self):events.append('cursor');return self
+        def __exit__(self,*a):events.append('cursor_closed')
+        def execute(self,sql):events.append(sql)
+        def fetchone(self):return ((STAMP.replace(tzinfo=None) if case=='bad_clock' else next(clocks)),)
+        def close(self):events.append('connection_closed')
+    monkeypatch.setattr(guard,'verify_target',lambda connection,target,readonly:events.append('target_verified'))
+    ticks=iter([0,31] if case=='expired' else [0]*20)
+    monkeypatch.setattr(cli.time,'monotonic',lambda:next(ticks))
+    def sleep(seconds):
+        assert events[-1]=='cursor_closed' and 0<seconds<=cli.CUTOFF_POLL_SECONDS
+        events.append('sleep')
+        if case=='interrupted':raise KeyboardInterrupt
+    monkeypatch.setattr(cli.time,'sleep',sleep)
+    kwargs=dict(knowledge=knowledge,cutoff_time=cutoff,target=target(),connection_factory=WaitConnection)
+    if case in ('success','already_satisfied'):
+        result=cli._wait_for_history_cutoff(**kwargs)
+        assert result['cutoff_time']==cutoff.isoformat() and result['polls']==(1 if case=='already_satisfied' else 2)
+    else:
+        with pytest.raises(KeyboardInterrupt if case=='interrupted' else guard.OperatorRefusal):cli._wait_for_history_cutoff(**kwargs)
+    if case in ('historical','naive','malformed'):assert events==[]
+    else:assert events[-1]=='connection_closed'
+    if case in ('already_satisfied','too_far','expired','bad_clock'):assert 'sleep' not in events
+
+
+@pytest.mark.parametrize('cutoff',['not-a-date','2026-10-11T12:00:00'])
+def test_wait_cli_rejects_malformed_naive_cutoff_before_credentials(tmp_path,cutoff):
+    called=[]
+    with pytest.raises(SystemExit) as failure:
+        cli.main(['history','--target',str(tmp_path/'unused.json'),'--db-user','synthetic','--output',str(tmp_path/'out.json'),
+            '--acknowledge-db-read','--date','2026-10-11','--game-ids','1','--starter-ids','1','2',
+            '--cutoff',cutoff,'--wait-for-cutoff'],connector=lambda **kw:called.append('connection'),password_reader=lambda _:called.append('password'))
+    assert failure.value.code==2 and called==[] and not (tmp_path/'out.json').exists()
 
 
 def test_cli_echo_fallback_fails_closed(tmp_path):
@@ -220,10 +302,10 @@ def test_documented_synthetic_payload_and_allowlist_are_byte_bound():
     assert day==date(2026,10,7) and rows[0]['game_pk']==800
 
 
-@pytest.mark.parametrize('field,value',[('version',2),('domain','NFL')])
+@pytest.mark.parametrize('field,value',[('version',1),('version',3),('domain','NFL')])
 def test_approved_hash_does_not_admit_wrong_preview_envelope(field,value):
     p,a=inputs();raw=guard.canonical_json(p).encode();allowed=guard.canonical_json(a).encode()
-    body=dict(version=1,domain='MLB',target_date='2026-10-07',target=target().artifact(),payload_sha256=sha256(raw).hexdigest(),allowlist_sha256=sha256(allowed).hexdigest(),guard={},implementation_fingerprint=reconcile.fingerprint(),plans=[])
+    body=dict(version=2,domain='MLB',target_date='2026-10-07',target=target().artifact(),payload_sha256=sha256(raw).hexdigest(),allowlist_sha256=sha256(allowed).hexdigest(),guard={},implementation_fingerprint=reconcile.fingerprint(),plans=[])
     body[field]=value;body['preview_sha256']=guard.digest(body)
     called=[]
     with pytest.raises(guard.OperatorRefusal,match='version/domain'):reconcile.execute_reconciliation(payload_bytes=raw,allowlist_bytes=allowed,preview=body,approved_preview_sha256=body['preview_sha256'],target=target(),connection_factory=lambda:called.append(True),acknowledge_writes=True)

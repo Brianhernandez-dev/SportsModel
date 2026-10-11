@@ -69,7 +69,7 @@ def test_postseason_recovery_preserves_existing_only_identity_and_mutation_envel
     second = recovery.build_manifest(spec(), payload, snap)
     assert first == second
     assert first["eligible_game_pks"] == [800]
-    assert first["specification"]["eligibility_contract"] == "final-championship-or-explicit-exclusion-v3"
+    assert first["specification"]["eligibility_contract"] == "final-championship-or-explicit-exclusion-v4-disposition-034"
     assert first["games"][0]["identity"]["game_id"] == 1
     assert recovery.MUTATIONS == [
         "historical_games", "team_game_statistics", "player_game_pitching_statistics",
@@ -98,7 +98,15 @@ def snapshot():
                                   start='2025-08-01T19:00:00+00:00', home_team_id=1,
                                   away_team_id=2, mlb_game_id=None, odds_api_event_id=None,
                                   sources=[[1, 'mlb_stats', '800']])},
-                teams={'10': 1, '20': 2}, players={'100': None, '200': None})
+                teams={'10': 1, '20': 2}, players={'100': None, '200': None},
+                identity_disposition=dict(cases=[],events=[],active={},fingerprint='a'*64))
+
+
+@pytest.fixture(autouse=True)
+def valid_offline_schema_capability(monkeypatch):
+    from sportsmodel.ingest import mlb_recovery_cli
+    monkeypatch.setattr(recovery,'require_schema034',lambda factory:None)
+    monkeypatch.setattr(mlb_recovery_cli,'require_schema034',lambda factory:None)
 
 
 def explicit_literal_raise_line(path, message):
@@ -141,11 +149,17 @@ class ReadOnlyCursor:
     def execute(self, sql, parameters=()):
         assert sql.strip().startswith('SELECT'), 'Preview attempted a write'
         self.queries.append(sql)
-        if 'LIMIT 0' in sql:
+        if 'to_jsonb(d)' in sql or 'to_jsonb(e)' in sql:
+            self.rows = []
+        elif 'mlb_identity_ledger_fingerprint()' in sql:
+            self.rows = [('a'*64,)]
+        elif 'mlb_identity_gate(false)' in sql:
+            self.rows = [(None,)]
+        elif 'LIMIT 0' in sql:
             self.rows = []
         elif 'SELECT game_source_id, game_id' in sql:
             self.rows = [(1, 1)] * self.mapping_count
-        elif 'SELECT game_date' in sql:
+        elif 'SELECT CASE WHEN mlb_identity_assert_active(game_id) THEN game_date' in sql:
             self.rows = [] if self.dangling else [(datetime(2025, 8, 1, 19, tzinfo=timezone.utc), 1, 2, None, None)]
         elif 'SELECT game_source_id,source_name' in sql:
             self.rows = [(1, 'mlb_stats', '800')]
@@ -326,7 +340,7 @@ def test_invalid_allowlists(pks):
         recovery.RecoverySpecification(date(2025, 8, 1), pks, REVISION)
 
 
-@pytest.mark.parametrize('field,value', [('format_version', 2), ('format_version', True),
+@pytest.mark.parametrize('field,value', [('format_version', 1), ('format_version', 3), ('format_version', True),
                                        ('eligibility_contract', 'skip-anything'),
                                        ('schedule_date', '2025-08-01'), ('code_revision', 'main')])
 def test_invalid_specification(field, value):
@@ -1164,6 +1178,7 @@ def test_execution_dependency_bytes_change_fingerprint(monkeypatch, tmp_path, de
              'ingest/mlb_recovery_cli.py', 'database/connection.py',
              'ingest/boxscore_parser.py', 'ingest/mlb_players.py', 'ingest/mlb_stats.py',
              'ingest/mlb_game_policy.py',
+             'database/mlb_identity_disposition_repository.py',
              'database/boxscore_repository.py', 'models/parsed_boxscore.py',
              'models/team_game_statistics.py', 'models/player_game_pitching_statistics.py']
     for path in paths:

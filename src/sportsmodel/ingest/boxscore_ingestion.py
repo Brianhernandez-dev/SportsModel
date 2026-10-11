@@ -1,4 +1,7 @@
 from typing import Any
+from sportsmodel.database.connection import get_connection
+from sportsmodel.database.mlb_identity_disposition_repository import require_schema034
+from sportsmodel.database.mlb_recovery_repository import load_mlb_identity
 
 from sportsmodel.database.boxscore_repository import (
     save_parsed_boxscore,
@@ -24,11 +27,23 @@ def ingest_boxscore(
     *,
     game_id: int,
     game_pk: int,
+    connection_factory=get_connection,
 ) -> None:
     """
     Download, resolve, parse, and persist one MLB box score.
     """
 
+    require_schema034(connection_factory)
+    connection=connection_factory()
+    try:
+        connection.set_session(readonly=True,isolation_level='REPEATABLE READ')
+        with connection.cursor() as cursor:
+            identity=load_mlb_identity(cursor,game_pk)
+            if identity['game_id']!=game_id:
+                raise ValueError('Boxscore target differs from active authoritative MLB identity')
+    finally:
+        connection.rollback()
+        connection.close()
     live_feed = fetch_live_feed(game_pk)
     boxscore = fetch_boxscore(game_pk)
 

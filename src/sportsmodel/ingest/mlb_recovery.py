@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 
 from sportsmodel.database.connection import get_connection
 from sportsmodel.database import mlb_recovery_repository as repository
+from sportsmodel.database.mlb_identity_disposition_repository import load_identity_state, require_schema034, acquire_writer_gate
 from sportsmodel.ingest.boxscore_parser import (
     parse_boxscore, parse_pitcher_statistics, parse_team_statistics,
 )
@@ -26,8 +27,8 @@ from sportsmodel.ingest.mlb_game_policy import (
 )
 
 
-VERSION = 1
-CONTRACT = 'final-championship-or-explicit-exclusion-v3'
+VERSION = 2
+CONTRACT = 'final-championship-or-explicit-exclusion-v4-disposition-034'
 MUTATIONS = ['historical_games', 'team_game_statistics',
              'player_game_pitching_statistics', 'games.result_metadata',
              'baseball_players.missing_only', 'baseball_player_sources.missing_only']
@@ -66,6 +67,7 @@ def implementation_hash():
              'ingest/boxscore_parser.py', 'ingest/mlb_players.py', 'ingest/mlb_stats.py',
              'ingest/mlb_game_policy.py',
              'database/boxscore_repository.py', 'models/parsed_boxscore.py',
+             'database/mlb_identity_disposition_repository.py',
              'models/team_game_statistics.py', 'models/player_game_pitching_statistics.py']
     return digest({p: sha256((root / p).read_bytes()).hexdigest() for p in paths})
 
@@ -191,8 +193,11 @@ def _recovery_boxscore_projection(box):
 
 
 def read_snapshot(cursor, spec, bundle, *, lock=False):
+    if lock:
+        # Before ledger reads or team/source row locks, never promote later.
+        acquire_writer_gate(cursor)
     events = _events(spec, bundle)
-    snapshot = dict(games={}, teams={}, players={})
+    snapshot = dict(games={}, teams={}, players={}, identity_disposition=load_identity_state(cursor))
     for event in events:
         pk = event['gamePk']
         if pk not in spec.game_pks:
@@ -204,6 +209,8 @@ def read_snapshot(cursor, spec, bundle, *, lock=False):
             cursor, pk, home_team_id=snapshot['teams'][str(teams['home'])],
             away_team_id=snapshot['teams'][str(teams['away'])], lock=lock)
         identity = snapshot['games'][str(pk)]
+        if str(identity['game_id']) in {str(gid) for gid in snapshot['identity_disposition']['active']}:
+            raise ValueError('Active stale identity cannot be a recovery target')
         if identity['mlb_game_id'] is not None and identity['mlb_game_id'] != pk:
             raise ValueError('Legacy MLB identity conflicts with authoritative mapping')
         if sum(row['game_id'] == identity['game_id'] for row in snapshot['games'].values()) != 1:
@@ -273,6 +280,8 @@ def build_manifest(spec, bundle, snapshot, *, protected_references=None):
                                 game_type=event['gameType'], status=event['status']))
             continue
         identity = snapshot['games'][str(pk)]
+        if str(identity['game_id']) in {str(gid) for gid in snapshot['identity_disposition']['active']}:
+            raise ValueError('Active stale identity cannot be a recovery target')
         canonical_date = _aware(identity['start']).astimezone(
             ZoneInfo('America/Los_Angeles')).date()
         if (canonical_date != spec.schedule_date
@@ -346,6 +355,7 @@ def build_manifest(spec, bundle, snapshot, *, protected_references=None):
 
 
 def plan_recovery(spec, bundle, *, connection_factory=get_connection, protected_references=None):
+    require_schema034(connection_factory)
     connection = connection_factory()
     try:
         connection.set_session(readonly=True, isolation_level='REPEATABLE READ')
@@ -360,7 +370,8 @@ def _revalidate(cursor, manifest, *, lock=False):
     spec = RecoverySpecification.from_dict(manifest['specification'])
     current = read_snapshot(cursor, spec, manifest['pinned_payloads'], lock=lock)
     old = manifest['snapshot']
-    if current['games'] != old['games'] or current['teams'] != old['teams']:
+    if (current['games'] != old['games'] or current['teams'] != old['teams']
+            or current['identity_disposition'] != old['identity_disposition']):
         raise ValueError('Canonical/source/team identity changed after approval')
     for p, expected in old['players'].items():
         actual = current['players'][p]
@@ -406,6 +417,7 @@ def execute_recovery(manifest, approved_hash, *, code_revision,
         if not acknowledge_writes:
             raise ValueError('Explicit independent production-write authorization required')
         _validate_approved_manifest(manifest, approved_hash, code_revision)
+        require_schema034(connection_factory)
         phase = 'preflight'
         active = list(manifest['eligible_game_pks'])
         connection = connection_factory()

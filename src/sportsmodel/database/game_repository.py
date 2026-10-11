@@ -12,7 +12,7 @@ ConnectionFactory = Callable[[], Any]
 
 GET_GAME_BY_ID_QUERY = """
     SELECT
-        game_id,
+        CASE WHEN mlb_identity_assert_active(game_id) THEN game_id END,
         game_date,
         home_team_id,
         away_team_id
@@ -31,6 +31,7 @@ GET_NEXT_UPCOMING_GAME_QUERY = """
         away_team_id
     FROM games
     WHERE game_date >= %s
+      AND NOT mlb_identity_is_stale(game_id)
       AND home_team_id IS NOT NULL
       AND away_team_id IS NOT NULL
     ORDER BY

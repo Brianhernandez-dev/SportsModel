@@ -55,6 +55,7 @@ GET_COMPLETED_STARTS_BEFORE_QUERY = """
     JOIN games g
         ON g.game_id = pgps.game_id
     WHERE pgps.baseball_player_id = %s
+      AND NOT mlb_identity_is_stale(g.game_id) AND mlb_identity_history_guard()
       AND pgps.is_starter = TRUE
       AND g.game_date < %s
       AND pgps.created_at <= %s
@@ -132,6 +133,8 @@ class PostgresPitcherStatisticsRepository(
 
         try:
             with connection.cursor() as cursor:
+                # A stale-only/empty window must not short-circuit invariants.
+                cursor.execute('SELECT mlb_identity_history_guard()', ())
                 cursor.execute(
                     GET_COMPLETED_STARTS_BEFORE_QUERY,
                     (

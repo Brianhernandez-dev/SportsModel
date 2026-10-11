@@ -7,6 +7,9 @@ from pathlib import Path
 from typing import Any, Mapping
 
 import requests
+from sportsmodel.database.mlb_identity_disposition_repository import (
+    require_schema034, install_identity_knowledge, knowledge_connection_factory,
+)
 
 from sportsmodel.database.connection import (
     get_connection,
@@ -384,6 +387,7 @@ def run_moneyline_predictions(
     feature_history_checker: FeatureHistoryChecker = (
         assert_mlb_feature_history_complete
     ),
+    identity_knowledge=None,
 ) -> MoneylinePredictionRunResult:
     """
     Generate and persist one daily MLB Moneyline prediction run.
@@ -410,6 +414,10 @@ def run_moneyline_predictions(
             "Prediction run type must be official or preview."
         )
 
+    require_schema034(connection_factory)
+    feature_connection_factory = (knowledge_connection_factory(connection_factory, identity_knowledge,
+                                 cutoff_time=resolved_prediction_time)
+                                 if identity_knowledge is not None else connection_factory)
     model_package = (
         load_moneyline_model_package(
             model_directory
@@ -428,6 +436,12 @@ def run_moneyline_predictions(
     ] = []
 
     try:
+        with connection.cursor() as cursor:
+            if identity_knowledge is not None:
+                install_identity_knowledge(cursor, identity_knowledge, cutoff_time=resolved_prediction_time)
+            cursor.execute('SELECT mlb_identity_history_guard()')
+            if cursor.fetchone() != (True,):
+                raise RuntimeError('Unproven identity knowledge at prediction cutoff')
         create_run_arguments = {
             "target_date": target_date,
             "model_version": model_package.model_version,
@@ -451,6 +465,13 @@ def run_moneyline_predictions(
                 **create_run_arguments,
             )
         )
+
+        if identity_knowledge is not None:
+            with connection.cursor() as cursor:
+                cursor.execute('UPDATE moneyline_prediction_runs SET identity_disposition_knowledge=%s::jsonb WHERE moneyline_prediction_run_id=%s AND identity_disposition_knowledge IS NULL',
+                               (json.dumps(dict(identity_knowledge.body(), artifact_sha256=identity_knowledge.artifact_sha256)),run_id))
+                if cursor.rowcount != 1:
+                    raise RuntimeError('Identity knowledge could not be bound to prediction run')
 
         schedule_payload = (
             fetch_hydrated_schedule_for_date(
@@ -589,17 +610,21 @@ def run_moneyline_predictions(
                     for player_id in probable_pitcher_ids
                 ),
                 cutoff_time=resolved_prediction_time,
-                connection_factory=connection_factory,
+                connection_factory=feature_connection_factory,
             )
 
         resolved_feature_service = (
             feature_generation_service
             if feature_generation_service
             is not None
-            else FeatureGenerationService()
+            else (_knowledge_feature_service(feature_connection_factory) if identity_knowledge is not None
+                  else FeatureGenerationService())
         )
 
         for schedule_game in prediction_games:
+            if identity_knowledge is not None:
+                with connection.cursor() as cursor:
+                    install_identity_knowledge(cursor, identity_knowledge, cutoff_time=resolved_prediction_time)
             canonical_game = (
                 _get_canonical_game(
                     connection,
@@ -812,6 +837,8 @@ def run_moneyline_predictions(
             )
 
             with connection.cursor() as cursor:
+                if identity_knowledge is not None:
+                    install_identity_knowledge(cursor, identity_knowledge, cutoff_time=resolved_prediction_time)
                 insert_moneyline_game_prediction(
                     cursor,
                     prediction,
@@ -1090,6 +1117,17 @@ def _determine_starter_coverage(
     }[starter_count]
 
 
+def _knowledge_feature_service(factory):
+    from sportsmodel.database.game_repository import PostgresGameRepository
+    from sportsmodel.database.team_statistics_repository import PostgresTeamStatisticsRepository
+    from sportsmodel.database.pitcher_statistics_repository import PostgresPitcherStatisticsRepository
+    from sportsmodel.database.bullpen_statistics_repository import PostgresBullpenStatisticsRepository
+    return FeatureGenerationService(game_repository=PostgresGameRepository(connection_factory=factory),
+        team_statistics_repository=PostgresTeamStatisticsRepository(connection_factory=factory),
+        pitcher_statistics_repository=PostgresPitcherStatisticsRepository(connection_factory=factory),
+        bullpen_statistics_repository=PostgresBullpenStatisticsRepository(connection_factory=factory))
+
+
 def _get_canonical_game(
     connection: Any,
     *,
@@ -1099,7 +1137,7 @@ def _get_canonical_game(
         cursor.execute(
             """
             SELECT
-                game.game_id,
+                CASE WHEN mlb_identity_assert_active(source.game_id) THEN game.game_id END,
                 game.game_date,
                 game.home_team_id,
                 game.away_team_id

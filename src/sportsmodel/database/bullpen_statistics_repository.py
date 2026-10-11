@@ -55,6 +55,7 @@ GET_COMPLETED_RELIEF_APPEARANCES_BEFORE_QUERY = """
     JOIN games AS g
         ON g.game_id = pgps.game_id
     WHERE pgps.team_id = %s
+      AND NOT mlb_identity_is_stale(g.game_id) AND mlb_identity_history_guard()
       AND pgps.is_starter = FALSE
       AND g.game_date < %s
       AND pgps.created_at <= %s
@@ -124,6 +125,7 @@ class PostgresBullpenStatisticsRepository(
 
         try:
             with connection.cursor() as cursor:
+                cursor.execute('SELECT mlb_identity_history_guard()', ())
                 cursor.execute(
                     GET_COMPLETED_RELIEF_APPEARANCES_BEFORE_QUERY,
                     (

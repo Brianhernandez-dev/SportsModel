@@ -12,7 +12,7 @@ COMPLETE_BOX_SCORE_GAME_IDS_QUERY = """
     SELECT requested.game_id
     FROM unnest(%s::integer[]) AS requested(game_id)
     WHERE
-        EXISTS (
+        mlb_identity_assert_active(requested.game_id) AND EXISTS (
             SELECT 1
             FROM games
             WHERE game_id = requested.game_id
@@ -34,7 +34,7 @@ COMPLETE_BOX_SCORE_GAME_IDS_QUERY = """
 
 BOX_SCORE_COMPLETENESS_QUERY = """
     SELECT
-        EXISTS (
+        mlb_identity_assert_active(%s) AND EXISTS (
             SELECT 1
             FROM games
             WHERE game_id = %s
@@ -148,6 +148,7 @@ def get_box_score_completeness(
             cursor.execute(
                 BOX_SCORE_COMPLETENESS_QUERY,
                 (
+                    game_id,
                     game_id,
                     game_id,
                     game_id,

@@ -1,9 +1,15 @@
 # Guarded MLB historical-results recovery
 
+Disposition-aware successor: format 2,
+final-championship-or-explicit-exclusion-v4-disposition-034, exact schema 001–034.
+Old recovery-v3 approvals refuse, without relabeling or survivor translation.
+See [mlb_identity_disposition.md](mlb_identity_disposition.md). Historical review
+notes below retain their original context.
+
 This dedicated tool recovers historical result sources independently of an
 expired betting card. It does not repair predictions, evaluations, candidates,
 settlements, Early Entry cohorts, or workflow state. Normal scheduled ingestion
-and its canonical matcher are unchanged.
+retains its correctness contract; its canonical matcher now enforces active identity.
 
 ## Approval workflow
 

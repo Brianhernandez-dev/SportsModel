@@ -23,8 +23,12 @@ class FakeCursor:
     def __init__(self, fetch_results):
         self.fetch_results = list(fetch_results)
         self.executions = []
+        self.gate_calls = []
 
     def execute(self, query, parameters=None):
+        if query == 'SELECT mlb_identity_gate(false)':
+            self.gate_calls.append(query)
+            return
         self.executions.append(
             (
                 " ".join(query.split()),
@@ -38,7 +42,10 @@ class FakeCursor:
                 "Unexpected fetchone call."
             )
 
-        return self.fetch_results.pop(0)
+        row = self.fetch_results.pop(0)
+        if row is not None and 'mlb_identity_is_stale(game.game_id)' in self.executions[-1][0] and len(row) == 4:
+            row = (*row, False)  # The retained fixtures represent undisposed events.
+        return row
 
 
 class FakeAuthoritativeCursor(FakeCursor):
@@ -47,7 +54,7 @@ class FakeAuthoritativeCursor(FakeCursor):
         self.existing_sources = list(existing_sources)
 
     def fetchall(self):
-        return self.existing_sources
+        return [(*row, True) if len(row) == 3 else row for row in self.existing_sources]
 
 
 def test_authoritative_mapping_ignores_unrelated_nearby_identity() -> None:

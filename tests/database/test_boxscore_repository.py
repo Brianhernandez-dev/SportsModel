@@ -29,6 +29,7 @@ class FakeCursor:
         ] = []
 
         self.rowcount = 0
+        self.identity_checks = []
 
     def __enter__(self) -> "FakeCursor":
         return self
@@ -46,6 +47,9 @@ class FakeCursor:
         query: str,
         parameters: tuple[Any, ...] | None = None,
     ) -> None:
+        if query.startswith('SELECT mlb_identity_'):
+            self.identity_checks.append((query, parameters))
+            return
         execute_number = len(self.executions) + 1
 
         if execute_number == self.fail_on_execute_number:

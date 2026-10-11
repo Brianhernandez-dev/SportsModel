@@ -11,6 +11,7 @@ import tokenize
 import traceback
 
 from sportsmodel.database.connection import get_connection
+from sportsmodel.database.mlb_identity_disposition_repository import require_schema034
 from sportsmodel.database.mlb_recovery_repository import load_mlb_identity
 from sportsmodel.ingest.mlb_boxscore import fetch_live_feed, fetch_boxscore
 from sportsmodel.ingest.mlb_players import fetch_mlb_players
@@ -304,6 +305,7 @@ def _failure_payload(error, failure_phase, application_root=None):
 
 
 def acquire_preview(spec, evidence=None):
+    require_schema034(get_connection)
     # Capabilities and every raw mapping are verified before any provider request.
     connection = get_connection()
     try:

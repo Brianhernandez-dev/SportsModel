@@ -7,6 +7,7 @@ from sportsmodel.database.mlb_operator_guard import (
     OperatorRefusal, SnapshotConnection, load_mlb_teams, positive, verify_target,
 )
 from sportsmodel.features.builders.starting_pitcher import SEASON_START_LIMIT
+from sportsmodel.database.mlb_identity_disposition_repository import install_identity_knowledge
 
 
 def _load_retained_starter_history(cursor, starters, cutoff_time):
@@ -19,7 +20,7 @@ def _load_retained_starter_history(cursor, starters, cutoff_time):
         JOIN games g USING(game_id)
         WHERE pitching.baseball_player_id=ANY(%s) AND pitching.is_starter=TRUE
           AND g.game_date < %s AND pitching.created_at <= %s
-          AND (g.home_team_id IS NULL OR g.away_team_id IS NULL
+          AND (mlb_identity_is_stale(g.game_id) OR g.home_team_id IS NULL OR g.away_team_id IS NULL
                OR g.home_team_id=g.away_team_id
                OR pitching.team_id NOT IN (g.home_team_id,g.away_team_id)) LIMIT 1""",
         (list(sorted(set(starters))), cutoff_time, cutoff_time))
@@ -33,6 +34,7 @@ def _load_retained_starter_history(cursor, starters, cutoff_time):
         FROM player_game_pitching_statistics pitching JOIN games g USING(game_id)
         WHERE pitching.baseball_player_id=ANY(%s) AND pitching.is_starter=TRUE
           AND g.game_date < %s AND pitching.created_at <= %s
+          AND NOT mlb_identity_is_stale(g.game_id) AND mlb_identity_history_guard()
           AND (g.home_team_id=pitching.team_id OR g.away_team_id=pitching.team_id)
           AND g.home_team_id IS NOT NULL AND g.away_team_id IS NOT NULL
     ) SELECT baseball_player_id,game_id,game_date,team_id,home_team_id,away_team_id,created_at,rank
@@ -53,7 +55,8 @@ def _load_retained_starter_history(cursor, starters, cutoff_time):
 
 
 def check_feature_history(*, target_date, target_game_ids, starting_pitcher_ids,
-                          cutoff_time, target, connection_factory, process_probe=None):
+                          cutoff_time, target, connection_factory, process_probe=None,
+                          identity_knowledge=None):
     if type(target_date) is not date or not isinstance(cutoff_time, datetime):
         raise OperatorRefusal("Explicit prediction date and aware cutoff required")
     if cutoff_time.tzinfo is None or cutoff_time.utcoffset() is None:
@@ -76,8 +79,20 @@ def check_feature_history(*, target_date, target_game_ids, starting_pitcher_ids,
         kwargs = {} if process_probe is None else {"process_probe": process_probe}
         report["guard"] = verify_target(connection, target, readonly=True, **kwargs)
         with connection.cursor() as cursor:
+            if identity_knowledge is not None:
+                # An append-only ledger that has never contained a case needs no
+                # disposition knowledge at a historical cutoff. A revoked case
+                # is not an empty ledger. Nonempty state retains the exact sealed
+                # capture/PIT validation; never adjust the caller's cutoff.
+                cursor.execute('SELECT NOT EXISTS(SELECT 1 FROM game_identity_dispositions)')
+                if cursor.fetchone() != (True,):
+                    install_identity_knowledge(cursor, identity_knowledge, cutoff_time=cutoff_time)
+            cursor.execute('SELECT mlb_identity_history_guard()')
+            if cursor.fetchone() != (True,):
+                raise OperatorRefusal('Unproven MLB disposition knowledge at cutoff')
             cursor.execute("""SELECT g.game_id,g.game_date,g.home_team_id,g.away_team_id
                 FROM games g WHERE g.game_date >= %s AND g.game_date < %s
+                AND NOT mlb_identity_is_stale(g.game_id)
                 AND EXISTS(SELECT 1 FROM baseball_team_sources h WHERE h.team_id=g.home_team_id AND h.source_name='mlb_stats')
                 AND EXISTS(SELECT 1 FROM baseball_team_sources a WHERE a.team_id=g.away_team_id AND a.source_name='mlb_stats')
                 ORDER BY g.game_id""", (start, end))
@@ -105,7 +120,7 @@ def check_feature_history(*, target_date, target_game_ids, starting_pitcher_ids,
                     row_number() OVER(PARTITION BY requested.team_id ORDER BY g.game_date DESC,g.game_id DESC) AS rank
                 FROM unnest(%s::integer[]) requested(team_id) JOIN games g
                     ON g.home_team_id=requested.team_id OR g.away_team_id=requested.team_id
-                WHERE g.game_date < %s
+                WHERE g.game_date < %s AND NOT mlb_identity_is_stale(g.game_id)
             ) SELECT team_id,game_id,game_date,home_team_id,away_team_id,rank FROM ranked
                 WHERE rank <= %s ORDER BY team_id,rank""",
                 (list(team_ids), cutoff_time, completeness.FEATURE_TEAM_GAME_LIMIT))

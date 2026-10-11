@@ -4,6 +4,7 @@ from datetime import date, datetime, timedelta
 from typing import Any, Mapping
 
 from sportsmodel.database.connection import get_connection
+from sportsmodel.database.mlb_identity_disposition_repository import require_schema034
 from sportsmodel.ingest.game_matching import (
     get_or_create_canonical_game,
 )
@@ -155,6 +156,8 @@ def sync_mlb_schedule(
         resolved_start_date
         + timedelta(days=days_ahead)
     )
+
+    require_schema034(connection_factory)
 
     updater = (
         update_canonical_game

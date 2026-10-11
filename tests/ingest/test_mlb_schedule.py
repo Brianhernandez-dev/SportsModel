@@ -2,6 +2,14 @@
 from typing import Any
 
 import pytest
+from sportsmodel.ingest import mlb_schedule as schedule_module
+
+
+@pytest.fixture(autouse=True)
+def valid_offline_schema_capability(monkeypatch):
+    # These unit cursors model an already compatible schema. Real catalog
+    # verification/refusal is exercised by identity PostgreSQL/domain tests.
+    monkeypatch.setattr(schedule_module, 'require_schema034', lambda factory: None)
 
 from sportsmodel.database.scheduled_execution_repository import (
     GET_EARLIEST_MLB_GAME_START_QUERY,
@@ -243,11 +251,14 @@ class ScriptedCursor(FakeCursor):
         self.rows = iter(rows)
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
 
-    def execute(self, query: str, parameters: tuple[Any, ...]) -> None:
+    def execute(self, query: str, parameters: tuple[Any, ...] = None) -> None:
         self.calls.append((query, parameters))
 
     def fetchone(self):
-        return next(self.rows)
+        row = next(self.rows)
+        if row is not None and 'mlb_identity_is_stale(game.game_id)' in self.calls[-1][0] and len(row) == 4:
+            return (*row, False)
+        return row
 
 
 def _sync_one_game(game: dict[str, Any], cursor: ScriptedCursor):

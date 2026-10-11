@@ -87,6 +87,7 @@ def test_complete_box_score_requires_two_teams_and_starters() -> None:
             42,
             42,
             42,
+            42,
         )
     )
 

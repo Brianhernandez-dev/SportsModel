@@ -1,5 +1,6 @@
 ﻿from datetime import date, datetime
 import re
+from sportsmodel.database.mlb_identity_disposition_repository import assert_decision_write
 from typing import Any
 
 from sportsmodel.models.moneyline_prediction import (
@@ -119,6 +120,8 @@ def insert_moneyline_game_prediction(
     """
     Insert and return one immutable Moneyline prediction snapshot.
     """
+
+    assert_decision_write(cursor, game_id=prediction.game_id)
 
     cursor.execute(
         """

@@ -2,6 +2,13 @@
 
 ## Purpose
 
+Candidate 1.1.0 requires exact 001–034 and actual disposition guard capabilities
+before live entry. Nonempty ledger requires proven committed knowledge at/before
+cutoff shared by feature reads. Callers without capture fail closed; no automatic
+cutoff shift or old-card reconstruction. See
+[mlb_identity_disposition.md](mlb_identity_disposition.md). Candidate is not
+deployed; production operational health is unverified here.
+
 This runbook documents the daily operating sequence for the SportsModel MLB Moneyline prediction, market evaluation, paper-candidate, settlement, audit, and dashboard pipeline.
 
 A stored prediction or paper candidate is not automatically a wager or recommendation.

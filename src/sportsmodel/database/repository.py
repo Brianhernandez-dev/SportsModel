@@ -98,6 +98,7 @@ def get_game_results() -> list[GameResult]:
         JOIN historical_games hg
             ON hg.game_id = g.game_id
         WHERE hg.home_score IS NOT NULL
+          AND NOT mlb_identity_is_stale(g.game_id)
           AND hg.away_score IS NOT NULL
         ORDER BY g.game_id;
     """

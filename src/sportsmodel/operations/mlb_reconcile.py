@@ -19,6 +19,9 @@ from sportsmodel.ingest.game_matching import (
 from sportsmodel.ingest.mlb_game_policy import confirmed_championship_game, extract_schedule_games
 from sportsmodel.ingest.mlb_schedule import update_canonical_game
 from sportsmodel.ingest.team_identity import normalize_team_name
+from sportsmodel.database.mlb_identity_disposition_repository import (
+    acquire_writer_gate, load_identity_state,
+)
 
 
 def fingerprint():
@@ -27,6 +30,7 @@ def fingerprint():
              "operations/mlb_operator_cli.py",
              "ingest/game_matching.py", "ingest/mlb_schedule.py", "ingest/mlb_game_policy.py",
              "ingest/team_identity.py"]
+    paths.append('database/mlb_identity_disposition_repository.py')
     return digest({p: sha256((root / p).read_bytes()).hexdigest() for p in paths})
 
 
@@ -112,6 +116,11 @@ def validate_inputs(payload_bytes, allowlist_bytes):
 
 
 def _plan(cursor, day, requested, *, lock=False):
+    if lock:
+        acquire_writer_gate(cursor)
+        for gid in sorted(item['existing_game_id'] for item in requested):
+            cursor.execute('SELECT mlb_identity_touch_fence(%s)', (gid,))
+    disposition_state = load_identity_state(cursor)
     states = []
     for expected in requested:
         gid = expected["existing_game_id"]
@@ -143,7 +152,21 @@ def _plan(cursor, day, requested, *, lock=False):
         candidates = cursor.fetchall()
         # Stricter incident approval: any second same-day oriented identity is
         # unresolved even if a nearby candidate would win the normal matcher.
-        if len(candidates) != 1 or candidates[0][0] != gid:
+        active_candidates = []
+        for candidate in candidates:
+            disposition = disposition_state['active'].get(candidate[0])
+            if disposition is None:
+                active_candidates.append(candidate)
+                continue
+            if disposition['case']['survivor_game_id'] != gid:
+                raise OperatorRefusal('Competing disposition has a different survivor')
+            row = candidate[1]
+            if (row['home_team_id'], row['away_team_id']) != (home_id, away_id):
+                raise OperatorRefusal('Disposed competitor orientation changed')
+            cursor.execute('SELECT mlb_identity_forbidden_dependencies(%s)', (candidate[0],))
+            if cursor.fetchone() != ({},):
+                raise OperatorRefusal('Disposed competitor acquired prohibited state')
+        if len(active_candidates) != 1 or active_candidates[0][0] != gid:
             raise OperatorRefusal("Split/same-day identity requires independent disposition")
         candidate_ids = [r[0] for r in candidates]
         cursor.execute("""SELECT game_source_id,game_id,source_name,external_game_id,created_at
@@ -151,9 +174,9 @@ def _plan(cursor, day, requested, *, lock=False):
             ORDER BY game_source_id""" + (" FOR SHARE" if lock else ""),
             (candidate_ids, str(expected["game_pk"])))
         source_rows = cursor.fetchall()
-        if any(r[1] != gid for r in source_rows):
+        if any(r[1] != gid and r[2] == 'mlb_stats' for r in source_rows):
             raise OperatorRefusal("MLB PK is already mapped to a different canonical game")
-        observed_sources = sorted((r[2], r[3]) for r in source_rows)
+        observed_sources = sorted((r[2], r[3]) for r in source_rows if r[1] == gid)
         if observed_sources != _sources(expected["current_sources"]):
             raise OperatorRefusal("Retained source state differs from exact approval")
         selected = get_or_create_canonical_game(cursor, source_name="mlb_stats",
@@ -163,7 +186,8 @@ def _plan(cursor, day, requested, *, lock=False):
         if selected != gid:
             raise OperatorRefusal("Reviewed matcher did not select the approved existing game")
         states.append({"game_pk": expected["game_pk"], "game_id": gid,
-                       "snapshot": {"candidate_rows": candidates, "source_rows": source_rows, "teams": clubs},
+                       "snapshot": {"candidate_rows": candidates, "source_rows": source_rows, "teams": clubs,
+                                    "identity_disposition": disposition_state},
                        "home_team_id": home_id, "away_team_id": away_id,
                        "expected_start": start.isoformat(), "current_start": current_start.isoformat(),
                        "mapping_insert": ("mlb_stats", str(expected["game_pk"])) not in observed_sources,
@@ -180,7 +204,7 @@ def preview_reconciliation(*, payload_bytes, allowlist_bytes, target, connection
         guard = verify_target(connection, target, readonly=True, **kwargs)
         with connection.cursor() as cursor:
             plans = strict_json(canonical_json(_plan(cursor, day, requested)))
-        body = {"version": 1, "domain": "MLB", "target_date": day.isoformat(),
+        body = {"version": 2, "domain": "MLB", "target_date": day.isoformat(),
                 "target": target.artifact(), "payload_sha256": sha256(payload_bytes).hexdigest(),
                 "allowlist_sha256": sha256(allowlist_bytes).hexdigest(), "guard": guard,
                 "implementation_fingerprint": fingerprint(), "plans": plans}
@@ -199,7 +223,7 @@ def execute_reconciliation(*, payload_bytes, allowlist_bytes, preview, approved_
     day, requested = validate_inputs(payload_bytes, allowlist_bytes)
     if not isinstance(preview, dict) or set(preview) != {"version", "domain", "target_date", "target", "payload_sha256", "allowlist_sha256", "guard", "implementation_fingerprint", "plans", "preview_sha256"}:
         raise OperatorRefusal("Preview envelope differs from contract")
-    if type(preview["version"]) is not int or preview["version"] != 1 or preview["domain"] != "MLB":
+    if type(preview["version"]) is not int or preview["version"] != 2 or preview["domain"] != "MLB":
         raise OperatorRefusal("Unsupported preview version/domain")
     body = {k: v for k, v in preview.items() if k != "preview_sha256"}
     if (digest(body) != approved_preview_sha256 or preview["preview_sha256"] != approved_preview_sha256

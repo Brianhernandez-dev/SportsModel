@@ -1,6 +1,12 @@
 from datetime import date
 
 import pytest
+from sportsmodel.ingest import mlb_stats as stats_module
+
+
+@pytest.fixture(autouse=True)
+def valid_offline_schema_capability(monkeypatch):
+    monkeypatch.setattr(stats_module, 'require_schema034', lambda factory: None)
 
 from sportsmodel.ingest.mlb_stats import (
     fetch_historical_results,
@@ -25,10 +31,12 @@ class AuthoritativeMappingCursor(FakeCursor):
         self.executions = []
 
     def execute(self, query, parameters=None) -> None:
+        if query == 'SELECT mlb_identity_gate(false)':
+            return
         self.executions.append((query, parameters))
 
     def fetchall(self):
-        return [(42, 10, 20)]
+        return [(42, 10, 20, True)]
 
 
 class FakeConnection:

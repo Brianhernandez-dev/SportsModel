@@ -44,6 +44,7 @@ GET_COMPLETED_GAMES_QUERY = """
     JOIN historical_games AS hg
         ON hg.game_id = g.game_id
     WHERE g.home_team_id IS NOT NULL
+      AND NOT mlb_identity_is_stale(g.game_id)
       AND g.away_team_id IS NOT NULL
       AND hg.home_score IS NOT NULL
       AND hg.away_score IS NOT NULL

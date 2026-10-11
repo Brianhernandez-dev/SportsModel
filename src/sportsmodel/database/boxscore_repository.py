@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from typing import Any
+from sportsmodel.database.mlb_identity_disposition_repository import assert_decision_write
 
 from sportsmodel.database.connection import get_connection
 from sportsmodel.models.parsed_boxscore import ParsedBoxScore
@@ -187,6 +188,7 @@ def save_parsed_boxscore(
 
 def save_parsed_boxscore_with_cursor(cursor: Any, parsed_boxscore: ParsedBoxScore) -> None:
     """Reuse normal persistence in a caller-owned, identity-locked transaction."""
+    assert_decision_write(cursor, game_id=parsed_boxscore.game_id)
     _update_game(cursor=cursor, parsed_boxscore=parsed_boxscore)
     for statistics in parsed_boxscore.team_statistics:
         _upsert_team_statistics(cursor=cursor, statistics=statistics)
@@ -200,6 +202,7 @@ def insert_parsed_boxscore_with_cursor(
 ) -> None:
     """Insert one approved recovery boxscore in its caller-owned transaction."""
 
+    assert_decision_write(cursor, game_id=parsed_boxscore.game_id)
     _update_game(cursor=cursor, parsed_boxscore=parsed_boxscore)
     for statistics in parsed_boxscore.team_statistics:
         _insert_team_statistics(cursor=cursor, statistics=statistics)

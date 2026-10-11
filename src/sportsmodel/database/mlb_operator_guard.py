@@ -70,11 +70,11 @@ class OperatorTarget:
     identity_kind: str
     system_identifier: str | None = None
     domain: str = "MLB"
-    migration_boundary: int = 33
+    migration_boundary: int = 34
 
     def __post_init__(self):
-        if self.domain != "MLB" or type(self.migration_boundary) is not int or self.migration_boundary != 33:
-            raise OperatorRefusal("Expected exact MLB / migration 033 domain")
+        if self.domain != "MLB" or type(self.migration_boundary) is not int or self.migration_boundary != 34:
+            raise OperatorRefusal("Expected exact MLB / migration 034 domain")
         try:
             host = ipaddress.ip_address(self.host)
             ipaddress.ip_address(self.server_address)
@@ -157,8 +157,8 @@ def validate_native_proof(value, backend_pid):
 def migration_reference():
     root = Path(__file__).resolve().parents[3]
     paths = sorted((root / "database/migrations").glob("*.sql"))
-    if [int(p.name[:3]) for p in paths] != list(range(1, 34)):
-        raise OperatorRefusal("Reviewed migration inventory differs from 001-033")
+    if [int(p.name[:3]) for p in paths] != list(range(1, 35)):
+        raise OperatorRefusal("Reviewed migration inventory differs from 001-034")
     return tuple((int(p.name[:3]), p.name,
                   sha256(p.read_text(encoding="utf-8-sig").encode()).hexdigest()) for p in paths)
 
@@ -192,7 +192,9 @@ def verify_target(connection, target, *, readonly, process_probe=native_process_
         cursor.execute("SELECT version,filename,checksum FROM schema_migrations ORDER BY version")
         observed = tuple((v, name, checksum.strip()) for v, name, checksum in cursor.fetchall())
         if observed != migration_reference():
-            raise OperatorRefusal("Migration inventory/checksums differ from exact 001-033")
+            raise OperatorRefusal("Migration inventory/checksums differ from exact 001-034")
+        from sportsmodel.database.mlb_identity_disposition_repository import verify_capabilities
+        verify_capabilities(cursor)
     return {"target": target.artifact(), "migration_fingerprint": digest(observed)}
 
 

@@ -1,13 +1,61 @@
 """Explicit offline-evidence operator CLI, not a scheduled/live provider runner."""
 import argparse
-from datetime import date
+from datetime import date, datetime
 import getpass
 from pathlib import Path
 import warnings
+import time
 
 from sportsmodel.database.mlb_operator_guard import (
     OperatorRefusal, OperatorTarget, aware, canonical_json, strict_json,
 )
+
+MAX_CUTOFF_WAIT_SECONDS = 30
+CUTOFF_POLL_SECONDS = 0.2
+
+
+def _wait_for_history_cutoff(*, knowledge, cutoff_time, target, connection_factory):
+    """Wait only for an explicitly supplied cutoff; no transaction spans sleep."""
+    from sportsmodel.database import mlb_identity_disposition_repository as identity
+    from sportsmodel.database.mlb_operator_guard import verify_target
+    if (not isinstance(cutoff_time, datetime) or cutoff_time.tzinfo is None
+            or cutoff_time.utcoffset() is None
+            or not isinstance(knowledge, identity.IdentityKnowledgeSnapshot)
+            or knowledge.capture_attestation is not identity._COMMITTED_CAPTURE
+            or identity._knowledge_hash(knowledge.body()) != knowledge.artifact_sha256):
+        raise OperatorRefusal("Original sealed capture and aware cutoff required for wait")
+    if aware(knowledge.available_at) > cutoff_time:
+        raise OperatorRefusal("Committed capture is newer than the requested cutoff")
+    started = time.monotonic()
+    connection = connection_factory()
+    try:
+        # Each clock/catalog SELECT has its own read-only transaction. No open
+        # transaction or cursor survives the poll/sleep boundary.
+        connection.set_session(readonly=True, isolation_level="REPEATABLE READ", autocommit=True)
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT set_config('statement_timeout','1000',false)")
+        verify_target(connection, target, readonly=True)
+        polls = 0
+        while True:
+            if time.monotonic() - started >= MAX_CUTOFF_WAIT_SECONDS:
+                raise OperatorRefusal("Bounded cutoff wait expired")
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT clock_timestamp()")
+                now = cursor.fetchone()[0]
+            polls += 1
+            if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
+                raise OperatorRefusal("Aware trusted database clock required")
+            remaining = (cutoff_time - now).total_seconds()
+            budget = MAX_CUTOFF_WAIT_SECONDS - (time.monotonic() - started)
+            if budget <= 0 or remaining > MAX_CUTOFF_WAIT_SECONDS:
+                raise OperatorRefusal("Requested cutoff exceeds bounded wait")
+            if remaining <= 0:
+                return dict(cutoff_time=cutoff_time.isoformat(), db_time_reached=now.isoformat(),
+                            capture_available_at=knowledge.available_at, polls=polls,
+                            maximum_seconds=MAX_CUTOFF_WAIT_SECONDS)
+            time.sleep(min(CUTOFF_POLL_SECONDS, remaining, budget))
+    finally:
+        connection.close()
 
 
 def _write_output(path, report):
@@ -36,6 +84,10 @@ def main(argv=None, *, connector=None, password_reader=None):
 
 
 def _main(argv=None, *, connector=None, password_reader=None):
+    cutoff_arguments = []
+    def parse_cutoff(value):
+        cutoff_arguments.append(value)
+        return aware(value)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=("history", "preview", "execute"))
     parser.add_argument("--target", type=Path, required=True, help="Pinned non-secret endpoint/epoch/schema guard JSON")
@@ -45,7 +97,9 @@ def _main(argv=None, *, connector=None, password_reader=None):
     parser.add_argument("--date", type=date.fromisoformat, required=True)
     parser.add_argument("--game-ids", type=int, nargs="+")
     parser.add_argument("--starter-ids", type=int, nargs="+")
-    parser.add_argument("--cutoff", type=aware)
+    parser.add_argument("--cutoff", type=parse_cutoff)
+    parser.add_argument("--wait-for-cutoff", action="store_true",
+                        help="History only: wait at most 30 seconds for the exact cutoff using the target DB clock")
     parser.add_argument("--payload", type=Path)
     parser.add_argument("--allowlist", type=Path)
     parser.add_argument("--preview", type=Path)
@@ -53,6 +107,8 @@ def _main(argv=None, *, connector=None, password_reader=None):
     parser.add_argument("--acknowledge-writes", action="store_true")
     args = parser.parse_args(argv)
     try:
+        if args.wait_for_cutoff and args.mode != "history":
+            raise OperatorRefusal("Cutoff wait is only available for history")
         target = OperatorTarget.from_dict(strict_json(args.target.read_bytes()))
         if args.output.exists() or not args.output.parent.is_dir():
             raise OperatorRefusal("Output precheck failed")
@@ -90,9 +146,16 @@ def _main(argv=None, *, connector=None, password_reader=None):
                              options="-c default_transaction_read_only=on -c statement_timeout=60000 -c lock_timeout=5000 -c search_path=public")
         try:
             if args.mode == "history":
+                from sportsmodel.database.mlb_identity_disposition_repository import capture_identity_knowledge
                 from sportsmodel.operations.mlb_history_check import check_feature_history
+                knowledge = capture_identity_knowledge(connection_factory=factory)
+                wait = (_wait_for_history_cutoff(knowledge=knowledge, cutoff_time=args.cutoff,
+                        target=target, connection_factory=factory) if args.wait_for_cutoff else None)
                 report = check_feature_history(target_date=args.date, target_game_ids=args.game_ids,
-                    starting_pitcher_ids=args.starter_ids, cutoff_time=args.cutoff, target=target, connection_factory=factory)
+                    starting_pitcher_ids=args.starter_ids, cutoff_time=args.cutoff, target=target, connection_factory=factory,
+                    identity_knowledge=knowledge)
+                if wait is not None:
+                    report["cutoff_wait"] = dict(wait, requested_cutoff_argument=cutoff_arguments[-1])
             else:
                 from sportsmodel.operations.mlb_reconcile import preview_reconciliation, execute_reconciliation
                 if args.mode == "preview":
@@ -107,6 +170,9 @@ def _main(argv=None, *, connector=None, password_reader=None):
         print(canonical_json(report))
         _write_output(args.output, report)
         return 1 if report.get("status") == "FAIL" else 0
+    except KeyboardInterrupt:
+        print(canonical_json({"status": "FAIL", "reason": "Operator interrupted; no partial report retained"}))
+        return 130
     except OperatorRefusal as error:
         print(canonical_json({"status": "FAIL", "reason": str(error)}))
         return 1

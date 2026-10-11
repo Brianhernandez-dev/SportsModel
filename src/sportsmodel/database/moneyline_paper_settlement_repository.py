@@ -1,5 +1,6 @@
 ﻿from typing import Any
 
+from sportsmodel.database.mlb_identity_disposition_repository import assert_decision_write
 from sportsmodel.models.moneyline_paper_settlement import (
     MoneylinePaperSettlement,
 )
@@ -18,6 +19,8 @@ def upsert_moneyline_paper_settlement(
     """
 
     _validate_settlement(settlement)
+    assert_decision_write(cursor, game_id=settlement.game_id,
+                          moneyline_prediction_market_evaluation_id=settlement.moneyline_prediction_market_evaluation_id)
 
     cursor.execute(
         """

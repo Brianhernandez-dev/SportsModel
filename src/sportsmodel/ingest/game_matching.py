@@ -1,9 +1,12 @@
 from datetime import datetime, timedelta
+from sportsmodel.database.mlb_identity_disposition_repository import acquire_writer_gate
 
 
 DEFAULT_GAME_TIME_TOLERANCE = timedelta(minutes=15)
 MLB_AUTHORITATIVE_SOURCE = "mlb_stats"
 MLB_ODDS_SOURCE = "odds_api"
+ACTIVE_EVENT = "ACTIVE_EVENT"
+RAW_ACQUISITION_CONTINUITY = "RAW_ACQUISITION_CONTINUITY"
 
 
 class CanonicalGameIdentityConflictError(ValueError):
@@ -29,6 +32,7 @@ def get_or_create_authoritative_source_game(
     strict canonical matching and creation contract remains in force.
     """
 
+    acquire_writer_gate(cursor)
     external_game_id = str(external_game_id)
 
     cursor.execute(
@@ -36,7 +40,8 @@ def get_or_create_authoritative_source_game(
         SELECT
             source.game_id,
             game.home_team_id,
-            game.away_team_id
+            game.away_team_id,
+            mlb_identity_assert_active(game.game_id)
         FROM game_sources AS source
         JOIN games AS game
           ON game.game_id = source.game_id
@@ -65,8 +70,11 @@ def get_or_create_authoritative_source_game(
             mapped_game_id,
             mapped_home_team_id,
             mapped_away_team_id,
+            active_verified,
         ) = existing_sources[0]
 
+        if active_verified is not True:
+            raise CanonicalGameIdentityConflictError('Authoritative stale identity is ineligible')
         if (
             mapped_home_team_id != home_team_id
             or mapped_away_team_id != away_team_id
@@ -118,6 +126,8 @@ def get_or_create_canonical_game(
     tolerance: timedelta = DEFAULT_GAME_TIME_TOLERANCE,
     existing_only: bool = False,
     persist_mapping: bool = True,
+    resolution_mode: str = ACTIVE_EVENT,
+    provider_sport_key: str | None = None,
 ) -> int:
     """
     Return the canonical game ID for an external event.
@@ -153,6 +163,13 @@ def get_or_create_canonical_game(
         raise ValueError("Canonical matching mode flags must be boolean.")
     if not persist_mapping and not existing_only:
         raise ValueError("Read-only canonical selection requires existing-only mode.")
+    if resolution_mode not in (ACTIVE_EVENT, RAW_ACQUISITION_CONTINUITY):
+        raise ValueError('Unknown canonical resolution purpose')
+    if resolution_mode == RAW_ACQUISITION_CONTINUITY and (
+            source_name != MLB_ODDS_SOURCE or provider_sport_key != 'baseball_mlb'):
+        raise ValueError('Raw continuity requires explicit MLB Odds source/domain')
+    if persist_mapping:
+        acquire_writer_gate(cursor)
     external_game_id = str(external_game_id)
 
     cursor.execute(
@@ -161,7 +178,8 @@ def get_or_create_canonical_game(
             source.game_id,
             game.game_date,
             game.home_team_id,
-            game.away_team_id
+            game.away_team_id,
+            mlb_identity_is_stale(game.game_id)
         FROM game_sources AS source
         JOIN games AS game
           ON game.game_id = source.game_id
@@ -182,6 +200,7 @@ def get_or_create_canonical_game(
             _mapped_game_datetime,
             mapped_home_team_id,
             mapped_away_team_id,
+            mapped_stale,
         ) = existing_source
 
         if (
@@ -194,12 +213,20 @@ def get_or_create_canonical_game(
                 f"{source_name}/{external_game_id}."
             )
 
+        if type(mapped_stale) is not bool:
+            raise CanonicalGameIdentityConflictError('Malformed disposition state')
+        if mapped_stale:
+            if resolution_mode != RAW_ACQUISITION_CONTINUITY:
+                raise CanonicalGameIdentityConflictError('Active stale identity cannot resolve as a real event')
+            return mapped_game_id
+
         conflict_count, conflicting_game_id = _load_candidate_count(
             cursor,
             query="""
                 SELECT COUNT(*), MIN(candidate.game_id)
                 FROM games AS candidate
                 WHERE candidate.game_id <> %s
+                  AND NOT mlb_identity_is_stale(candidate.game_id)
                   AND candidate.home_team_id = %s
                   AND candidate.away_team_id = %s
                   AND candidate.game_date BETWEEN %s AND %s;
@@ -237,6 +264,7 @@ def get_or_create_canonical_game(
                 SELECT COUNT(*), MIN(candidate.game_id)
                 FROM games AS candidate
                 WHERE candidate.home_team_id = %s
+                  AND NOT mlb_identity_is_stale(candidate.game_id)
                   AND candidate.away_team_id = %s
                   AND candidate.game_date BETWEEN %s AND %s
                   AND EXISTS (
@@ -270,6 +298,7 @@ def get_or_create_canonical_game(
                 SELECT COUNT(*), MIN(candidate.game_id)
                 FROM games AS candidate
                 WHERE candidate.home_team_id = %s
+                  AND NOT mlb_identity_is_stale(candidate.game_id)
                   AND candidate.away_team_id = %s
                   AND candidate.game_date BETWEEN %s AND %s
                   AND NOT EXISTS (
@@ -303,6 +332,7 @@ def get_or_create_canonical_game(
                 SELECT COUNT(*), MIN(candidate.game_id)
                 FROM games AS candidate
                 WHERE candidate.home_team_id = %s
+                  AND NOT mlb_identity_is_stale(candidate.game_id)
                   AND candidate.away_team_id = %s
                   AND (
                       candidate.game_date AT TIME ZONE 'America/Los_Angeles'
