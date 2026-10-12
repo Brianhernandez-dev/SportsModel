@@ -2,7 +2,12 @@
 
 ## Purpose
 
-Candidate 1.1.0 requires exact 001–034 and actual disposition guard capabilities
+Current successor candidate requires exact 001–035, combined retirement guard
+capabilities and sealed committed v2 knowledge before reservation/provider work.
+Inference/publication remain held pending complete independent review. See
+[legacy retirement successor](mlb_legacy_identity_retirement.md).
+
+The historical 1.1.0 contract required exact 001–034 and actual disposition guard capabilities
 before live entry. Nonempty ledger requires proven committed knowledge at/before
 cutoff shared by feature reads. Callers without capture fail closed; no automatic
 cutoff shift or old-card reconstruction. See

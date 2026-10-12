@@ -22,7 +22,7 @@ class FakeCursor:
         query: str,
         parameters: tuple,
     ) -> None:
-        if query == 'SELECT mlb_identity_gate(false)':
+        if query == 'SELECT mlb_retirement_topology_fresh()':
             self.identity_checks.append((query, parameters))
             return
         self.executions.append(
@@ -34,7 +34,7 @@ class FakeCursor:
 
     def fetchone(self):
         row = next(self.fetch_results)
-        if row is not None and 'mlb_identity_is_stale(game.game_id)' in self.executions[-1][0] and len(row)==4:
+        if row is not None and 'mlb_identity_is_retired(game.game_id)' in self.executions[-1][0] and len(row)==4:
             return (*row,False)
         return row
 

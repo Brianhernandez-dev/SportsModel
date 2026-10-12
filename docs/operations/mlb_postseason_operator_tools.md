@@ -1,6 +1,11 @@
 # MLB postseason operator-tooling candidate 1.1.0
 
-Successor requires schema 001–034 and reconciliation preview format 2. See
+Current successor requires schema 001–035 and reconciliation preview format 2
+bound to the exact successor code/profile. Legacy retirement uses its separate
+ACTIVATE-only operator and sealed v2 knowledge. All production execution remains
+held. See [mlb_legacy_identity_retirement.md](mlb_legacy_identity_retirement.md).
+
+Historical 1.1.0 required schema 001–034 and reconciliation preview format 2. See
 [mlb_identity_disposition.md](mlb_identity_disposition.md). Historical 0.5/0.6
 records retain their original review context, not executable authority.
 

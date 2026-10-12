@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from sportsmodel.database import mlb_operator_guard as guard
+from sportsmodel.database import mlb_retirement_guard as guard
 from sportsmodel.operations import mlb_reconcile as reconcile
 from sportsmodel.operations import mlb_operator_cli as cli
 
@@ -13,10 +13,21 @@ from sportsmodel.operations import mlb_operator_cli as cli
 STAMP = datetime(2026, 10, 1, tzinfo=timezone.utc)
 
 
+def synthetic_knowledge():
+    # Unit plumbing only. Real sealed capture is tested against isolated PG16.
+    from sportsmodel.database import mlb_retirement_repository as identity
+    body=dict(version=2,profile='a'*64,fingerprint='b'*64,ledger034='c'*64,
+              ledger035='d'*64,topology_epoch=1,available_at=STAMP.isoformat(),
+              endpoint=['127.0.0.1',55448,'sportsmodel_test_retirement170_35'])
+    return identity.IdentityKnowledgeSnapshot(**{k:tuple(v) if k=='endpoint' else v for k,v in body.items() if k!='version'},
+        artifact_sha256=identity._knowledge_hash(body),capture_attestation=identity._COMMITTED_CAPTURE)
+
+
 @pytest.fixture(autouse=True)
 def valid_offline_catalog(monkeypatch):
-    from sportsmodel.database import mlb_identity_disposition_repository as identity
+    from sportsmodel.database import mlb_retirement_repository as identity
     monkeypatch.setattr(identity,'verify_capabilities',lambda cursor:True)
+    monkeypatch.setattr(guard,'verify_capabilities',lambda cursor:True)
 
 
 def target(**changes):
@@ -59,7 +70,7 @@ class Connection:
 
 
 @pytest.mark.parametrize("changes", [
-    {"domain": "NFL"}, {"migration_boundary": 33}, {"migration_boundary": 35}, {"host": "localhost"},
+        {"domain": "NFL"}, {"migration_boundary": 33}, {"migration_boundary": 34}, {"host": "localhost"},
     {"database": "other"}, {"port": 55499}, {"server_port": 55499},
     {"postmaster_started_at": "2026-10-01"}, {"identity_kind": "unknown"},
     {"port": True}, {"database": ""}, {"server_address": "alias"},
@@ -183,19 +194,19 @@ def test_bad_preview_binding_refused_before_connection():
 
 def test_cli_history_fail_is_nonzero(tmp_path,monkeypatch):
     from sportsmodel.operations import mlb_history_check
-    from sportsmodel.database import mlb_identity_disposition_repository
+    from sportsmodel.database import mlb_retirement_repository
     path=tmp_path/"target.json";path.write_text(guard.canonical_json(target().artifact()))
     monkeypatch.setattr(mlb_history_check,"check_feature_history",lambda **kw:{"status":"FAIL","issues":["synthetic missing identity"]})
-    monkeypatch.setattr(mlb_identity_disposition_repository,"capture_identity_knowledge",lambda **kw:object())
+    monkeypatch.setattr(mlb_retirement_repository,"capture_identity_knowledge",lambda **kw:object())
     code=cli.main(["history","--target",str(path),"--db-user","synthetic","--output",str(tmp_path/"out.json"),"--acknowledge-db-read","--date","2026-10-07","--game-ids","1","--starter-ids","1","2","--cutoff","2026-10-07T00:00:00Z"],connector=lambda **kw:None,password_reader=lambda _:"SYNTHETIC_DB_SENTINEL")
     assert code==1 and guard.strict_json((tmp_path/"out.json").read_bytes())["status"]=="FAIL"
 
 
 def test_history_cli_passes_exact_capture_and_preserves_cutoff(tmp_path,monkeypatch):
     from sportsmodel.operations import mlb_history_check
-    from sportsmodel.database import mlb_identity_disposition_repository as identity
+    from sportsmodel.database import mlb_retirement_repository as identity
     path=tmp_path/'target.json';path.write_text(guard.canonical_json(target().artifact()))
-    capture=identity.IdentityKnowledgeSnapshot('a'*64,STAMP.isoformat(),'b'*64)
+    capture=synthetic_knowledge()
     calls=[];factory_seen=[]
     def captured(*,connection_factory):
         calls.append('capture');factory_seen.append(connection_factory);return capture
@@ -218,9 +229,7 @@ def test_history_cli_passes_exact_capture_and_preserves_cutoff(tmp_path,monkeypa
 @pytest.mark.parametrize('case',['success','already_satisfied','too_far','historical','naive','malformed','bad_clock','expired','interrupted'])
 def test_bounded_wait_uses_db_clock_and_closes_connection(monkeypatch,case):
     from datetime import timedelta
-    from sportsmodel.database import mlb_identity_disposition_repository as identity
-    body=dict(version=1,ledger_fingerprint='a'*64,available_at=STAMP.isoformat())
-    knowledge=identity.IdentityKnowledgeSnapshot(body['ledger_fingerprint'],body['available_at'],identity._knowledge_hash(body),identity._COMMITTED_CAPTURE)
+    knowledge=synthetic_knowledge()
     cutoff=STAMP+timedelta(seconds=1)
     if case=='too_far':cutoff=STAMP+timedelta(seconds=31)
     if case=='historical':cutoff=STAMP-timedelta(seconds=1)

@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 
 from sportsmodel.database.connection import get_connection
 from sportsmodel.database import mlb_recovery_repository as repository
-from sportsmodel.database.mlb_identity_disposition_repository import load_identity_state, require_schema034, acquire_writer_gate
+from sportsmodel.database.mlb_retirement_repository import load_identity_state, require_schema035, acquire_writer_gate
 from sportsmodel.ingest.boxscore_parser import (
     parse_boxscore, parse_pitcher_statistics, parse_team_statistics,
 )
@@ -27,8 +27,8 @@ from sportsmodel.ingest.mlb_game_policy import (
 )
 
 
-VERSION = 2
-CONTRACT = 'final-championship-or-explicit-exclusion-v4-disposition-034'
+VERSION = 3
+CONTRACT = 'final-championship-or-explicit-exclusion-v5-retirement-035'
 MUTATIONS = ['historical_games', 'team_game_statistics',
              'player_game_pitching_statistics', 'games.result_metadata',
              'baseball_players.missing_only', 'baseball_player_sources.missing_only']
@@ -67,7 +67,7 @@ def implementation_hash():
              'ingest/boxscore_parser.py', 'ingest/mlb_players.py', 'ingest/mlb_stats.py',
              'ingest/mlb_game_policy.py',
              'database/boxscore_repository.py', 'models/parsed_boxscore.py',
-             'database/mlb_identity_disposition_repository.py',
+             'database/mlb_retirement_repository.py',
              'models/team_game_statistics.py', 'models/player_game_pitching_statistics.py']
     return digest({p: sha256((root / p).read_bytes()).hexdigest() for p in paths})
 
@@ -355,7 +355,7 @@ def build_manifest(spec, bundle, snapshot, *, protected_references=None):
 
 
 def plan_recovery(spec, bundle, *, connection_factory=get_connection, protected_references=None):
-    require_schema034(connection_factory)
+    require_schema035(connection_factory)
     connection = connection_factory()
     try:
         connection.set_session(readonly=True, isolation_level='REPEATABLE READ')
@@ -417,7 +417,7 @@ def execute_recovery(manifest, approved_hash, *, code_revision,
         if not acknowledge_writes:
             raise ValueError('Explicit independent production-write authorization required')
         _validate_approved_manifest(manifest, approved_hash, code_revision)
-        require_schema034(connection_factory)
+        require_schema035(connection_factory)
         phase = 'preflight'
         active = list(manifest['eligible_game_pks'])
         connection = connection_factory()

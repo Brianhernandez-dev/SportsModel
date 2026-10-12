@@ -1,6 +1,6 @@
 ﻿from datetime import date, datetime
 import re
-from sportsmodel.database.mlb_identity_disposition_repository import assert_decision_write
+from sportsmodel.database.mlb_retirement_repository import assert_decision_write
 from typing import Any
 
 from sportsmodel.models.moneyline_prediction import (
@@ -78,7 +78,8 @@ def create_moneyline_prediction_run(
                 feature_schema_version,
                 model_artifact_sha256,
                 model_training_cutoff,
-                status
+                status,
+                identity_retirement_knowledge
             )
             VALUES (
                 %s,
@@ -87,7 +88,8 @@ def create_moneyline_prediction_run(
                 %s,
                 %s,
                 %s,
-                'running'
+                'running',
+                nullif(current_setting('sportsmodel.retirement_knowledge',true),'')::jsonb
             )
             RETURNING moneyline_prediction_run_id;
             """,

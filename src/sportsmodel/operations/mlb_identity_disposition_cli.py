@@ -5,7 +5,7 @@ from pathlib import Path
 import stat
 import warnings
 
-from sportsmodel.database.mlb_operator_guard import OperatorTarget, OperatorRefusal, strict_json, canonical_json
+from sportsmodel.database.mlb_retirement_guard import OperatorTarget, OperatorRefusal, strict_json, canonical_json
 from sportsmodel.operations.mlb_identity_disposition import (
     preview_disposition,execute_disposition,inspect_receipt,
 )

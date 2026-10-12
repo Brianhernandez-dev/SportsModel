@@ -1,5 +1,11 @@
 # MLB stale-identity disposition implementation 1.1.0
 
+Successor notice: current development candidate requires exact schema035 and a
+V2 executable operator envelope. The frozen034 component described below remains
+unchanged; it is not the combined retirement contract. See
+[legacy retirement successor](mlb_legacy_identity_retirement.md). No release or
+production authority follows from this notice.
+
 DEVELOPMENT / independent review only. No production migration, preview,
 activation, provider access, deployment, inference or publication is authorized.
 Production operational health is unverified. The approved 1.0.0 design is not

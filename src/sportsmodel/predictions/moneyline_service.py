@@ -7,8 +7,8 @@ from pathlib import Path
 from typing import Any, Mapping
 
 import requests
-from sportsmodel.database.mlb_identity_disposition_repository import (
-    require_schema034, install_identity_knowledge, knowledge_connection_factory,
+from sportsmodel.database.mlb_retirement_repository import (
+    require_schema035, install_identity_knowledge, knowledge_connection_factory,
 )
 
 from sportsmodel.database.connection import (
@@ -414,7 +414,7 @@ def run_moneyline_predictions(
             "Prediction run type must be official or preview."
         )
 
-    require_schema034(connection_factory)
+    require_schema035(connection_factory)
     feature_connection_factory = (knowledge_connection_factory(connection_factory, identity_knowledge,
                                  cutoff_time=resolved_prediction_time)
                                  if identity_knowledge is not None else connection_factory)
@@ -438,8 +438,9 @@ def run_moneyline_predictions(
     try:
         with connection.cursor() as cursor:
             if identity_knowledge is not None:
-                install_identity_knowledge(cursor, identity_knowledge, cutoff_time=resolved_prediction_time)
-            cursor.execute('SELECT mlb_identity_history_guard()')
+                install_identity_knowledge(cursor, identity_knowledge, cutoff_time=resolved_prediction_time,
+                                           current_factory=connection_factory)
+            cursor.execute('SELECT mlb_retirement_history_guard()')
             if cursor.fetchone() != (True,):
                 raise RuntimeError('Unproven identity knowledge at prediction cutoff')
         create_run_arguments = {
@@ -465,13 +466,6 @@ def run_moneyline_predictions(
                 **create_run_arguments,
             )
         )
-
-        if identity_knowledge is not None:
-            with connection.cursor() as cursor:
-                cursor.execute('UPDATE moneyline_prediction_runs SET identity_disposition_knowledge=%s::jsonb WHERE moneyline_prediction_run_id=%s AND identity_disposition_knowledge IS NULL',
-                               (json.dumps(dict(identity_knowledge.body(), artifact_sha256=identity_knowledge.artifact_sha256)),run_id))
-                if cursor.rowcount != 1:
-                    raise RuntimeError('Identity knowledge could not be bound to prediction run')
 
         schedule_payload = (
             fetch_hydrated_schedule_for_date(
@@ -624,7 +618,8 @@ def run_moneyline_predictions(
         for schedule_game in prediction_games:
             if identity_knowledge is not None:
                 with connection.cursor() as cursor:
-                    install_identity_knowledge(cursor, identity_knowledge, cutoff_time=resolved_prediction_time)
+                    install_identity_knowledge(cursor, identity_knowledge, cutoff_time=resolved_prediction_time,
+                                               current_factory=connection_factory)
             canonical_game = (
                 _get_canonical_game(
                     connection,
@@ -838,7 +833,8 @@ def run_moneyline_predictions(
 
             with connection.cursor() as cursor:
                 if identity_knowledge is not None:
-                    install_identity_knowledge(cursor, identity_knowledge, cutoff_time=resolved_prediction_time)
+                    install_identity_knowledge(cursor, identity_knowledge, cutoff_time=resolved_prediction_time,
+                                               current_factory=connection_factory)
                 insert_moneyline_game_prediction(
                     cursor,
                     prediction,
@@ -1137,7 +1133,7 @@ def _get_canonical_game(
         cursor.execute(
             """
             SELECT
-                CASE WHEN mlb_identity_assert_active(source.game_id) THEN game.game_id END,
+                CASE WHEN mlb_retirement_assert_active(source.game_id) THEN game.game_id END,
                 game.game_date,
                 game.home_team_id,
                 game.away_team_id

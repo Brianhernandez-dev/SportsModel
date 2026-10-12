@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 import requests
 
 from sportsmodel.database.connection import get_connection
-from sportsmodel.database.mlb_identity_disposition_repository import require_schema034
+from sportsmodel.database.mlb_retirement_repository import require_schema035
 
 from sportsmodel.ingest.game_matching import (
     get_or_create_canonical_game,
@@ -538,7 +538,7 @@ def fetch_live_odds(
     if not api_key:
         raise RuntimeError("ODDS_API_KEY is missing from the environment.")
 
-    require_schema034(get_connection)
+    require_schema035(get_connection)
     connection = get_connection()
     ingestion_run_id = None
 

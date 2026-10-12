@@ -630,7 +630,7 @@ def _load_snapshot_records(
             snapshot.snapshot_time,
             snapshot.raw_acquisition_game_id,
             sportsbook.name
-        FROM odds_market_snapshots_effective AS snapshot
+        FROM mlb_retirement_effective_markets() AS snapshot
         JOIN sportsbooks AS sportsbook
           ON sportsbook.sportsbook_id =
              snapshot.sportsbook_id

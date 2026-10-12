@@ -9,7 +9,7 @@ from hashlib import sha256
 from pathlib import Path
 import re
 
-from sportsmodel.database.mlb_operator_guard import (
+from sportsmodel.database.mlb_retirement_guard import (
     OperatorRefusal, aware, canonical_json, digest, load_mlb_teams, positive,
     strict_json, verify_target,
 )
@@ -19,19 +19,22 @@ from sportsmodel.ingest.game_matching import (
 from sportsmodel.ingest.mlb_game_policy import confirmed_championship_game, extract_schedule_games
 from sportsmodel.ingest.mlb_schedule import update_canonical_game
 from sportsmodel.ingest.team_identity import normalize_team_name
-from sportsmodel.database.mlb_identity_disposition_repository import (
+from sportsmodel.database.mlb_retirement_repository import (
     acquire_writer_gate, load_identity_state,
 )
 
 
 def fingerprint():
     root = Path(__file__).resolve().parents[1]
-    paths = ["operations/mlb_reconcile.py", "database/mlb_operator_guard.py",
+    paths = ["operations/mlb_reconcile.py", "database/mlb_retirement_guard.py",
              "operations/mlb_operator_cli.py",
              "ingest/game_matching.py", "ingest/mlb_schedule.py", "ingest/mlb_game_policy.py",
              "ingest/team_identity.py"]
-    paths.append('database/mlb_identity_disposition_repository.py')
-    return digest({p: sha256((root / p).read_bytes()).hexdigest() for p in paths})
+    paths.append('database/mlb_retirement_repository.py')
+    from sportsmodel.database.mlb_retirement_repository import profile_fingerprint
+    hashes={p:sha256((root/p).read_bytes()).hexdigest() for p in paths}
+    hashes['successor035_profile']=profile_fingerprint()
+    return digest(hashes)
 
 
 def _sources(value):

@@ -1,6 +1,6 @@
 from collections.abc import Callable
 from typing import Any
-from sportsmodel.database.mlb_identity_disposition_repository import assert_decision_write
+from sportsmodel.database.mlb_retirement_repository import assert_decision_write
 
 from sportsmodel.database.connection import get_connection
 from sportsmodel.models.parsed_boxscore import ParsedBoxScore

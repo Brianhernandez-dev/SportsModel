@@ -1,5 +1,11 @@
 # MLB championship-season live-path candidate
 
+Current development successor requires exact schema035 and combined retirement
+eligibility before canonical matching. The original gameType, conditional/TBD,
+strict envelope/date and retained-slate protections remain unchanged. See
+[legacy retirement successor](mlb_legacy_identity_retirement.md). No production
+execution is authorized.
+
 ## Implemented boundary
 
 This is a DEVELOPMENT CANDIDATE, not a production-readiness assertion or execution

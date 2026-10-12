@@ -1,6 +1,6 @@
 from typing import Any
 from sportsmodel.database.connection import get_connection
-from sportsmodel.database.mlb_identity_disposition_repository import require_schema034
+from sportsmodel.database.mlb_retirement_repository import require_schema035
 from sportsmodel.database.mlb_recovery_repository import load_mlb_identity
 
 from sportsmodel.database.boxscore_repository import (
@@ -33,7 +33,7 @@ def ingest_boxscore(
     Download, resolve, parse, and persist one MLB box score.
     """
 
-    require_schema034(connection_factory)
+    require_schema035(connection_factory)
     connection=connection_factory()
     try:
         connection.set_session(readonly=True,isolation_level='REPEATABLE READ')

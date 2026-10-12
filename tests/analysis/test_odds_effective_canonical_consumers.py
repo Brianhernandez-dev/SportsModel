@@ -22,6 +22,8 @@ RAW_PROVENANCE_READERS = (
 UNAFFECTED_DIRECT_READERS = (
     "src/sportsmodel/database/control_center_repository.py",
     "src/sportsmodel/database/moneyline_dashboard_status_repository.py",
+    # Exact reference text used for catalog verification, not a runtime reader.
+    "src/sportsmodel/database/mlb_retirement_repository.py",
 )
 
 
@@ -32,7 +34,10 @@ def _normalized(path: str) -> str:
 def test_every_canonical_identity_reader_uses_the_central_effective_view() -> None:
     for path in EFFECTIVE_IDENTITY_READERS:
         source = _normalized(path)
-        assert "odds_market_snapshots_effective" in source, path
+        if path.endswith('feature_data_audit.py'):
+            assert "odds_market_snapshots_effective" in source, path  # forensic audit
+        else:
+            assert "mlb_retirement_effective_markets()" in source, path
 
 
 def test_direct_base_table_reader_inventory_is_exhaustive() -> None:

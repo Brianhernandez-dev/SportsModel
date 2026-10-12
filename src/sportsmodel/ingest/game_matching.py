@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from sportsmodel.database.mlb_identity_disposition_repository import acquire_writer_gate
+from sportsmodel.database.mlb_retirement_repository import acquire_writer_gate
 
 
 DEFAULT_GAME_TIME_TOLERANCE = timedelta(minutes=15)
@@ -41,7 +41,7 @@ def get_or_create_authoritative_source_game(
             source.game_id,
             game.home_team_id,
             game.away_team_id,
-            mlb_identity_assert_active(game.game_id)
+            mlb_retirement_assert_active(game.game_id)
         FROM game_sources AS source
         JOIN games AS game
           ON game.game_id = source.game_id
@@ -179,7 +179,7 @@ def get_or_create_canonical_game(
             game.game_date,
             game.home_team_id,
             game.away_team_id,
-            mlb_identity_is_stale(game.game_id)
+            mlb_identity_is_retired(game.game_id)
         FROM game_sources AS source
         JOIN games AS game
           ON game.game_id = source.game_id
@@ -218,6 +218,9 @@ def get_or_create_canonical_game(
         if mapped_stale:
             if resolution_mode != RAW_ACQUISITION_CONTINUITY:
                 raise CanonicalGameIdentityConflictError('Active stale identity cannot resolve as a real event')
+            cursor.execute('SELECT EXISTS(SELECT 1 FROM mlb_legacy_identity_retirements WHERE subject_game_id=%s)', (mapped_game_id,))
+            if cursor.fetchone() != (False,):
+                raise CanonicalGameIdentityConflictError('Legacy retired acquisition identity is sealed')
             return mapped_game_id
 
         conflict_count, conflicting_game_id = _load_candidate_count(
@@ -226,7 +229,7 @@ def get_or_create_canonical_game(
                 SELECT COUNT(*), MIN(candidate.game_id)
                 FROM games AS candidate
                 WHERE candidate.game_id <> %s
-                  AND NOT mlb_identity_is_stale(candidate.game_id)
+                  AND NOT mlb_identity_is_retired(candidate.game_id)
                   AND candidate.home_team_id = %s
                   AND candidate.away_team_id = %s
                   AND candidate.game_date BETWEEN %s AND %s;
@@ -264,7 +267,7 @@ def get_or_create_canonical_game(
                 SELECT COUNT(*), MIN(candidate.game_id)
                 FROM games AS candidate
                 WHERE candidate.home_team_id = %s
-                  AND NOT mlb_identity_is_stale(candidate.game_id)
+                  AND NOT mlb_identity_is_retired(candidate.game_id)
                   AND candidate.away_team_id = %s
                   AND candidate.game_date BETWEEN %s AND %s
                   AND EXISTS (
@@ -298,7 +301,7 @@ def get_or_create_canonical_game(
                 SELECT COUNT(*), MIN(candidate.game_id)
                 FROM games AS candidate
                 WHERE candidate.home_team_id = %s
-                  AND NOT mlb_identity_is_stale(candidate.game_id)
+                  AND NOT mlb_identity_is_retired(candidate.game_id)
                   AND candidate.away_team_id = %s
                   AND candidate.game_date BETWEEN %s AND %s
                   AND NOT EXISTS (
@@ -332,7 +335,7 @@ def get_or_create_canonical_game(
                 SELECT COUNT(*), MIN(candidate.game_id)
                 FROM games AS candidate
                 WHERE candidate.home_team_id = %s
-                  AND NOT mlb_identity_is_stale(candidate.game_id)
+                  AND NOT mlb_identity_is_retired(candidate.game_id)
                   AND candidate.away_team_id = %s
                   AND (
                       candidate.game_date AT TIME ZONE 'America/Los_Angeles'

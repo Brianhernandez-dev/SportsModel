@@ -13,7 +13,7 @@ class Cursor:
     def __exit__(self, *args): pass
     def execute(self, sql, params=None):
         self.sql.append((sql,params))
-        if 'SELECT mlb_identity_history_guard()' in sql: self.result=[(True,)]
+        if 'SELECT mlb_retirement_history_guard()' in sql: self.result=[(True,)]
         elif 'LIMIT 1' in sql: self.result=[(1,)] if self.malformed else []
         elif 'ranked_starts' in sql: self.result=self.rows
         elif 'transaction_timestamp' in sql: self.result=[(CUTOFF,)]

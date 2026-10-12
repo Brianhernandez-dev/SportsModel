@@ -1,8 +1,10 @@
 # Guarded MLB historical-results recovery
 
-Disposition-aware successor: format 2,
-final-championship-or-explicit-exclusion-v4-disposition-034, exact schema 001–034.
-Old recovery-v3 approvals refuse, without relabeling or survivor translation.
+Retirement-aware successor: format 3,
+final-championship-or-explicit-exclusion-v5-retirement-035, exact schema 001–035.
+Previous approval formats refuse, without relabeling or survivor translation.
+No recovery is authorized in the implementation task. See
+[legacy retirement successor](mlb_legacy_identity_retirement.md).
 See [mlb_identity_disposition.md](mlb_identity_disposition.md). Historical review
 notes below retain their original context.
 

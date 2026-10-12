@@ -6,7 +6,7 @@ from sportsmodel.ingest import mlb_stats as stats_module
 
 @pytest.fixture(autouse=True)
 def valid_offline_schema_capability(monkeypatch):
-    monkeypatch.setattr(stats_module, 'require_schema034', lambda factory: None)
+    monkeypatch.setattr(stats_module, 'require_schema035', lambda factory: None)
 
 from sportsmodel.ingest.mlb_stats import (
     fetch_historical_results,
@@ -31,7 +31,7 @@ class AuthoritativeMappingCursor(FakeCursor):
         self.executions = []
 
     def execute(self, query, parameters=None) -> None:
-        if query == 'SELECT mlb_identity_gate(false)':
+        if query == 'SELECT mlb_retirement_topology_fresh()':
             return
         self.executions.append((query, parameters))
 

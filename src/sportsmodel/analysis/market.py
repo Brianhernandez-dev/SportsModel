@@ -45,7 +45,7 @@ def analyze_markets():
                         line_value,
                         price,
                         snapshot_time
-                    FROM odds_market_snapshots_effective
+                    FROM mlb_retirement_effective_markets()
                     ORDER BY
                         effective_game_id,
                         market_type,

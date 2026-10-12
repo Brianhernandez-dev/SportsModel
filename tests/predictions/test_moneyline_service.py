@@ -14,7 +14,7 @@ from sportsmodel.predictions import (
 
 @pytest.fixture(autouse=True)
 def valid_offline_schema_capability(monkeypatch):
-    monkeypatch.setattr(service, 'require_schema034', lambda factory: None)
+    monkeypatch.setattr(service, 'require_schema035', lambda factory: None)
 
 
 PREDICTION_TIME = datetime(
@@ -48,7 +48,7 @@ class FakeConnection:
 
 class FakeCursor:
     def execute(self, query, parameters=None):
-        assert query == 'SELECT mlb_identity_history_guard()'
+        assert query == 'SELECT mlb_retirement_history_guard()'
     def fetchone(self):
         return (True,)  # Empty, valid 034 ledger in the retained unit fixtures.
     def __enter__(self):

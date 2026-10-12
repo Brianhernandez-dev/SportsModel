@@ -9,7 +9,7 @@ from sportsmodel.ingest import mlb_schedule as schedule_module
 def valid_offline_schema_capability(monkeypatch):
     # These unit cursors model an already compatible schema. Real catalog
     # verification/refusal is exercised by identity PostgreSQL/domain tests.
-    monkeypatch.setattr(schedule_module, 'require_schema034', lambda factory: None)
+    monkeypatch.setattr(schedule_module, 'require_schema035', lambda factory: None)
 
 from sportsmodel.database.scheduled_execution_repository import (
     GET_EARLIEST_MLB_GAME_START_QUERY,
@@ -256,7 +256,7 @@ class ScriptedCursor(FakeCursor):
 
     def fetchone(self):
         row = next(self.rows)
-        if row is not None and 'mlb_identity_is_stale(game.game_id)' in self.calls[-1][0] and len(row) == 4:
+        if row is not None and 'mlb_identity_is_retired(game.game_id)' in self.calls[-1][0] and len(row) == 4:
             return (*row, False)
         return row
 

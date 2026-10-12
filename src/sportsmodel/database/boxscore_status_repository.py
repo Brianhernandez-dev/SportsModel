@@ -12,7 +12,7 @@ COMPLETE_BOX_SCORE_GAME_IDS_QUERY = """
     SELECT requested.game_id
     FROM unnest(%s::integer[]) AS requested(game_id)
     WHERE
-        mlb_identity_assert_active(requested.game_id) AND EXISTS (
+        mlb_retirement_assert_active(requested.game_id) AND EXISTS (
             SELECT 1
             FROM games
             WHERE game_id = requested.game_id
@@ -34,7 +34,7 @@ COMPLETE_BOX_SCORE_GAME_IDS_QUERY = """
 
 BOX_SCORE_COMPLETENESS_QUERY = """
     SELECT
-        mlb_identity_assert_active(%s) AND EXISTS (
+        mlb_retirement_assert_active(%s) AND EXISTS (
             SELECT 1
             FROM games
             WHERE game_id = %s

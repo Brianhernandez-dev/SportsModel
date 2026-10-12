@@ -46,7 +46,7 @@ def get_market_snapshots(
             snapshot.price,
             snapshot.snapshot_time,
             snapshot.raw_acquisition_game_id
-        FROM odds_market_snapshots_effective AS snapshot
+        FROM mlb_retirement_effective_markets() AS snapshot
         JOIN games g
             ON g.game_id = snapshot.effective_game_id
         {where_clause}
@@ -98,7 +98,7 @@ def get_game_results() -> list[GameResult]:
         JOIN historical_games hg
             ON hg.game_id = g.game_id
         WHERE hg.home_score IS NOT NULL
-          AND NOT mlb_identity_is_stale(g.game_id)
+          AND NOT mlb_identity_is_retired(g.game_id)
           AND hg.away_score IS NOT NULL
         ORDER BY g.game_id;
     """

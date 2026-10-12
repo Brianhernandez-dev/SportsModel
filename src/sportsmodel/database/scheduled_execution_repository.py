@@ -18,7 +18,7 @@ GET_EARLIEST_MLB_GAME_START_QUERY = """
     JOIN game_sources AS source
       ON source.game_id = game.game_id
     WHERE source.source_name = %s
-      AND NOT mlb_identity_is_stale(game.game_id)
+      AND NOT mlb_identity_is_retired(game.game_id)
       AND game.game_date >= %s
       AND game.game_date < %s
       AND game.home_team_id IS NOT NULL

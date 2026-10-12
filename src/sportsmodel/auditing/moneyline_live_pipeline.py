@@ -57,7 +57,7 @@ AUDIT_QUERY = """
         SELECT
             snapshot.odds_market_snapshot_id,
             snapshot.effective_game_id AS game_id
-        FROM odds_market_snapshots_effective AS snapshot
+        FROM mlb_retirement_effective_markets() AS snapshot
         WHERE
             snapshot.odds_ingestion_run_id = %s
             AND snapshot.market_type = 'h2h'

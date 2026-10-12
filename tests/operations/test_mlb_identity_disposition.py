@@ -28,7 +28,7 @@ def test_schema_refusal_precedes_provider_or_reservation(endpoint,monkeypatch):
     def incompatible(factory):
         calls.append('schema');raise identity.IdentityDispositionError('Synthetic missing034')
     def prohibited(*a,**k):pytest.fail('Provider/model/reservation reached after schema refusal')
-    monkeypatch.setattr(module,'require_schema034',incompatible)
+    monkeypatch.setattr(module,'require_schema035',incompatible)
     with pytest.raises(identity.IdentityDispositionError):
         if endpoint=='schedule':mlb_schedule.sync_mlb_schedule(schedule_fetcher=prohibited,connection_factory=prohibited)
         elif endpoint=='results':mlb_stats.fetch_historical_results(schedule_fetcher=prohibited,connection_factory=prohibited)
@@ -78,7 +78,7 @@ def test_recovery_gate_precedes_eligibility_and_child_locks(monkeypatch):
     from sportsmodel.ingest import mlb_recovery
     calls=[]
     def events(*args):
-        assert calls==['SELECT mlb_identity_gate(false)']
+        assert calls==['SELECT mlb_retirement_topology_fresh()']
         raise RuntimeError('Synthetic stop before eligibility/child locks')
     monkeypatch.setattr(mlb_recovery,'_events',events)
     with pytest.raises(RuntimeError,match='Synthetic stop'):

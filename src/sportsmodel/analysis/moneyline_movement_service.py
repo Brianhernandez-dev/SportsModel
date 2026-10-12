@@ -280,7 +280,7 @@ def _load_role_snapshots(
             snapshot.snapshot_time,
             snapshot.raw_acquisition_game_id,
             snapshot.odds_ingestion_run_id
-        FROM odds_market_snapshots_effective AS snapshot
+        FROM mlb_retirement_effective_markets() AS snapshot
         WHERE
             snapshot.odds_ingestion_run_id = ANY(%s)
             AND snapshot.market_type = 'h2h'

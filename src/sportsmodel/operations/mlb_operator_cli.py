@@ -6,7 +6,7 @@ from pathlib import Path
 import warnings
 import time
 
-from sportsmodel.database.mlb_operator_guard import (
+from sportsmodel.database.mlb_retirement_guard import (
     OperatorRefusal, OperatorTarget, aware, canonical_json, strict_json,
 )
 
@@ -16,8 +16,8 @@ CUTOFF_POLL_SECONDS = 0.2
 
 def _wait_for_history_cutoff(*, knowledge, cutoff_time, target, connection_factory):
     """Wait only for an explicitly supplied cutoff; no transaction spans sleep."""
-    from sportsmodel.database import mlb_identity_disposition_repository as identity
-    from sportsmodel.database.mlb_operator_guard import verify_target
+    from sportsmodel.database import mlb_retirement_repository as identity
+    from sportsmodel.database.mlb_retirement_guard import verify_target
     if (not isinstance(cutoff_time, datetime) or cutoff_time.tzinfo is None
             or cutoff_time.utcoffset() is None
             or not isinstance(knowledge, identity.IdentityKnowledgeSnapshot)
@@ -146,7 +146,7 @@ def _main(argv=None, *, connector=None, password_reader=None):
                              options="-c default_transaction_read_only=on -c statement_timeout=60000 -c lock_timeout=5000 -c search_path=public")
         try:
             if args.mode == "history":
-                from sportsmodel.database.mlb_identity_disposition_repository import capture_identity_knowledge
+                from sportsmodel.database.mlb_retirement_repository import capture_identity_knowledge
                 from sportsmodel.operations.mlb_history_check import check_feature_history
                 knowledge = capture_identity_knowledge(connection_factory=factory)
                 wait = (_wait_for_history_cutoff(knowledge=knowledge, cutoff_time=args.cutoff,

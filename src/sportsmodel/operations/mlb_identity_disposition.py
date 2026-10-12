@@ -9,15 +9,15 @@ import re
 import zipfile
 import subprocess
 
-from sportsmodel.database.mlb_operator_guard import (
+from sportsmodel.database.mlb_retirement_guard import (
     OperatorRefusal, aware, canonical_json, digest, positive, strict_json,
     verify_target, load_mlb_teams,
 )
-from sportsmodel.database.mlb_identity_disposition_repository import load_identity_state
+from sportsmodel.database.mlb_retirement_repository import load_identity_state
 from sportsmodel.ingest.mlb_game_policy import extract_schedule_games, confirmed_championship_game
 
-FORMAT = 'MLB_IDENTITY_DISPOSITION_EXECUTABLE_V1'
-VERSION = 1
+FORMAT = 'MLB_IDENTITY_DISPOSITION_EXECUTABLE_V2'
+VERSION = 2
 ALLOWED_ACTIONS = ('ACTIVATE', 'REVOKE')
 KEYS = {'format', 'version', 'domain', 'action', 'subject_game_id', 'survivor_game_id',
         'game_pk', 'target_date', 'expected_start', 'home_team_id', 'away_team_id',
@@ -26,9 +26,9 @@ KEYS = {'format', 'version', 'domain', 'action', 'subject_game_id', 'survivor_ga
         'implementation_commit', 'expected_sources', 'expected_observation_ids',
         'expected_snapshot_ids', 'allow_survivor_anchor'}
 IDENTITY_FILES = [
-    'operations/mlb_identity_disposition.py', 'database/mlb_identity_disposition_repository.py',
+    'operations/mlb_identity_disposition.py', 'database/mlb_retirement_repository.py',
     'operations/mlb_identity_disposition_cli.py',
-    'database/mlb_operator_guard.py', 'operations/mlb_reconcile.py', 'operations/mlb_history_check.py',
+    'database/mlb_retirement_guard.py', 'operations/mlb_reconcile.py', 'operations/mlb_history_check.py',
     'ingest/game_matching.py', 'ingest/mlb_schedule.py', 'ingest/mlb_stats.py', 'ingest/mlb_recovery.py',
     'database/mlb_recovery_repository.py', 'database/mlb_completeness_repository.py',
     'database/team_statistics_repository.py', 'database/pitcher_statistics_repository.py',
@@ -59,6 +59,8 @@ def fingerprint():
     files = {name: sha256((root / name).read_bytes()).hexdigest() for name in IDENTITY_FILES}
     migration = root.parents[1] / 'database/migrations/034_create_mlb_identity_dispositions.sql'
     files['migration034'] = sha256(migration.read_bytes()).hexdigest()
+    from sportsmodel.database.mlb_retirement_repository import profile_fingerprint
+    files['successor035_profile'] = profile_fingerprint()
     files['current_base_commit'] = current_commit()
     return digest(files)
 
@@ -173,7 +175,7 @@ def read_snapshot(cursor, request, game):
              'moneyline_game_predictions', 'moneyline_paper_candidate_settlements', 'nfl_games',
              'odds_market_snapshots', 'odds_snapshots', 'player_game_pitching_statistics',
              'team_game_statistics', 'odds_provider_event_canonical_corrections',
-             'game_identity_dispositions', 'mlb_game_identity_write_fences', 'nfl_odds_provider_event_mappings'}
+             'game_identity_dispositions', 'mlb_legacy_identity_retirements', 'mlb_game_identity_write_fences', 'nfl_odds_provider_event_mappings'}
     if any(row[1] not in known or (len(row[2]) != 1 and not (
             row[1]=='nfl_odds_provider_event_mappings'
             and row[2]==['game_id','canonical_home_team_id','canonical_away_team_id'])) for row in inventory):
@@ -297,6 +299,8 @@ def execute_disposition(*, request_bytes, evidence_bytes, preview, approved_prev
             # Snapshot can precede a wait at SERIALIZABLE: changed fences below
             # force serialization failure instead of certifying the old ledger.
             cursor.execute('SELECT mlb_identity_gate(true)')
+            cursor.execute('SELECT epoch FROM mlb_identity_topology_fence WHERE singleton FOR UPDATE')
+            if cursor.fetchone() is None:raise OperatorRefusal('Missing combined topology')
             guard = verify_target(connection, target, readonly=False)
             ids = sorted((request['subject_game_id'], request['survivor_game_id']))
             cursor.execute('SELECT game_id FROM games WHERE game_id=ANY(%s) ORDER BY game_id FOR UPDATE', (ids,))
@@ -304,6 +308,11 @@ def execute_disposition(*, request_bytes, evidence_bytes, preview, approved_prev
             cursor.execute('SELECT receipt FROM game_identity_disposition_events WHERE approved_manifest_sha256=%s', (approved_preview_sha256,))
             existing = cursor.fetchone()
             if existing:
+                if existing[0].get('retirement_profile')!=preview['implementation_sha256']:
+                    raise OperatorRefusal('Not an exact successor receipt')
+                cursor.execute('SELECT mlb_retirement_fingerprint(%s)',(existing[0]['retirement_profile'],))
+                if cursor.fetchone()[0]!=existing[0].get('retirement_fingerprint'):
+                    raise OperatorRefusal('Combined retirement receipt state changed')
                 cursor.execute('SELECT mlb_identity_ledger_fingerprint()')
                 if cursor.fetchone()[0] != existing[0]['ledger_fingerprint']:
                     raise OperatorRefusal('Receipt state subsequently changed')
@@ -386,11 +395,15 @@ def inspect_receipt(*, approved_manifest_sha256, target, connection_factory):
             if row is None:
                 return dict(status='NO_COMMITTED_RECEIPT_VISIBLE',retry_authorized=False)
             receipt = row[0]
+            if receipt.get('retirement_profile')!=fingerprint():
+                raise OperatorRefusal('Not a current successor receipt')
+            cursor.execute('SELECT mlb_retirement_fingerprint(%s)',(receipt['retirement_profile'],))
+            combined=cursor.fetchone()[0]==receipt.get('retirement_fingerprint')
             cursor.execute('SELECT mlb_identity_ledger_fingerprint(),mlb_identity_pair_fingerprint(%s,%s)',
                            (receipt['subject_game_id'],receipt['survivor_game_id']))
             ledger,pair = cursor.fetchone()
         return dict(status='COMMITTED_RECEIPT_FOUND',receipt=receipt,
-                    current_postconditions_match=(ledger==receipt['ledger_fingerprint'] and pair==receipt['pair_fingerprint']),
+                    current_postconditions_match=(combined and ledger==receipt['ledger_fingerprint'] and pair==receipt['pair_fingerprint']),
                     retry_authorized=False)
     finally:
         connection.rollback()

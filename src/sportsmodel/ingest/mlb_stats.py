@@ -9,7 +9,7 @@ from sportsmodel.database.boxscore_status_repository import (
     get_complete_box_score_game_ids,
 )
 from sportsmodel.database.connection import get_connection
-from sportsmodel.database.mlb_identity_disposition_repository import require_schema034
+from sportsmodel.database.mlb_retirement_repository import require_schema035
 from sportsmodel.database.mlb_completeness_repository import NonPlayedMlbGame
 from sportsmodel.ingest.boxscore_ingestion import ingest_boxscore
 from sportsmodel.ingest.game_matching import (
@@ -386,7 +386,7 @@ def fetch_historical_results(
             "Start date cannot be after end date."
         )
 
-    require_schema034(connection_factory)
+    require_schema035(connection_factory)
 
     date_summaries: list[
         HistoricalResultsDateSummary

@@ -104,7 +104,7 @@ def load_mlb_game_pks_for_pacific_date(
                 FROM games AS game
                 JOIN game_sources AS source ON source.game_id = game.game_id
                 WHERE source.source_name = %s
-                  AND NOT mlb_identity_is_stale(game.game_id)
+                  AND NOT mlb_identity_is_retired(game.game_id)
                   AND game.game_date >= %s AND game.game_date < %s
                 ORDER BY source.external_game_id;
                 """,
@@ -556,7 +556,7 @@ def _load_completeness_snapshots(
                 SELECT
                     requested.game_pk,
                     CASE WHEN source.game_id IS NULL THEN NULL
-                         WHEN mlb_identity_assert_active(source.game_id) THEN source.game_id END,
+                         WHEN mlb_retirement_assert_active(source.game_id) THEN source.game_id END,
                     game.home_team_id,
                     game.away_team_id
                 FROM unnest(%s::text[]) WITH ORDINALITY
@@ -779,7 +779,7 @@ def _load_required_feature_game_pks(
                         ON game.home_team_id = requested.team_id
                         OR game.away_team_id = requested.team_id
                     WHERE game.game_date < %s
-                      AND NOT mlb_identity_is_stale(game.game_id) AND mlb_identity_history_guard()
+                      AND NOT mlb_identity_is_retired(game.game_id) AND mlb_retirement_history_guard()
                       AND EXISTS (
                           SELECT 1
                           FROM game_sources AS source
@@ -804,7 +804,7 @@ def _load_required_feature_game_pks(
                     JOIN games AS game
                         ON game.game_id = pitching.game_id
                     WHERE game.game_date < %s
-                      AND NOT mlb_identity_is_stale(game.game_id) AND mlb_identity_history_guard()
+                      AND NOT mlb_identity_is_retired(game.game_id) AND mlb_retirement_history_guard()
                       AND EXISTS (
                           SELECT 1
                           FROM game_sources AS source

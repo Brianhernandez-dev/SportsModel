@@ -47,7 +47,7 @@ class FakeCursor:
         query: str,
         parameters: tuple[Any, ...] | None = None,
     ) -> None:
-        if query.startswith('SELECT mlb_identity_'):
+        if query.startswith(('SELECT mlb_identity_', 'SELECT mlb_retirement_')):
             self.identity_checks.append((query, parameters))
             return
         execute_number = len(self.executions) + 1
