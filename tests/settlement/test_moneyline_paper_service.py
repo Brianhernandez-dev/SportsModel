@@ -2,6 +2,7 @@
 from decimal import Decimal
 
 import pytest
+from sportsmodel.database.mlb_retirement_guard import OperatorRefusal
 
 from sportsmodel.models.game_result import (
     GameResult,
@@ -27,6 +28,13 @@ SNAPSHOT_TIME = datetime(
 
 
 class FakeCursor:
+    def __init__(self):
+        self.metadata = (False,)
+        self.calls = []
+    def execute(self, sql, params=None):
+        assert sql == "SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname='mlb036_private')"
+        self.calls.append((sql, params))
+    def fetchone(self): return self.metadata
     def __enter__(self):
         return self
 
@@ -44,9 +52,11 @@ class FakeConnection:
         self.commits = 0
         self.rollbacks = 0
         self.closed = False
+        self.cursor_instance = FakeCursor()
 
     def cursor(self):
-        return FakeCursor()
+        return self.cursor_instance
+
 
     def commit(self) -> None:
         self.commits += 1
@@ -56,6 +66,20 @@ class FakeConnection:
 
     def close(self) -> None:
         self.closed = True
+
+
+@pytest.mark.parametrize("metadata", [(True,), None, (), (0,), [False], ("false",)])
+def test036_settlement_refuses_before_candidates_results_or_writes(metadata, monkeypatch):
+    connection = FakeConnection()
+    connection.cursor_instance.metadata = metadata
+    def blocked(*args, **kwargs): raise AssertionError("Settlement effect before036 refusal")
+    for name in ("_load_paper_candidates", "_load_completed_results", "upsert_moneyline_paper_settlement"):
+        monkeypatch.setattr(service, name, blocked)
+    with pytest.raises(OperatorRefusal):
+        service.settle_moneyline_paper_candidate_run(prediction_run_id=1, odds_ingestion_run_id=181,
+            connection_factory=lambda: connection)
+    assert len(connection.cursor_instance.calls) == 1 and connection.closed
+    assert connection.commits == 0 and connection.rollbacks == 1
 
 
 @pytest.mark.parametrize("game_type", ["R", "F", "D", "L", "W"])

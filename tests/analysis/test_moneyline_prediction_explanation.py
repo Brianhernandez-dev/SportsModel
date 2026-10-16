@@ -2,6 +2,8 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from math import exp, isclose
 from types import SimpleNamespace
+import pytest
+from sportsmodel.database.mlb_retirement_guard import OperatorRefusal
 
 import numpy as np
 from sklearn.impute import SimpleImputer
@@ -28,6 +30,42 @@ RAW_FEATURE_NAMES = (
     "away_starting_pitcher_metric",
     "park_factor",
 )
+
+
+@pytest.mark.parametrize("metadata", [(True,), None, (), (0,), [False], ("false",)])
+def test036_explanation_refuses_before_prediction_model_or_feature_reads(metadata, monkeypatch):
+    class Cursor:
+        calls = []
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def execute(self, sql, params=None):
+            assert sql == "SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname='mlb036_private')"
+            self.calls.append((sql, params))
+        def fetchone(self): return metadata
+    class Connection:
+        closed = False
+        value = Cursor()
+        def set_session(self, **kwargs): assert kwargs == {"readonly": True}
+        def cursor(self): return self.value
+        def close(self): self.closed = True
+    connection = Connection()
+    def blocked(*args, **kwargs): raise AssertionError("Explanation model/features read before036 refusal")
+    monkeypatch.setattr(explanation, "_load_and_validate_associated_model", blocked)
+    monkeypatch.setattr(explanation, "_build_read_only_feature_service", blocked)
+    with pytest.raises(OperatorRefusal):
+        explanation.explain_moneyline_prediction(prediction_id=429, connection_factory=lambda: connection,
+            model_package_loader=blocked, feature_generation_service=SimpleNamespace(generate_for_game_record=blocked))
+    assert len(connection.value.calls) == 1 and connection.closed
+
+
+def test_current_receipt_does_not_reconstruct_a_historical_prediction_cutoff():
+    from sportsmodel.database.mlb_canonical_time_repository import CertifiedReader, KnowledgeReceipt
+    cutoff = datetime(2026, 10, 9, tzinfo=timezone.utc)
+    def blocked(): raise AssertionError("Unsupported historical reconstruction connected")
+    reader = CertifiedReader(blocked, KnowledgeReceipt(1, "a"*64, cutoff, "b"*64,
+        ("127.0.0.1", 55572, "synthetic")), cutoff)
+    with pytest.raises(OperatorRefusal, match="as-of reconstruction"):
+        explanation.explain_moneyline_prediction(prediction_id=429, connection_factory=reader)
 
 
 def test_contributions_exactly_reconstruct_pipeline_logit() -> None:
@@ -207,11 +245,13 @@ def test_stored_prediction_exposes_selected_and_opponent_identity() -> None:
         def __exit__(self, *arguments):
             return False
 
-        def execute(self, query, parameters):
+        def execute(self, query, parameters=None):
             self.query = query
             self.parameters = parameters
 
         def fetchone(self):
+            if self.query == "SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname='mlb036_private')":
+                return (False,)
             return row
 
     class Connection:

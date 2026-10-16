@@ -16,6 +16,8 @@ class FakeCursor:
         self.rows = rows
         self.executed_query: str | None = None
         self.executed_parameters: tuple[Any, ...] | None = None
+        self.schema_probe_row = (False,)
+        self.calls = []
 
     def __enter__(self) -> "FakeCursor":
         return self
@@ -31,10 +33,15 @@ class FakeCursor:
     def execute(
         self,
         query: str,
-        parameters: tuple[Any, ...],
+        parameters: tuple[Any, ...] | None = None,
     ) -> None:
         self.executed_query = query
         self.executed_parameters = parameters
+        self.calls.append((query, parameters))
+
+    def fetchone(self):
+        assert self.executed_query == "SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname='mlb036_private')"
+        return self.schema_probe_row
 
     def fetchall(self) -> list[tuple[Any, ...]]:
         return self.rows
@@ -128,6 +135,8 @@ def test_repository_returns_mapped_relief_appearances() -> None:
     assert appearance.statistics.baseball_player_id == 30
     assert appearance.statistics.pitching_outs == 3
     assert appearance.statistics.hold_recorded is True
+    assert connection.cursor_instance.calls[0] == (
+        "SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname='mlb036_private')", None)
 
     cursor = connection.cursor_instance
 

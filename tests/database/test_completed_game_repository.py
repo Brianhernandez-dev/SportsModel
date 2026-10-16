@@ -1,5 +1,8 @@
 from datetime import datetime, timezone
 from typing import Any
+import pytest
+from sportsmodel.database.mlb_retirement_guard import OperatorRefusal
+from sportsmodel.database.mlb_canonical_time_repository import CertifiedReader, KnowledgeReceipt
 
 from sportsmodel.database.completed_game_repository import (
     GET_COMPLETED_GAMES_QUERY,
@@ -15,6 +18,8 @@ class FakeCursor:
     ) -> None:
         self._rows = rows
         self.executed_query: str | None = None
+        self.schema_probe_row = (False,)
+        self.calls = []
 
     def __enter__(self) -> "FakeCursor":
         return self
@@ -32,6 +37,11 @@ class FakeCursor:
         query: str,
     ) -> None:
         self.executed_query = query
+        self.calls.append(query)
+
+    def fetchone(self):
+        assert self.executed_query == "SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname='mlb036_private')"
+        return self.schema_probe_row
 
     def fetchall(self) -> list[tuple[Any, ...]]:
         return self._rows
@@ -118,6 +128,7 @@ def test_get_all_returns_completed_games() -> None:
     assert games[1].home_starting_pitcher_id is None
     assert games[1].away_starting_pitcher_id == 2002
     assert games[1].home_team_won is False
+    assert connection.cursor_instance.calls[0] == "SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname='mlb036_private')"
 
     assert (
         connection.cursor_instance.executed_query
@@ -137,3 +148,22 @@ def test_get_all_returns_empty_list_without_results() -> None:
 
     assert games == []
     assert connection.closed is True
+
+
+@pytest.mark.parametrize("metadata", [(True,), None, (), ("false",), (0,), [False], (False, False)])
+def test_completed_history_refuses036_or_malformed_probe_before_time_read(metadata):
+    connection = FakeConnection(rows=[])
+    connection.cursor_instance.schema_probe_row = metadata
+    repository = PostgresCompletedGameRepository(connection_factory=lambda: connection)
+    with pytest.raises(OperatorRefusal): repository.get_all()
+    assert connection.cursor_instance.calls == ["SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname='mlb036_private')"]
+    assert connection.closed
+
+
+def test_certified_current_reader_cannot_be_used_for_historical_reconstruction():
+    def blocked(): raise AssertionError("Historical reader connected before refusal")
+    cutoff = datetime(2026, 10, 9, tzinfo=timezone.utc)
+    reader = CertifiedReader(blocked, KnowledgeReceipt(1, "a" * 64, cutoff, "b" * 64,
+        ("127.0.0.1", 55572, "synthetic")), cutoff)
+    with pytest.raises(OperatorRefusal, match="historical reconstruction"):
+        PostgresCompletedGameRepository(connection_factory=reader).get_all()

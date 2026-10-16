@@ -416,7 +416,9 @@ def test_postseason_canonical_source_supplies_pregame_semantic_deadline(
     assert summary.games_synchronized == 1
     assert (1001, "mlb_stats", "849833") in [args for _, args in cursor.calls]
     start = datetime(2026, 10, 7, 20, tzinfo=timezone.utc)
-    deadline_cursor = ScriptedCursor([(start,)])
+    # This legacy deadline fixture models a pre036 database explicitly; the
+    # production reader's metadata guard is not stubbed out.
+    deadline_cursor = ScriptedCursor([(False,), (start,)])
     connection = FakeConnection()
     connection.cursor_instance = deadline_cursor
 
@@ -437,6 +439,7 @@ def test_postseason_canonical_source_supplies_pregame_semantic_deadline(
     assert "Semantic point-in-time deadline: 2026-10-07T13:00:00" in output
     assert "Canonical Pregame deadline: UNKNOWN" not in output
     assert deadline_cursor.calls == [
+        ("SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname='mlb036_private')", None),
         (GET_EARLIEST_MLB_GAME_START_QUERY,
          ("mlb_stats", datetime(2026, 10, 7, 7, tzinfo=timezone.utc),
           datetime(2026, 10, 8, 7, tzinfo=timezone.utc))),

@@ -1,6 +1,10 @@
 from collections.abc import Iterable
+from dataclasses import replace
+from datetime import datetime
 
 from sportsmodel.database.connection import get_connection
+from sportsmodel.database.mlb_canonical_time_repository import CertifiedReader
+from sportsmodel.database.mlb_retirement_guard import OperatorRefusal
 from sportsmodel.models.feature_data_audit import (
     FeatureDataAuditCheck,
     FeatureDataAuditReport,
@@ -28,14 +32,24 @@ STARTING_PITCHER_TABLES = (
 )
 
 
-def audit_feature_data() -> FeatureDataAuditReport:
+def audit_feature_data(*, certified_reader: CertifiedReader | None = None,
+                       start: datetime | None = None, end: datetime | None = None) -> FeatureDataAuditReport:
     """
     Inspect the live database for feature-engineering readiness.
 
     The audit uses schema discovery instead of assuming that all future
     feature tables already exist. Missing tables are reported as explicit
     gaps rather than causing the audit to fail.
+
+    The legacy global result is RAW_FORENSIC/NOT_HISTORICALLY_CERTIFIED.
+    Explicit036 mode covers only its four named bounded checks, not full
+    training-data readiness or an as-of historical feature reconstruction.
     """
+
+    if certified_reader is not None:
+        return _audit_certified_feature_data(certified_reader, start=start, end=end)
+    if start is not None or end is not None:
+        raise OperatorRefusal("A scoped feature audit requires an explicit certified reader")
 
     connection = get_connection()
 
@@ -99,11 +113,38 @@ def audit_feature_data() -> FeatureDataAuditReport:
             )
 
         return FeatureDataAuditReport(
-            checks=checks,
+            checks=tuple(replace(check, detail="RAW_FORENSIC / NOT_HISTORICALLY_CERTIFIED: " + check.detail)
+                         for check in checks),
         )
 
     finally:
         connection.close()
+
+
+def _audit_certified_feature_data(reader, *, start, end):
+    if not isinstance(reader, CertifiedReader):
+        raise OperatorRefusal("Typed036 certified feature-audit reader required")
+    if (not isinstance(start, datetime) or not isinstance(end, datetime)
+            or start.tzinfo is None or start.utcoffset() is None
+            or end.tzinfo is None or end.utcoffset() is None
+            or start >= end or (end - start).total_seconds() > 2 * 86400):
+        raise OperatorRefusal("Certified feature audit requires a bounded aware half-open date window")
+    expected = ("Historical game results", "Canonical game timestamps", "Canonical team linkage",
+                "Pregame market snapshots")
+    rows = reader.rows("feature_audit_summary", start=start.isoformat(), end=end.isoformat())
+    if len(rows) != len(expected) or tuple(row.get("name") for row in rows) != expected:
+        raise OperatorRefusal("Certified feature audit returned missing/unknown/duplicate checks")
+    checks = []
+    for row in rows:
+        if (set(row) != {"name", "available", "detail", "row_count"}
+                or type(row["available"]) is not bool or type(row["row_count"]) is not int
+                or row["row_count"] < 0 or not isinstance(row["detail"], str) or not row["detail"].strip()):
+            raise OperatorRefusal("Malformed certified feature audit result")
+        checks.append(FeatureDataAuditCheck(name=row["name"], available=row["available"],
+            row_count=row["row_count"], detail="MLB036_CERTIFIED / PARTIAL_SCOPED_AUDIT: " + row["detail"]
+            + " Receipt " + str(reader.receipt.receipt_id) + "; original cutoff "
+            + reader.cutoff_time.isoformat() + ". Not full training-data certification."))
+    return FeatureDataAuditReport(checks=tuple(checks))
 
 
 def _get_public_table_names(cursor) -> set[str]:

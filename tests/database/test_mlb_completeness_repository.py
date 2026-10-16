@@ -428,9 +428,13 @@ class SlateCursor:
     def __init__(self, rows):
         self.rows = rows
         self.calls = []
+        self.schema_probe_row = (False,)
     def __enter__(self): return self
     def __exit__(self, *args): return False
-    def execute(self, sql, params): self.calls.append((sql, params))
+    def execute(self, sql, params=None): self.calls.append((sql, params))
+    def fetchone(self):
+        assert self.calls[-1][0] == "SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname='mlb036_private')"
+        return self.schema_probe_row
     def fetchall(self): return self.rows
 
 
@@ -446,7 +450,9 @@ def test_retained_postgame_slate_uses_mlb_authority_and_pacific_half_open_date()
     connection = SlateConnection([("800",), ("801",)])
     assert repository.load_mlb_game_pks_for_pacific_date(date(2026, 10, 7),
         connection_factory=lambda: connection) == (800, 801)
-    sql, params = connection.cur.calls[0]
+    assert connection.cur.calls[0] == (
+        "SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname='mlb036_private')", None)
+    sql, params = connection.cur.calls[1]
     assert params == ("mlb_stats", datetime(2026, 10, 7, 7, tzinfo=timezone.utc),
                       datetime(2026, 10, 8, 7, tzinfo=timezone.utc))
     assert "game.game_date >= %s AND game.game_date < %s" in sql

@@ -3,6 +3,8 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 
 from sportsmodel.database.connection import get_connection
+from sportsmodel.database.mlb_canonical_time_repository import CertifiedReader, reject_uncertified036
+from sportsmodel.database.mlb_operator_guard import aware
 from sportsmodel.orchestration.odds_snapshot_schedule import (
     PACIFIC_TIME_ZONE,
 )
@@ -44,10 +46,15 @@ def get_earliest_mlb_game_start_for_pacific_date(
         tzinfo=PACIFIC_TIME_ZONE,
     ).astimezone(timezone.utc)
 
+    if isinstance(connection_factory, CertifiedReader):
+        rows = connection_factory.rows('earliest_start', start=start_time.isoformat(), end=end_time.isoformat())
+        return min((aware(row['game_date']) for row in rows), default=None)
+
     connection = connection_factory()
 
     try:
         with connection.cursor() as cursor:
+            reject_uncertified036(cursor)
             cursor.execute(
                 GET_EARLIEST_MLB_GAME_START_QUERY,
                 (

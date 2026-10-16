@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Any
 
 from sportsmodel.database.connection import get_connection
+from sportsmodel.database.mlb_canonical_time_repository import CertifiedReader, reject_uncertified036
 from sportsmodel.models.historical_pitcher_start import (
     HistoricalPitcherStart,
 )
@@ -129,10 +130,16 @@ class PostgresPitcherStatisticsRepository(
         _validate_cutoff_time(cutoff_time)
         _validate_limit(limit)
 
+        if isinstance(self._connection_factory, CertifiedReader):
+            if cutoff_time != self._connection_factory.cutoff_time:
+                raise ValueError('036 fixed reader cutoff differs')
+            return self._connection_factory.pitching_history(player_id, starter=True, limit=limit)
+
         connection = self._connection_factory()
 
         try:
             with connection.cursor() as cursor:
+                reject_uncertified036(cursor)
                 # A stale-only/empty window must not short-circuit invariants.
                 cursor.execute('SELECT mlb_retirement_history_guard()', ())
                 cursor.execute(

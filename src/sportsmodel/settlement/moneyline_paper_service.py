@@ -6,6 +6,8 @@ from typing import Any
 from sportsmodel.database.connection import (
     get_connection,
 )
+from sportsmodel.database.mlb_canonical_time_repository import CertifiedReader, reject_uncertified036
+from sportsmodel.database.mlb_retirement_guard import OperatorRefusal
 from sportsmodel.database.moneyline_paper_settlement_repository import (
     upsert_moneyline_paper_settlement,
 )
@@ -149,10 +151,13 @@ def settle_moneyline_paper_candidate_run(
             "Policy version cannot be blank."
         )
 
+    if isinstance(connection_factory, CertifiedReader):
+        raise OperatorRefusal("036 settlement requires an unavailable certified settlement adapter")
     connection = connection_factory()
 
     try:
         with connection.cursor() as cursor:
+            reject_uncertified036(cursor)
             candidates = _load_paper_candidates(
                 cursor,
                 prediction_run_id=(

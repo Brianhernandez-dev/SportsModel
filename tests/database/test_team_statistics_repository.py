@@ -17,6 +17,8 @@ class FakeCursor:
         self.rows = rows
         self.executed_query: str | None = None
         self.executed_parameters: tuple[Any, ...] | None = None
+        self.schema_probe_row = (False,)
+        self.calls = []
 
     def __enter__(self) -> "FakeCursor":
         return self
@@ -32,10 +34,15 @@ class FakeCursor:
     def execute(
         self,
         query: str,
-        parameters: tuple[Any, ...],
+        parameters: tuple[Any, ...] | None = None,
     ) -> None:
         self.executed_query = query
         self.executed_parameters = parameters
+        self.calls.append((query, parameters))
+
+    def fetchone(self):
+        assert self.executed_query == "SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname='mlb036_private')"
+        return self.schema_probe_row
 
     def fetchall(self) -> list[tuple[Any, ...]]:
         return self.rows
@@ -146,6 +153,8 @@ def test_postgres_repository_maps_historical_game() -> None:
     assert game.statistics.runs == 5
     assert game.statistics.runs_allowed == 3
     assert game.statistics.source_name == "mlb_stats_api"
+    assert fake_connection.cursor_instance.calls[0] == (
+        "SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname='mlb036_private')", None)
 
 
 def test_repository_passes_point_in_time_parameters() -> None:

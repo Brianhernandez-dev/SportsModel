@@ -16,6 +16,8 @@ from sportsmodel.database.bullpen_statistics_repository import (
     PostgresBullpenStatisticsRepository,
 )
 from sportsmodel.database.connection import get_connection
+from sportsmodel.database.mlb_canonical_time_repository import CertifiedReader, reject_uncertified036
+from sportsmodel.database.mlb_retirement_guard import OperatorRefusal
 from sportsmodel.database.pitcher_statistics_repository import (
     PostgresPitcherStatisticsRepository,
 )
@@ -417,10 +419,13 @@ def _load_stored_prediction(
     prediction_id: int,
     connection_factory: ConnectionFactory,
 ) -> StoredMoneylinePredictionExplanationInput:
+    if isinstance(connection_factory, CertifiedReader):
+        raise OperatorRefusal("036 historical prediction explanation has no as-of reconstruction")
     connection = connection_factory()
     try:
         connection.set_session(readonly=True)
         with connection.cursor() as cursor:
+            reject_uncertified036(cursor)
             cursor.execute(
                 """
                 SELECT

@@ -13,6 +13,8 @@ class _Cursor:
         self._row = row
         self.query: str | None = None
         self.parameters: tuple[Any, ...] | None = None
+        self.schema_probe_row = (False,)
+        self.calls = []
 
     def __enter__(self) -> "_Cursor":
         return self
@@ -23,12 +25,15 @@ class _Cursor:
     def execute(
         self,
         query: str,
-        parameters: tuple[Any, ...],
+        parameters: tuple[Any, ...] | None = None,
     ) -> None:
         self.query = query
         self.parameters = parameters
+        self.calls.append((query, parameters))
 
     def fetchone(self) -> tuple[Any, ...]:
+        if self.query == "SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname='mlb036_private')":
+            return self.schema_probe_row
         return self._row
 
 
@@ -61,6 +66,8 @@ def test_loads_earliest_canonical_mlb_start_for_pacific_slate() -> None:
     )
 
     assert result == earliest_start
+    assert connection.cursor_instance.calls[0] == (
+        "SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname='mlb036_private')", None)
     assert connection.cursor_instance.query == (
         GET_EARLIEST_MLB_GAME_START_QUERY
     )

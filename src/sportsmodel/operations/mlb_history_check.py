@@ -8,6 +8,9 @@ from sportsmodel.database.mlb_retirement_guard import (
 )
 from sportsmodel.features.builders.starting_pitcher import SEASON_START_LIMIT
 from sportsmodel.database.mlb_retirement_repository import install_identity_knowledge
+from sportsmodel.database.mlb_canonical_time_repository import CertifiedReader, aware
+from sportsmodel.ingest.mlb_game_policy import MLB_CLUB_NAMES
+from sportsmodel.ingest.team_identity import normalize_team_name
 
 
 def _load_retained_starter_history(cursor, starters, cutoff_time):
@@ -70,6 +73,14 @@ def check_feature_history(*, target_date, target_game_ids, starting_pitcher_ids,
     zone = ZoneInfo("America/Los_Angeles")
     start = datetime.combine(target_date, time.min, zone).astimezone(timezone.utc)
     end = datetime.combine(target_date + timedelta(days=1), time.min, zone).astimezone(timezone.utc)
+    if isinstance(connection_factory, CertifiedReader):
+        if identity_knowledge is not None:
+            raise OperatorRefusal("036 H-1 does not accept a v2-only knowledge fallback")
+        if cutoff_time != connection_factory.cutoff_time:
+            raise OperatorRefusal("036 H-1 requires the original receipt cutoff")
+        return _check_certified_feature_history(
+            target_date=target_date, ids=ids, starters=starters, cutoff_time=cutoff_time,
+            reader=connection_factory, start=start, end=end)
     connection = connection_factory()
     report = {"version": 1, "domain": "MLB", "target_prediction_date": target_date.isoformat(),
               "cutoff_time": cutoff_time.isoformat(), "target_game_ids": list(ids),
@@ -184,3 +195,114 @@ def check_feature_history(*, target_date, target_game_ids, starting_pitcher_ids,
     finally:
         connection.rollback()
         connection.close()
+
+
+def _check_certified_feature_history(*, target_date, ids, starters, cutoff_time, reader, start, end):
+    """036 H-1 uses only receipt-bound typed data; no raw connection or GUC fallback."""
+    if completeness.FEATURE_START_LIMIT != SEASON_START_LIMIT:
+        raise OperatorRefusal("Starter feature/completeness window limits disagree")
+    report = {"version": 1, "domain": "MLB", "target_prediction_date": target_date.isoformat(),
+              "cutoff_time": cutoff_time.isoformat(), "target_game_ids": list(ids),
+              "starting_pitcher_ids": list(starters), "status": "FAIL", "issues": [],
+              "guard": {"certification": "MLB036_CERTIFIED", "receipt_id": reader.receipt.receipt_id,
+                        "receipt_body_sha256": reader.receipt.body_sha256}}
+    slate = reader.rows("slate", start=start.isoformat(), end=end.isoformat())
+    if len(slate) != len(ids) or {row["game_id"] for row in slate} != set(ids):
+        raise OperatorRefusal("Requested slate differs from retained canonical MLB date")
+    if any(aware(row["game_date"]) < start or aware(row["game_date"]) >= end for row in slate):
+        raise OperatorRefusal("Certified slate differs from requested Pacific interval")
+    if cutoff_time >= min(aware(row["game_date"]) for row in slate):
+        raise OperatorRefusal("Cutoff must precede every target game")
+    team_ids = tuple(sorted({row[k] for row in slate for k in ("home_team_id", "away_team_id")}))
+    report["teams"] = _certified_mlb_teams(reader, team_ids)
+    players = reader.rows("mlb_starters", ids=list(starters))
+    if (len(players) != len(starters) or {r["baseball_player_id"] for r in players} != set(starters)
+            or any(not isinstance(r["external_player_id"], str) or not r["external_player_id"].isascii()
+                   or not r["external_player_id"].isdigit() or int(r["external_player_id"]) <= 0 for r in players)):
+        raise OperatorRefusal("Missing/ambiguous authoritative MLB starter source")
+    retained = reader.rows("h1_team", ids=list(team_ids))
+    starter_retained = reader.rows("h1_starter", ids=list(starters))
+    _validate_certified_windows(retained, starter_retained, team_ids, starters, cutoff_time)
+    retained_team_ids = {r[k] for r in (*retained, *starter_retained) for k in ("home_team_id", "away_team_id")}
+    if retained_team_ids:
+        _certified_mlb_teams(reader, retained_team_ids)
+    team_history_ids = {r["game_id"] for r in retained}
+    starter_history_ids = {r["game_id"] for r in starter_retained}
+    retained_ids = sorted(team_history_ids | starter_history_ids | set(ids))
+    sources = reader.rows("game_sources", ids=retained_ids)
+    if any(r["game_id"] not in retained_ids for r in sources):
+        raise OperatorRefusal("Certified source rows differ from requested identities")
+    missing, target_pks, independent_history_pks = [], [], []
+    for game_id in retained_ids:
+        mappings = [r["external_game_id"] for r in sources if r["game_id"] == game_id]
+        if (len(mappings) != 1 or not isinstance(mappings[0], str) or not mappings[0].isascii()
+                or not mappings[0].isdigit() or int(mappings[0]) <= 0):
+            missing.append(game_id)
+        else:
+            if game_id in ids:
+                target_pks.append(int(mappings[0]))
+            if game_id in team_history_ids | starter_history_ids:
+                independent_history_pks.append(int(mappings[0]))
+    report["retained_history_games"] = [dict(team_id=r["team_id"], game_id=r["game_id"],
+        start=aware(r["game_date"]).isoformat(), rank=r["rank"]) for r in retained]
+    report["retained_team_history_games"] = report["retained_history_games"]
+    report["retained_starter_history_games"] = [dict(baseball_player_id=r["baseball_player_id"],
+        game_id=r["game_id"], start=aware(r["game_date"]).isoformat(), team_id=r["team_id"],
+        created_at=aware(r["created_at"]).isoformat(), rank=r["rank"]) for r in starter_retained]
+    report["team_history_games_missing_mlb_stats_identity"] = sorted(team_history_ids & set(missing))
+    report["starter_history_games_missing_mlb_stats_identity"] = sorted(starter_history_ids & set(missing))
+    report["games_missing_mlb_stats_identity"] = missing
+    if missing:
+        report["issues"].append("Retained target/history identities are invisible or ambiguous to MLB completeness")
+    required = completeness._load_required_feature_game_pks(team_ids=team_ids,
+        starting_pitcher_ids=starters, cutoff_time=cutoff_time, connection_factory=reader)
+    required = tuple(sorted(set(required) | set(independent_history_pks)))
+    snapshots = completeness._load_completeness_snapshots(required, connection_factory=reader)
+    snapshot_teams = {i for s in snapshots for i in (s.home_team_id, s.away_team_id) if i is not None}
+    if snapshot_teams:
+        _certified_mlb_teams(reader, snapshot_teams)
+    issues = completeness.validate_mlb_game_completeness(snapshots, as_of=cutoff_time)
+    report["visible_required_game_pks"] = list(required)
+    report["visible_required_canonical_game_ids"] = sorted({s.game_id for s in snapshots if s.game_id is not None})
+    report["required_canonical_game_ids"] = sorted(set(report["visible_required_canonical_game_ids"]) | team_history_ids | starter_history_ids)
+    report["games_missing_required_feature_history"] = list(issues)
+    report["feature_window"] = {"team_limit": completeness.FEATURE_TEAM_GAME_LIMIT,
+        "starter_limit": completeness.FEATURE_START_LIMIT, "retained_earliest": min((aware(r["game_date"]) for r in retained), default=None),
+        "retained_latest": max((aware(r["game_date"]) for r in retained), default=None), "cutoff": cutoff_time}
+    report["issues"].extend(issues)
+    if not missing and not issues:
+        completeness.assert_mlb_feature_history_complete(target_game_pks=target_pks,
+            starting_pitcher_ids=starters, cutoff_time=cutoff_time, connection_factory=reader)
+        report["status"] = "PASS"
+    return report
+
+
+def _certified_mlb_teams(reader, team_ids):
+    rows = reader.rows("mlb_teams", ids=sorted(team_ids))
+    if len(rows) != len(team_ids) or {r["team_id"] for r in rows} != set(team_ids):
+        raise OperatorRefusal("Missing/ambiguous authoritative MLB team identity")
+    if any(type(r["mlb_team_id"]) is not int or r["mlb_team_id"] not in MLB_CLUB_NAMES
+           or normalize_team_name(r["name"]) != MLB_CLUB_NAMES[r["mlb_team_id"]]
+           or type(r["source_row_id"]) is not int or r["source_row_id"] <= 0 for r in rows):
+        raise OperatorRefusal("Non-MLB or conflicting franchise domain")
+    return {r["team_id"]: r for r in rows}
+
+
+def _validate_certified_windows(retained, starter_retained, team_ids, starters, cutoff):
+    seen = set()
+    for row in retained:
+        key = (row["team_id"], row["game_id"])
+        if (key in seen or row["team_id"] not in team_ids or row["home_team_id"] == row["away_team_id"]
+                or row["team_id"] not in (row["home_team_id"], row["away_team_id"])
+                or aware(row["game_date"]) >= cutoff or not 1 <= row["rank"] <= completeness.FEATURE_TEAM_GAME_LIMIT):
+            raise OperatorRefusal("Malformed retained team history")
+        seen.add(key)
+    seen = set()
+    for row in starter_retained:
+        key = (row["baseball_player_id"], row["game_id"])
+        if (key in seen or row["baseball_player_id"] not in starters or row["home_team_id"] == row["away_team_id"]
+                or row["team_id"] not in (row["home_team_id"], row["away_team_id"])
+                or aware(row["game_date"]) >= cutoff or aware(row["created_at"]) > cutoff
+                or not 1 <= row["rank"] <= SEASON_START_LIMIT):
+            raise OperatorRefusal("Malformed or ambiguous retained starter history")
+        seen.add(key)

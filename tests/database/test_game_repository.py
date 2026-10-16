@@ -19,6 +19,8 @@ class FakeCursor:
         self._row = row
         self.executed_query: str | None = None
         self.executed_parameters: tuple[Any, ...] | None = None
+        self.schema_probe_row = (False,)
+        self.calls = []
 
     def __enter__(self) -> "FakeCursor":
         return self
@@ -34,12 +36,15 @@ class FakeCursor:
     def execute(
         self,
         query: str,
-        parameters: tuple[Any, ...],
+        parameters: tuple[Any, ...] | None = None,
     ) -> None:
         self.executed_query = query
         self.executed_parameters = parameters
+        self.calls.append((query, parameters))
 
     def fetchone(self) -> tuple[Any, ...] | None:
+        if self.executed_query == "SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname='mlb036_private')":
+            return self.schema_probe_row
         return self._row
 
 
@@ -89,6 +94,8 @@ def test_get_by_id_returns_game() -> None:
     assert game.game_start_time == game_start_time
     assert game.home_team_id == 10
     assert game.away_team_id == 20
+    assert connection.cursor_instance.calls[0] == (
+        "SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname='mlb036_private')", None)
 
     assert (
         connection.cursor_instance.executed_query

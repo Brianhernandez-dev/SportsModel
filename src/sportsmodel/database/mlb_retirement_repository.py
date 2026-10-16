@@ -24,7 +24,9 @@ VIEW_DEFINITIONS = {
 
 def migration_reference():
     root = Path(__file__).resolve().parents[3]
-    paths = sorted((root/'database/migrations').glob('*.sql'))
+    # Pin this legacy client's exact boundary even when successor source files
+    # coexist in the checkout. Database checks still refuse every036 target.
+    paths = sorted(p for p in (root/'database/migrations').glob('*.sql') if int(p.name[:3]) <= 35)
     if [int(p.name[:3]) for p in paths] != list(range(1, 36)):
         raise IdentityDispositionError('Exact001-035 migration inventory required')
     return tuple((int(p.name[:3]),p.name,sha256(p.read_text(encoding='utf-8-sig').encode()).hexdigest()) for p in paths)

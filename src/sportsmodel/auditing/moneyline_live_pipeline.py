@@ -5,6 +5,8 @@ from typing import Any
 from sportsmodel.database.connection import (
     get_connection,
 )
+from sportsmodel.database.mlb_canonical_time_repository import CertifiedReader, reject_uncertified036
+from sportsmodel.database.mlb_retirement_guard import OperatorRefusal
 
 
 ConnectionFactory = Callable[[], Any]
@@ -207,10 +209,13 @@ def audit_moneyline_live_pipeline(
             "Policy version cannot be blank."
         )
 
+    if isinstance(connection_factory, CertifiedReader):
+        raise OperatorRefusal("036 pipeline completion cannot be certified by legacy counters")
     connection = connection_factory()
 
     try:
         with connection.cursor() as cursor:
+            reject_uncertified036(cursor)
             cursor.execute(
                 AUDIT_QUERY,
                 (

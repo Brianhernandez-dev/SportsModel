@@ -13,6 +13,8 @@ from sportsmodel.models.moneyline_market_evaluation import (
 from sportsmodel.models.snapshot import (
     MarketSnapshot,
 )
+from sportsmodel.database.mlb_retirement_guard import OperatorRefusal
+from sportsmodel.database.mlb_canonical_time_repository import CertifiedReader, KnowledgeReceipt
 
 
 PREDICTION_TIME = datetime(
@@ -44,6 +46,18 @@ GAME_START_TIME = datetime(
 
 
 class FakeCursor:
+    def __init__(self):
+        self.schema_probe_row = (False,)
+        self.calls = []
+
+    def execute(self, query, params=None):
+        assert query == "SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname='mlb036_private')"
+        self.calls.append((query, params))
+
+    def fetchone(self):
+        assert self.calls[-1][0] == "SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname='mlb036_private')"
+        return self.schema_probe_row
+
     def __enter__(self):
         return self
 
@@ -61,9 +75,10 @@ class FakeConnection:
         self.commits = 0
         self.rollbacks = 0
         self.closed = False
+        self.cursor_instance = FakeCursor()
 
     def cursor(self):
-        return FakeCursor()
+        return self.cursor_instance
 
     def commit(self) -> None:
         self.commits += 1
@@ -144,6 +159,7 @@ def test_evaluates_and_persists_prediction(
     assert connection.commits == 1
     assert connection.rollbacks == 0
     assert connection.closed is True
+    assert connection.cursor_instance.calls == [("SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname='mlb036_private')", None)]
 
 
 def test_rejects_snapshot_before_prediction(
@@ -486,6 +502,30 @@ def test_rejects_nonpositive_run_identifier() -> None:
             prediction_run_id=0,
             odds_ingestion_run_id=181,
         )
+
+
+@pytest.mark.parametrize("metadata", [(True,), None, (), ("false",), (0,), [False], (False, False)])
+def test_legacy_evaluation_refuses036_before_reads_starter_provider_or_persistence(metadata, monkeypatch):
+    connection = FakeConnection()
+    connection.cursor_instance.schema_probe_row = metadata
+    def blocked(*args, **kwargs): raise AssertionError("Evaluation side effect before036 refusal")
+    for name in ("_validate_completed_runs", "_load_prediction_records", "_load_snapshot_records",
+                 "load_current_probable_starters", "upsert_moneyline_market_evaluation"):
+        monkeypatch.setattr(service, name, blocked)
+    with pytest.raises(OperatorRefusal):
+        service.evaluate_moneyline_prediction_run(prediction_run_id=1, odds_ingestion_run_id=181,
+            connection_factory=lambda: connection, current_starter_loader=blocked)
+    assert connection.commits == 0 and connection.rollbacks == 1 and connection.closed
+    assert connection.cursor_instance.calls == [("SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname='mlb036_private')", None)]
+
+
+def test_certified_reader_is_not_a_certified_analysis_writer():
+    def blocked(): raise AssertionError("Analysis connected before unavailable-writer refusal")
+    reader = CertifiedReader(blocked, KnowledgeReceipt(1, "a" * 64, PREDICTION_TIME, "b" * 64,
+        ("127.0.0.1", 55572, "synthetic")), PREDICTION_TIME)
+    with pytest.raises(OperatorRefusal, match="certified analysis writer"):
+        service.evaluate_moneyline_prediction_run(prediction_run_id=1, odds_ingestion_run_id=181,
+            connection_factory=reader, current_starter_loader=blocked)
 
 
 def _patch_loaded_records(

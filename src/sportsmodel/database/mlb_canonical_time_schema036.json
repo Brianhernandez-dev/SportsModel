@@ -1,0 +1,1723 @@
+{
+  "catalog": {
+    "columns": [
+      [
+        "mlb036_private",
+        "arbitration_events",
+        "event_id",
+        "bigint",
+        true,
+        "a",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "arbitration_events",
+        "audit_reference",
+        "bigint",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "arbitration_events",
+        "sequence",
+        "integer",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "arbitration_events",
+        "action",
+        "text",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "arbitration_events",
+        "operation_receipt",
+        "jsonb",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "arbitration_events",
+        "writer_xid8",
+        "xid8",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "arbitration_events",
+        "recorded_at",
+        "timestamp with time zone",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "audit_id",
+        "bigint",
+        true,
+        "a",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "case_identity",
+        "text",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "duplicate_physical_id",
+        "integer",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "survivor_physical_id",
+        "integer",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "authoritative_game_pk",
+        "bigint",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "old_start",
+        "timestamp with time zone",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "new_start",
+        "timestamp with time zone",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "signed_delta_seconds",
+        "integer",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "request_sha256",
+        "text",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "evidence_sha256",
+        "text",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "approval_sha256",
+        "text",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "schema_capability_profile",
+        "text",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "correction_policy_version",
+        "text",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "request_body",
+        "jsonb",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "retirement_case",
+        "jsonb",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "pre_business_sha256",
+        "text",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "post_business_sha256",
+        "text",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "pre_state",
+        "jsonb",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "post_state",
+        "jsonb",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "writer_xid8",
+        "xid8",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "recorded_at",
+        "timestamp with time zone",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "authority",
+        "singleton",
+        "boolean",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "authority",
+        "deployment_id",
+        "text",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "authority",
+        "authority_epoch",
+        "bigint",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "authority",
+        "mode",
+        "text",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "authority",
+        "system_identifier",
+        "text",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "authority",
+        "database_oid",
+        "oid",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "authority",
+        "database_name",
+        "text",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "authority",
+        "server_address",
+        "text",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "authority",
+        "server_port",
+        "integer",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "authority",
+        "postmaster_started_at",
+        "timestamp with time zone",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "authority",
+        "schema_capability_profile",
+        "text",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "authority",
+        "catalog_sha256",
+        "text",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "authority",
+        "correction_policy_version",
+        "text",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "authority",
+        "policy",
+        "jsonb",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "authority",
+        "reader_role",
+        "name",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "authority",
+        "knowledge_role",
+        "name",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "authority",
+        "operator_role",
+        "name",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "authority",
+        "raw_role",
+        "name",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "authority",
+        "observed_high_water",
+        "timestamp with time zone",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "knowledge_receipts",
+        "receipt_id",
+        "bigint",
+        true,
+        "a",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "knowledge_receipts",
+        "format_version",
+        "integer",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "knowledge_receipts",
+        "issuer_xid8",
+        "xid8",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "knowledge_receipts",
+        "available_at",
+        "timestamp with time zone",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "knowledge_receipts",
+        "deployment_id",
+        "text",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "knowledge_receipts",
+        "system_identifier",
+        "text",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "knowledge_receipts",
+        "database_oid",
+        "oid",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "knowledge_receipts",
+        "database_name",
+        "text",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "knowledge_receipts",
+        "server_address",
+        "text",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "knowledge_receipts",
+        "server_port",
+        "integer",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "knowledge_receipts",
+        "postmaster_started_at",
+        "timestamp with time zone",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "knowledge_receipts",
+        "authority_epoch",
+        "bigint",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "knowledge_receipts",
+        "schema_capability_profile",
+        "text",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "knowledge_receipts",
+        "correction_policy_version",
+        "text",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "knowledge_receipts",
+        "correction_state_fingerprint",
+        "text",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "knowledge_receipts",
+        "identity034_digest",
+        "text",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "knowledge_receipts",
+        "identity035_digest",
+        "text",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "knowledge_receipts",
+        "identity_topology_epoch",
+        "bigint",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "knowledge_receipts",
+        "projection_digest",
+        "text",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "knowledge_receipts",
+        "fence_digest",
+        "text",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "knowledge_receipts",
+        "referenced_audit_ids",
+        "bigint[]",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "mlb036_private",
+        "knowledge_receipts",
+        "receipt_body_sha256",
+        "text",
+        true,
+        "",
+        "",
+        null
+      ],
+      [
+        "public",
+        "moneyline_prediction_runs",
+        "canonical_time_knowledge",
+        "jsonb",
+        false,
+        "",
+        "",
+        null
+      ]
+    ],
+    "constraints": [
+      [
+        "mlb036_private",
+        "arbitration_events",
+        "arbitration_events_action_check",
+        "c",
+        "CHECK (action = 'APPLIED'::text)"
+      ],
+      [
+        "mlb036_private",
+        "arbitration_events",
+        "arbitration_events_audit_reference_key",
+        "u",
+        "UNIQUE (audit_reference)"
+      ],
+      [
+        "mlb036_private",
+        "arbitration_events",
+        "arbitration_events_pkey",
+        "p",
+        "PRIMARY KEY (event_id)"
+      ],
+      [
+        "mlb036_private",
+        "arbitration_events",
+        "arbitration_events_sequence_check",
+        "c",
+        "CHECK (sequence = 1)"
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "arbitrations_approval_sha256_check",
+        "c",
+        "CHECK (approval_sha256 ~ '^[0-9a-f]{64}$'::text)"
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "arbitrations_approval_sha256_key",
+        "u",
+        "UNIQUE (approval_sha256)"
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "arbitrations_case_identity_check",
+        "c",
+        "CHECK (case_identity = 'MLB:584:26:823842:minus60:v1'::text)"
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "arbitrations_case_identity_key",
+        "u",
+        "UNIQUE (case_identity)"
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "arbitrations_check",
+        "c",
+        "CHECK ((new_start - old_start) = '-00:01:00'::interval)"
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "arbitrations_correction_policy_version_check",
+        "c",
+        "CHECK (correction_policy_version = '1.0.0'::text)"
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "arbitrations_duplicate_physical_id_check",
+        "c",
+        "CHECK (duplicate_physical_id = 584)"
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "arbitrations_evidence_sha256_check",
+        "c",
+        "CHECK (evidence_sha256 ~ '^[0-9a-f]{64}$'::text)"
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "arbitrations_pkey",
+        "p",
+        "PRIMARY KEY (audit_id)"
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "arbitrations_post_business_sha256_check",
+        "c",
+        "CHECK (post_business_sha256 ~ '^[0-9a-f]{64}$'::text)"
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "arbitrations_pre_business_sha256_check",
+        "c",
+        "CHECK (pre_business_sha256 ~ '^[0-9a-f]{64}$'::text)"
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "arbitrations_request_sha256_check",
+        "c",
+        "CHECK (request_sha256 ~ '^[0-9a-f]{64}$'::text)"
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "arbitrations_request_sha256_key",
+        "u",
+        "UNIQUE (request_sha256)"
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "arbitrations_schema_capability_profile_check",
+        "c",
+        "CHECK (schema_capability_profile ~ '^[0-9a-f]{64}$'::text)"
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "arbitrations_signed_delta_seconds_check",
+        "c",
+        "CHECK (signed_delta_seconds = '-60'::integer)"
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "arbitrations_survivor_physical_id_check",
+        "c",
+        "CHECK (survivor_physical_id = 26)"
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "mlb036_audit_complete",
+        "t",
+        "TRIGGER DEFERRABLE INITIALLY DEFERRED"
+      ],
+      [
+        "mlb036_private",
+        "authority",
+        "authority_authority_epoch_check",
+        "c",
+        "CHECK (authority_epoch > 0)"
+      ],
+      [
+        "mlb036_private",
+        "authority",
+        "authority_catalog_sha256_check",
+        "c",
+        "CHECK (catalog_sha256 ~ '^[0-9a-f]{64}$'::text)"
+      ],
+      [
+        "mlb036_private",
+        "authority",
+        "authority_correction_policy_version_check",
+        "c",
+        "CHECK (correction_policy_version = '1.0.0'::text)"
+      ],
+      [
+        "mlb036_private",
+        "authority",
+        "authority_deployment_id_check",
+        "c",
+        "CHECK (length(deployment_id) >= 1 AND length(deployment_id) <= 128)"
+      ],
+      [
+        "mlb036_private",
+        "authority",
+        "authority_mode_check",
+        "c",
+        "CHECK (mode = ANY (ARRAY['native'::text, 'isolated'::text]))"
+      ],
+      [
+        "mlb036_private",
+        "authority",
+        "authority_pkey",
+        "p",
+        "PRIMARY KEY (singleton)"
+      ],
+      [
+        "mlb036_private",
+        "authority",
+        "authority_schema_capability_profile_check",
+        "c",
+        "CHECK (schema_capability_profile ~ '^[0-9a-f]{64}$'::text)"
+      ],
+      [
+        "mlb036_private",
+        "authority",
+        "authority_singleton_check",
+        "c",
+        "CHECK (singleton)"
+      ],
+      [
+        "mlb036_private",
+        "authority",
+        "authority_system_identifier_check",
+        "c",
+        "CHECK (system_identifier ~ '^[1-9][0-9]*$'::text)"
+      ],
+      [
+        "mlb036_private",
+        "knowledge_receipts",
+        "knowledge_receipts_correction_state_fingerprint_check",
+        "c",
+        "CHECK (correction_state_fingerprint ~ '^[0-9a-f]{64}$'::text)"
+      ],
+      [
+        "mlb036_private",
+        "knowledge_receipts",
+        "knowledge_receipts_format_version_check",
+        "c",
+        "CHECK (format_version = 1)"
+      ],
+      [
+        "mlb036_private",
+        "knowledge_receipts",
+        "knowledge_receipts_pkey",
+        "p",
+        "PRIMARY KEY (receipt_id)"
+      ],
+      [
+        "mlb036_private",
+        "knowledge_receipts",
+        "knowledge_receipts_receipt_body_sha256_check",
+        "c",
+        "CHECK (receipt_body_sha256 ~ '^[0-9a-f]{64}$'::text)"
+      ]
+    ],
+    "function_signatures": [
+      [
+        "acquire_exact_gate",
+        "",
+        "void",
+        "plpgsql",
+        false,
+        false,
+        false,
+        "",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp",
+          "lock_timeout=1500ms"
+        ]
+      ],
+      [
+        "audit_complete",
+        "",
+        "trigger",
+        "plpgsql",
+        false,
+        false,
+        false,
+        "",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp"
+        ]
+      ],
+      [
+        "audit_frame",
+        "a mlb036_private.arbitrations",
+        "bytea",
+        "sql",
+        false,
+        true,
+        false,
+        "a mlb036_private.arbitrations",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp"
+        ]
+      ],
+      [
+        "audit_stamp",
+        "",
+        "trigger",
+        "plpgsql",
+        false,
+        false,
+        false,
+        "",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp"
+        ]
+      ],
+      [
+        "bounded_ids",
+        "value jsonb, maximum integer",
+        "integer[]",
+        "plpgsql",
+        false,
+        true,
+        false,
+        "value jsonb, maximum integer",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp"
+        ]
+      ],
+      [
+        "business_hash",
+        "value jsonb",
+        "text",
+        "plpgsql",
+        false,
+        true,
+        false,
+        "value jsonb",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp"
+        ]
+      ],
+      [
+        "business_snapshot",
+        "",
+        "jsonb",
+        "sql",
+        false,
+        false,
+        false,
+        "",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp",
+          "TimeZone=UTC"
+        ]
+      ],
+      [
+        "canonical_json",
+        "value jsonb",
+        "text",
+        "sql",
+        false,
+        true,
+        false,
+        "value jsonb",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp"
+        ]
+      ],
+      [
+        "catalog_identity",
+        "",
+        "text",
+        "sql",
+        false,
+        false,
+        false,
+        "",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp"
+        ]
+      ],
+      [
+        "certified_data",
+        "receipt_locator bigint, cutoff timestamp with time zone, purpose text, params jsonb",
+        "jsonb",
+        "plpgsql",
+        false,
+        false,
+        false,
+        "receipt_locator bigint, cutoff timestamp with time zone, purpose text, params jsonb",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp",
+          "TimeZone=UTC"
+        ]
+      ],
+      [
+        "codec",
+        "value jsonb, depth integer",
+        "bytea",
+        "plpgsql",
+        false,
+        false,
+        false,
+        "value jsonb, depth integer DEFAULT 0",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp"
+        ]
+      ],
+      [
+        "codec_raw",
+        "value json, depth integer",
+        "bytea",
+        "plpgsql",
+        false,
+        true,
+        false,
+        "value json, depth integer DEFAULT 0",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp"
+        ]
+      ],
+      [
+        "codec_text",
+        "value text",
+        "bytea",
+        "plpgsql",
+        false,
+        true,
+        false,
+        "value text",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp"
+        ]
+      ],
+      [
+        "context",
+        "expected_role text, require_readonly boolean",
+        "mlb036_private.authority",
+        "plpgsql",
+        false,
+        false,
+        false,
+        "expected_role text, require_readonly boolean",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp",
+          "TimeZone=UTC"
+        ]
+      ],
+      [
+        "correct_exact",
+        "request_body jsonb, expected_state jsonb, approved_preview_sha256 text",
+        "jsonb",
+        "plpgsql",
+        false,
+        false,
+        false,
+        "request_body jsonb, expected_state jsonb, approved_preview_sha256 text",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp",
+          "TimeZone=UTC"
+        ]
+      ],
+      [
+        "correction_complete",
+        "",
+        "trigger",
+        "plpgsql",
+        false,
+        false,
+        false,
+        "",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp"
+        ]
+      ],
+      [
+        "data_rows",
+        "purpose text, params jsonb, cutoff timestamp with time zone",
+        "jsonb",
+        "plpgsql",
+        false,
+        false,
+        false,
+        "purpose text, params jsonb, cutoff timestamp with time zone",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp",
+          "TimeZone=UTC"
+        ]
+      ],
+      [
+        "describe_target",
+        "",
+        "jsonb",
+        "plpgsql",
+        false,
+        false,
+        false,
+        "",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp"
+        ]
+      ],
+      [
+        "finish_run",
+        "receipt_locator bigint, original_cutoff timestamp with time zone, expected_receipt_body_sha256 text, run_id bigint, outcome text, counts jsonb, error_text text",
+        "void",
+        "plpgsql",
+        false,
+        false,
+        false,
+        "receipt_locator bigint, original_cutoff timestamp with time zone, expected_receipt_body_sha256 text, run_id bigint, outcome text, counts jsonb, error_text text DEFAULT NULL::text",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp",
+          "TimeZone=UTC"
+        ]
+      ],
+      [
+        "frame",
+        "tag integer, payload bytea",
+        "bytea",
+        "plpgsql",
+        false,
+        true,
+        false,
+        "tag integer, payload bytea",
+        [
+          "search_path=pg_catalog"
+        ]
+      ],
+      [
+        "game_seal",
+        "",
+        "trigger",
+        "plpgsql",
+        false,
+        false,
+        false,
+        "",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp"
+        ]
+      ],
+      [
+        "identity_projection",
+        "",
+        "jsonb",
+        "sql",
+        false,
+        false,
+        false,
+        "",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp",
+          "TimeZone=UTC"
+        ]
+      ],
+      [
+        "immutable",
+        "",
+        "trigger",
+        "plpgsql",
+        false,
+        false,
+        false,
+        "",
+        [
+          "search_path=pg_catalog"
+        ]
+      ],
+      [
+        "insert_prediction",
+        "receipt_locator bigint, original_cutoff timestamp with time zone, request jsonb",
+        "bigint",
+        "plpgsql",
+        false,
+        false,
+        false,
+        "receipt_locator bigint, original_cutoff timestamp with time zone, request jsonb",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp",
+          "TimeZone=UTC"
+        ]
+      ],
+      [
+        "inspect_knowledge",
+        "",
+        "jsonb",
+        "plpgsql",
+        false,
+        false,
+        false,
+        "",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp",
+          "TimeZone=UTC"
+        ]
+      ],
+      [
+        "issue_knowledge",
+        "",
+        "jsonb",
+        "plpgsql",
+        false,
+        false,
+        false,
+        "",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp",
+          "TimeZone=UTC"
+        ]
+      ],
+      [
+        "legacy_children",
+        "r mlb036_private.knowledge_receipts, cutoff timestamp with time zone",
+        "jsonb",
+        "plpgsql",
+        false,
+        true,
+        false,
+        "r mlb036_private.knowledge_receipts, cutoff timestamp with time zone",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp",
+          "TimeZone=UTC"
+        ]
+      ],
+      [
+        "lock_exact",
+        "",
+        "void",
+        "plpgsql",
+        false,
+        false,
+        false,
+        "",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp"
+        ]
+      ],
+      [
+        "normalize_business",
+        "value jsonb, old_time timestamp with time zone",
+        "jsonb",
+        "sql",
+        false,
+        true,
+        false,
+        "value jsonb, old_time timestamp with time zone",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp",
+          "TimeZone=UTC"
+        ]
+      ],
+      [
+        "object_frame",
+        "keys text[], encoded_values bytea[]",
+        "bytea",
+        "plpgsql",
+        false,
+        true,
+        false,
+        "keys text[], encoded_values bytea[]",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp"
+        ]
+      ],
+      [
+        "operator_state",
+        "",
+        "jsonb",
+        "plpgsql",
+        false,
+        false,
+        false,
+        "",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp",
+          "TimeZone=UTC"
+        ]
+      ],
+      [
+        "post_correction_preview",
+        "receipt_locator bigint, cutoff timestamp with time zone, retirement_case jsonb",
+        "jsonb",
+        "plpgsql",
+        false,
+        false,
+        false,
+        "receipt_locator bigint, cutoff timestamp with time zone, retirement_case jsonb",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp"
+        ]
+      ],
+      [
+        "prediction_guard",
+        "",
+        "trigger",
+        "plpgsql",
+        false,
+        false,
+        false,
+        "",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp",
+          "TimeZone=UTC"
+        ]
+      ],
+      [
+        "raw_case_snapshot",
+        "",
+        "jsonb",
+        "plpgsql",
+        false,
+        false,
+        false,
+        "",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp",
+          "TimeZone=UTC"
+        ]
+      ],
+      [
+        "receipt_frame",
+        "r mlb036_private.knowledge_receipts",
+        "bytea",
+        "sql",
+        false,
+        true,
+        false,
+        "r mlb036_private.knowledge_receipts",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp"
+        ]
+      ],
+      [
+        "receipt_hash",
+        "r mlb036_private.knowledge_receipts",
+        "text",
+        "sql",
+        false,
+        true,
+        false,
+        "r mlb036_private.knowledge_receipts",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp"
+        ]
+      ],
+      [
+        "register_authority",
+        "settings jsonb",
+        "void",
+        "plpgsql",
+        false,
+        false,
+        false,
+        "settings jsonb",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp",
+          "TimeZone=UTC"
+        ]
+      ],
+      [
+        "reserve_run",
+        "receipt_locator bigint, cutoff timestamp with time zone, request jsonb",
+        "bigint",
+        "plpgsql",
+        false,
+        false,
+        false,
+        "receipt_locator bigint, cutoff timestamp with time zone, request jsonb",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp",
+          "TimeZone=UTC"
+        ]
+      ],
+      [
+        "run_companion",
+        "r mlb036_private.knowledge_receipts, cutoff timestamp with time zone, target_date date, admitted_run_id bigint",
+        "jsonb",
+        "sql",
+        false,
+        true,
+        false,
+        "r mlb036_private.knowledge_receipts, cutoff timestamp with time zone, target_date date, admitted_run_id bigint DEFAULT 0",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp",
+          "TimeZone=UTC"
+        ]
+      ],
+      [
+        "run_guard",
+        "",
+        "trigger",
+        "plpgsql",
+        false,
+        false,
+        false,
+        "",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp",
+          "TimeZone=UTC"
+        ]
+      ],
+      [
+        "semantic_frame",
+        "value jsonb, field_name text, depth integer",
+        "bytea",
+        "plpgsql",
+        false,
+        true,
+        false,
+        "value jsonb, field_name text DEFAULT ''::text, depth integer DEFAULT 0",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp"
+        ]
+      ],
+      [
+        "source_seal",
+        "",
+        "trigger",
+        "plpgsql",
+        false,
+        false,
+        false,
+        "",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp"
+        ]
+      ],
+      [
+        "state",
+        "",
+        "jsonb",
+        "sql",
+        false,
+        false,
+        false,
+        "",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp",
+          "TimeZone=UTC"
+        ]
+      ],
+      [
+        "state_fingerprint",
+        "s jsonb",
+        "text",
+        "plpgsql",
+        false,
+        true,
+        false,
+        "s jsonb",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp"
+        ]
+      ],
+      [
+        "timestamp_frame",
+        "value timestamp with time zone",
+        "bytea",
+        "plpgsql",
+        false,
+        true,
+        false,
+        "value timestamp with time zone",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp"
+        ]
+      ],
+      [
+        "unsigned_frame",
+        "value xid8",
+        "bytea",
+        "plpgsql",
+        false,
+        true,
+        false,
+        "value xid8",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp"
+        ]
+      ],
+      [
+        "validate_knowledge",
+        "receipt_locator bigint, cutoff timestamp with time zone, read_only boolean",
+        "jsonb",
+        "plpgsql",
+        false,
+        false,
+        false,
+        "receipt_locator bigint, cutoff timestamp with time zone, read_only boolean DEFAULT true",
+        [
+          "search_path=pg_catalog, mlb036_private, public, pg_temp",
+          "TimeZone=UTC"
+        ]
+      ]
+    ],
+    "indexes": [
+      [
+        "arbitration_events_audit_reference_key",
+        "CREATE UNIQUE INDEX arbitration_events_audit_reference_key ON mlb036_private.arbitration_events USING btree (audit_reference)"
+      ],
+      [
+        "arbitration_events_pkey",
+        "CREATE UNIQUE INDEX arbitration_events_pkey ON mlb036_private.arbitration_events USING btree (event_id)"
+      ],
+      [
+        "arbitrations_approval_sha256_key",
+        "CREATE UNIQUE INDEX arbitrations_approval_sha256_key ON mlb036_private.arbitrations USING btree (approval_sha256)"
+      ],
+      [
+        "arbitrations_case_identity_key",
+        "CREATE UNIQUE INDEX arbitrations_case_identity_key ON mlb036_private.arbitrations USING btree (case_identity)"
+      ],
+      [
+        "arbitrations_pkey",
+        "CREATE UNIQUE INDEX arbitrations_pkey ON mlb036_private.arbitrations USING btree (audit_id)"
+      ],
+      [
+        "arbitrations_request_sha256_key",
+        "CREATE UNIQUE INDEX arbitrations_request_sha256_key ON mlb036_private.arbitrations USING btree (request_sha256)"
+      ],
+      [
+        "authority_pkey",
+        "CREATE UNIQUE INDEX authority_pkey ON mlb036_private.authority USING btree (singleton)"
+      ],
+      [
+        "knowledge_receipts_pkey",
+        "CREATE UNIQUE INDEX knowledge_receipts_pkey ON mlb036_private.knowledge_receipts USING btree (receipt_id)"
+      ]
+    ],
+    "triggers": [
+      [
+        "mlb036_private",
+        "arbitration_events",
+        "mlb036_event_immutable",
+        "O",
+        "CREATE TRIGGER mlb036_event_immutable BEFORE DELETE OR UPDATE ON mlb036_private.arbitration_events FOR EACH ROW EXECUTE FUNCTION mlb036_private.immutable()"
+      ],
+      [
+        "mlb036_private",
+        "arbitration_events",
+        "mlb036_event_stamp",
+        "O",
+        "CREATE TRIGGER mlb036_event_stamp BEFORE INSERT ON mlb036_private.arbitration_events FOR EACH ROW EXECUTE FUNCTION mlb036_private.audit_stamp()"
+      ],
+      [
+        "mlb036_private",
+        "arbitration_events",
+        "mlb036_event_truncate",
+        "O",
+        "CREATE TRIGGER mlb036_event_truncate BEFORE TRUNCATE ON mlb036_private.arbitration_events FOR EACH STATEMENT EXECUTE FUNCTION mlb036_private.immutable()"
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "mlb036_audit_complete",
+        "O",
+        "CREATE CONSTRAINT TRIGGER mlb036_audit_complete AFTER INSERT ON mlb036_private.arbitrations DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION mlb036_private.audit_complete()"
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "mlb036_audit_immutable",
+        "O",
+        "CREATE TRIGGER mlb036_audit_immutable BEFORE DELETE OR UPDATE ON mlb036_private.arbitrations FOR EACH ROW EXECUTE FUNCTION mlb036_private.immutable()"
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "mlb036_audit_stamp",
+        "O",
+        "CREATE TRIGGER mlb036_audit_stamp BEFORE INSERT ON mlb036_private.arbitrations FOR EACH ROW EXECUTE FUNCTION mlb036_private.audit_stamp()"
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "mlb036_audit_truncate",
+        "O",
+        "CREATE TRIGGER mlb036_audit_truncate BEFORE TRUNCATE ON mlb036_private.arbitrations FOR EACH STATEMENT EXECUTE FUNCTION mlb036_private.immutable()"
+      ],
+      [
+        "mlb036_private",
+        "arbitrations",
+        "mlb036_topology_ingress",
+        "O",
+        "CREATE TRIGGER mlb036_topology_ingress BEFORE INSERT ON mlb036_private.arbitrations FOR EACH STATEMENT EXECUTE FUNCTION public.mlb_retirement_ledger_ingress()"
+      ],
+      [
+        "mlb036_private",
+        "knowledge_receipts",
+        "mlb036_receipt_immutable",
+        "O",
+        "CREATE TRIGGER mlb036_receipt_immutable BEFORE DELETE OR UPDATE ON mlb036_private.knowledge_receipts FOR EACH ROW EXECUTE FUNCTION mlb036_private.immutable()"
+      ],
+      [
+        "mlb036_private",
+        "knowledge_receipts",
+        "mlb036_receipt_truncate",
+        "O",
+        "CREATE TRIGGER mlb036_receipt_truncate BEFORE TRUNCATE ON mlb036_private.knowledge_receipts FOR EACH STATEMENT EXECUTE FUNCTION mlb036_private.immutable()"
+      ],
+      [
+        "public",
+        "game_sources",
+        "mlb_036_source_seal",
+        "O",
+        "CREATE TRIGGER mlb_036_source_seal BEFORE INSERT OR DELETE OR UPDATE ON public.game_sources FOR EACH ROW EXECUTE FUNCTION mlb036_private.source_seal()"
+      ],
+      [
+        "public",
+        "games",
+        "mlb036_correction_complete",
+        "O",
+        "CREATE CONSTRAINT TRIGGER mlb036_correction_complete AFTER UPDATE ON public.games DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION mlb036_private.correction_complete()"
+      ],
+      [
+        "public",
+        "games",
+        "mlb_036_game_seal",
+        "O",
+        "CREATE TRIGGER mlb_036_game_seal BEFORE DELETE OR UPDATE ON public.games FOR EACH ROW EXECUTE FUNCTION mlb036_private.game_seal()"
+      ],
+      [
+        "public",
+        "moneyline_game_predictions",
+        "mlb_000036_prediction_knowledge",
+        "O",
+        "CREATE TRIGGER mlb_000036_prediction_knowledge BEFORE INSERT OR UPDATE ON public.moneyline_game_predictions FOR EACH ROW EXECUTE FUNCTION mlb036_private.prediction_guard()"
+      ],
+      [
+        "public",
+        "moneyline_prediction_runs",
+        "mlb_000036_run_knowledge",
+        "O",
+        "CREATE TRIGGER mlb_000036_run_knowledge BEFORE INSERT OR UPDATE ON public.moneyline_prediction_runs FOR EACH ROW EXECUTE FUNCTION mlb036_private.run_guard()"
+      ]
+    ]
+  },
+  "migration_raw_sha256": "878ecf524de2c59fdf35119dc0d0fcb13b7ed4b7db390d956e5355df8791adf4"
+}

@@ -20,6 +20,8 @@ from sportsmodel.analysis.no_vig import (
 from sportsmodel.database.connection import (
     get_connection,
 )
+from sportsmodel.database.mlb_canonical_time_repository import CertifiedReader, reject_uncertified036
+from sportsmodel.database.mlb_retirement_guard import OperatorRefusal
 from sportsmodel.ingest.odds_api_parser import (
     ODDS_API_MLB_SPORT_KEY,
 )
@@ -96,10 +98,13 @@ def build_moneyline_preview_dashboard(
     evaluation or paper candidate.
     """
 
+    if isinstance(connection_factory, CertifiedReader):
+        raise OperatorRefusal("036 preview analysis requires an unavailable certified analysis adapter")
     connection = connection_factory()
 
     try:
         with connection.cursor() as cursor:
+            reject_uncertified036(cursor)
             preview_run = _load_latest_preview_run(
                 cursor,
                 target_date=target_date,

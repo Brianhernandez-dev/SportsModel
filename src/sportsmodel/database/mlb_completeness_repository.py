@@ -8,6 +8,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from sportsmodel.database.connection import get_connection
+from sportsmodel.database.mlb_canonical_time_repository import CertifiedReader, aware, reject_uncertified036
 from sportsmodel.ingest.team_identity import normalize_team_name
 
 
@@ -95,9 +96,14 @@ def load_mlb_game_pks_for_pacific_date(
     zone = ZoneInfo("America/Los_Angeles")
     start = datetime.combine(target_date, time.min, zone).astimezone(timezone.utc)
     end = datetime.combine(target_date + timedelta(days=1), time.min, zone).astimezone(timezone.utc)
+    if isinstance(connection_factory, CertifiedReader):
+        rows = connection_factory.rows("slate", start=start.isoformat(), end=end.isoformat())
+        sources = connection_factory.rows("game_sources", ids=[row["game_id"] for row in rows])
+        return _certified_source_game_pks(sources)
     connection = connection_factory()
     try:
         with connection.cursor() as cursor:
+            reject_uncertified036(cursor)
             cursor.execute(
                 """
                 SELECT source.external_game_id
@@ -126,6 +132,8 @@ def validate_mlb_non_played_games(
     """Allow explicit terminal exclusions without erasing conflicting played history."""
     materialized = tuple(games)
     if not materialized:
+        if isinstance(connection_factory, CertifiedReader):
+            connection_factory.rows("nonplayed_identity", ids=[])
         return ()
     from sportsmodel.ingest.mlb_game_policy import NON_PLAYED_STATES
 
@@ -135,9 +143,21 @@ def validate_mlb_non_played_games(
     game_pks = _normalize_game_pks(tuple(game.game_pk for game in materialized))
     if len(game_pks) != len(materialized):
         raise MlbCompletenessError("Duplicate MLB non-played exclusion evidence.")
+    if isinstance(connection_factory, CertifiedReader):
+        packets = connection_factory.rows("nonplayed_identity", ids=list(game_pks))
+        rows = [(r["external_game_id"], r["game_id"], r["home_team_name"],
+                 r["away_team_name"], r["played_history"], r["source_count"])
+                for r in packets]
+    else:
+        rows = _load_nonplayed_identity_rows(game_pks, connection_factory)
+    return _validate_nonplayed_identity_rows(materialized, rows)
+
+
+def _load_nonplayed_identity_rows(game_pks, connection_factory):
     connection = connection_factory()
     try:
         with connection.cursor() as cursor:
+            reject_uncertified036(cursor)
             cursor.execute(
                 """
                 SELECT source.external_game_id, game.game_id, home.team_name, away.team_name,
@@ -157,6 +177,10 @@ def validate_mlb_non_played_games(
             rows = cursor.fetchall()
     finally:
         connection.close()
+    return rows
+
+
+def _validate_nonplayed_identity_rows(materialized, rows):
     by_pk = defaultdict(list)
     for row in rows:
         by_pk[int(row[0])].append(row)
@@ -267,10 +291,17 @@ def assert_mlb_games_complete(
     connection_factory: ConnectionFactory = get_connection,
     as_of: datetime | None = None,
 ) -> None:
-    """Fail closed unless every requested MLB event is complete."""
+    """Fail closed unless every requested MLB event is complete.
+
+    Generic legacy empty input consumes no data and is not036 certification.
+    Certified empty input still invokes the receipt-bound protected gateway.
+    """
 
     normalized = _normalize_game_pks(game_pks)
+    _require_certified_cutoff(connection_factory, as_of)
     if not normalized:
+        if isinstance(connection_factory, CertifiedReader):
+            _load_completeness_snapshots((), connection_factory=connection_factory)
         return
 
     snapshots = _load_completeness_snapshots(
@@ -297,15 +328,21 @@ def assert_mlb_feature_history_complete(
     cutoff_time: datetime,
     connection_factory: ConnectionFactory = get_connection,
 ) -> None:
-    """Require complete PIT-valid history used by official MLB features."""
+    """Require complete PIT-valid history used by official MLB features.
+
+    A generic empty legacy call is a no-data check, never036 run certification.
+    """
 
     _validate_as_of(cutoff_time)
+    _require_certified_cutoff(connection_factory, cutoff_time)
     normalized_targets = _normalize_game_pks(target_game_pks)
     normalized_starters = _normalize_positive_ids(
         starting_pitcher_ids,
         field_name="Starting pitcher IDs",
     )
     if not normalized_targets:
+        if isinstance(connection_factory, CertifiedReader):
+            _load_completeness_snapshots((), connection_factory=connection_factory)
         return
 
     target_snapshots = _load_completeness_snapshots(
@@ -547,10 +584,27 @@ def _load_completeness_snapshots(
     *,
     connection_factory: ConnectionFactory,
 ) -> tuple[MlbGameCompletenessSnapshot, ...]:
+    if isinstance(connection_factory, CertifiedReader):
+        rows = connection_factory.rows("completeness", ids=list(game_pks))
+        if tuple(row.get("game_pk") for row in rows) != game_pks:
+            raise MlbCompletenessError("Certified completeness response differs from requested MLB IDs.")
+        snapshots = []
+        for row in rows:
+            snapshots.append(MlbGameCompletenessSnapshot(
+                game_pk=row["game_pk"], mapping_game_ids=tuple(row["mapping_game_ids"]),
+                home_team_id=row["home_team_id"], away_team_id=row["away_team_id"],
+                canonical_mlb_game_pks=tuple(row["canonical_mlb_game_pks"]),
+                results=tuple(HistoricalResultRecord(**r) for r in row["results"]),
+                team_statistics=tuple(TeamStatisticsRecord(**dict(r, created_at=aware(r["created_at"])))
+                                      for r in row["team_statistics"]),
+                pitching_statistics=tuple(PitchingStatisticsRecord(**dict(r, created_at=aware(r["created_at"])))
+                                          for r in row["pitching_statistics"])))
+        return tuple(snapshots)
     connection = connection_factory()
 
     try:
         with connection.cursor() as cursor:
+            reject_uncertified036(cursor)
             cursor.execute(
                 """
                 SELECT
@@ -758,12 +812,19 @@ def _load_required_feature_game_pks(
     cutoff_time: datetime,
     connection_factory: ConnectionFactory,
 ) -> tuple[int, ...]:
+    if isinstance(connection_factory, CertifiedReader):
+        _require_certified_cutoff(connection_factory, cutoff_time)
+        rows = connection_factory.rows("required_game_pks", team_ids=list(team_ids),
+                                       starter_ids=list(starting_pitcher_ids))
+        return _certified_source_game_pks(rows)
     if not team_ids and not starting_pitcher_ids:
+        # Legacy no-data return is not a receipt, run-admission or time proof.
         return ()
 
     connection = connection_factory()
     try:
         with connection.cursor() as cursor:
+            reject_uncertified036(cursor)
             cursor.execute(
                 """
                 WITH team_games AS (
@@ -853,6 +914,19 @@ def _load_required_feature_game_pks(
         game_pks.append(int(text))
 
     return tuple(dict.fromkeys(game_pks))
+
+
+def _require_certified_cutoff(connection_factory, cutoff_time):
+    if isinstance(connection_factory, CertifiedReader) and cutoff_time != connection_factory.cutoff_time:
+        raise MlbCompletenessError("Certified completeness requires the original receipt cutoff.")
+
+
+def _certified_source_game_pks(rows):
+    values = tuple(row["external_game_id"] for row in rows)
+    if any(not isinstance(value, str) or not value.isascii() or not value.isdigit()
+           or int(value) <= 0 for value in values):
+        raise MlbCompletenessError("Certified MLB evidence contains an invalid source ID.")
+    return _normalize_game_pks(int(value) for value in values)
 
 
 def _normalize_game_pks(game_pks: Iterable[int]) -> tuple[int, ...]:

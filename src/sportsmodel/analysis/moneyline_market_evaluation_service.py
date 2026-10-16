@@ -23,6 +23,8 @@ from sportsmodel.analysis.no_vig import (
 from sportsmodel.database.connection import (
     get_connection,
 )
+from sportsmodel.database.mlb_canonical_time_repository import CertifiedReader, reject_uncertified036
+from sportsmodel.database.mlb_retirement_guard import OperatorRefusal
 from sportsmodel.database.moneyline_market_evaluation_repository import (
     upsert_moneyline_market_evaluation,
 )
@@ -192,10 +194,15 @@ def evaluate_moneyline_prediction_run(
         field_name="Odds ingestion run ID",
     )
 
+    if isinstance(connection_factory, CertifiedReader):
+        raise OperatorRefusal("036 market evaluation requires an unavailable certified analysis writer")
     connection = connection_factory()
 
     try:
         with connection.cursor() as cursor:
+            # Legacy analysis persistence has no036 receipt-bound writer.
+            # Refuse before canonical reads, probable-starter providers or writes.
+            reject_uncertified036(cursor)
             _validate_completed_runs(
                 cursor,
                 prediction_run_id=(

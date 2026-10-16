@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Any
 
 from sportsmodel.database.connection import get_connection
+from sportsmodel.database.mlb_canonical_time_repository import CertifiedReader, reject_uncertified036
 from sportsmodel.models.baseball_game import BaseballGame
 
 
@@ -89,10 +90,14 @@ class PostgresGameRepository(GameRepository):
             field_name="Game ID",
         )
 
+        if isinstance(self._connection_factory, CertifiedReader):
+            return self._connection_factory.game(game_id)
+
         connection = self._connection_factory()
 
         try:
             with connection.cursor() as cursor:
+                reject_uncertified036(cursor)
                 cursor.execute(
                     GET_GAME_BY_ID_QUERY,
                     (game_id,),
@@ -115,10 +120,16 @@ class PostgresGameRepository(GameRepository):
     ) -> BaseballGame | None:
         _validate_cutoff_time(cutoff_time)
 
+        if isinstance(self._connection_factory, CertifiedReader):
+            if cutoff_time != self._connection_factory.cutoff_time:
+                raise ValueError('036 fixed reader cutoff differs')
+            return self._connection_factory.next_game()
+
         connection = self._connection_factory()
 
         try:
             with connection.cursor() as cursor:
+                reject_uncertified036(cursor)
                 cursor.execute(
                     GET_NEXT_UPCOMING_GAME_QUERY,
                     (cutoff_time,),

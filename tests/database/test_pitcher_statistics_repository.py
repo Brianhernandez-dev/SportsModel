@@ -19,6 +19,8 @@ class FakeCursor:
         self.rows = rows
         self.executed_query: str | None = None
         self.executed_parameters: tuple[Any, ...] | None = None
+        self.schema_probe_row = (False,)
+        self.calls = []
 
     def __enter__(self) -> "FakeCursor":
         return self
@@ -34,10 +36,15 @@ class FakeCursor:
     def execute(
         self,
         query: str,
-        parameters: tuple[Any, ...],
+        parameters: tuple[Any, ...] | None = None,
     ) -> None:
         self.executed_query = query
         self.executed_parameters = parameters
+        self.calls.append((query, parameters))
+
+    def fetchone(self):
+        assert self.executed_query == "SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname='mlb036_private')"
+        return self.schema_probe_row
 
     def fetchall(self) -> list[tuple[Any, ...]]:
         return self.rows
@@ -143,6 +150,8 @@ def test_repository_returns_mapped_historical_starts() -> None:
     assert start.statistics.is_starter is True
     assert start.statistics.pitching_outs == 18
     assert start.statistics.hits_allowed == 5
+    assert connection.cursor_instance.calls[0] == (
+        "SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname='mlb036_private')", None)
     assert start.statistics.earned_runs_allowed == 2
     assert start.statistics.home_runs_allowed == 1
     assert start.statistics.walks_allowed == 1

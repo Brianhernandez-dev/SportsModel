@@ -4,6 +4,7 @@ from sportsmodel.auditing.moneyline_live_pipeline import (
     _build_audit,
     audit_moneyline_live_pipeline,
 )
+from sportsmodel.database.mlb_retirement_guard import OperatorRefusal
 
 
 def test_reports_awaiting_results() -> None:
@@ -97,6 +98,8 @@ def test_service_executes_query_and_closes_connection() -> None:
     )
 
     assert audit.predictions == 10
+    assert connection.cursor_instance.calls[0] == (
+        "SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname='mlb036_private')", None)
     assert connection.cursor_instance.executed is True
     assert connection.closed is True
 
@@ -126,6 +129,8 @@ class FakeCursor:
     def __init__(self, row) -> None:
         self.row = row
         self.executed = False
+        self.metadata = (False,)
+        self.calls = []
 
     def __enter__(self):
         return self
@@ -141,13 +146,16 @@ class FakeCursor:
     def execute(
         self,
         query,
-        parameters,
+        parameters=None,
     ) -> None:
         self.executed = True
         self.query = query
         self.parameters = parameters
+        self.calls.append((query, parameters))
 
     def fetchone(self):
+        if self.query == "SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname='mlb036_private')":
+            return self.metadata
         return self.row
 
 
@@ -170,6 +178,19 @@ def _audit_from_row(row):
         policy_version="1.0.0",
         row=row,
     )
+
+
+@pytest.mark.parametrize("metadata", [(True,), None, (), (0,), [False], ("false",)])
+def test_pipeline_audit_cannot_certify036_from_legacy_counters(metadata):
+    connection = FakeConnection(row=_row(predictions=10, evaluations=10, evaluated_predictions=10,
+        paper_candidates=5, settlements=5))
+    connection.cursor_instance.metadata = metadata
+    with pytest.raises(OperatorRefusal):
+        audit_moneyline_live_pipeline(prediction_run_id=1, odds_ingestion_run_id=181,
+            connection_factory=lambda: connection)
+    assert connection.cursor_instance.calls == [(
+        "SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname='mlb036_private')", None)]
+    assert connection.closed
 
 
 def _row(

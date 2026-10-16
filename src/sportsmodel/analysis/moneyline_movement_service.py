@@ -21,6 +21,8 @@ from sportsmodel.analysis.probability import (
     american_to_implied_probability,
 )
 from sportsmodel.database.connection import get_connection
+from sportsmodel.database.mlb_canonical_time_repository import CertifiedReader, reject_uncertified036
+from sportsmodel.database.mlb_retirement_guard import OperatorRefusal
 from sportsmodel.ingest.odds_api_parser import (
     ODDS_API_MLB_SPORT_KEY,
 )
@@ -159,10 +161,13 @@ def build_moneyline_movement_report(
             "Target date must be a datetime.date value."
         )
 
+    if isinstance(connection_factory, CertifiedReader):
+        raise OperatorRefusal("036 movement analysis requires an unavailable certified analysis adapter")
     connection = connection_factory()
 
     try:
         with connection.cursor() as cursor:
+            reject_uncertified036(cursor)
             snapshot_runs = (
                 _load_completed_snapshot_runs(
                     cursor,

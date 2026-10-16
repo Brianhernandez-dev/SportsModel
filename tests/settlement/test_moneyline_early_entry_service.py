@@ -349,9 +349,20 @@ def test_newer_preview_does_not_replace_persisted_cohort() -> None:
     assert "LIMIT 1" not in query
 
 
+class _SettlementCursor(FakeCursor):
+    """Legacy settlement fixture explicitly answers the new metadata preflight."""
+    def execute(self, query, parameters=None):
+        assert query == "SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname='mlb036_private')"
+        super().execute(query, parameters)
+
+    def fetchone(self):
+        assert self.query is not None
+        return (False,)
+
+
 class _SettlementConnection:
     def cursor(self):
-        return FakeCursor(None)
+        return _SettlementCursor(None)
 
     def commit(self) -> None:
         pass

@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Any
 
 from sportsmodel.database.connection import get_connection
+from sportsmodel.database.mlb_canonical_time_repository import CertifiedReader, reject_uncertified036
 from sportsmodel.models.historical_team_game import (
     HistoricalTeamGame,
 )
@@ -128,10 +129,16 @@ class PostgresTeamStatisticsRepository(
         _validate_cutoff_time(cutoff_time)
         _validate_limit(limit)
 
+        if isinstance(self._connection_factory, CertifiedReader):
+            if cutoff_time != self._connection_factory.cutoff_time:
+                raise ValueError('036 fixed reader cutoff differs')
+            return self._connection_factory.team_history(team_id, limit)
+
         connection = self._connection_factory()
 
         try:
             with connection.cursor() as cursor:
+                reject_uncertified036(cursor)
                 # This must run even when the filtered history has no rows.
                 cursor.execute('SELECT mlb_retirement_history_guard()', ())
                 cursor.execute(

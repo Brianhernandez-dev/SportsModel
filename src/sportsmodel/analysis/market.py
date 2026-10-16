@@ -2,6 +2,7 @@ from collections import defaultdict
 from decimal import Decimal
 
 from sportsmodel.database.connection import get_connection
+from sportsmodel.database.mlb_canonical_time_repository import reject_uncertified036
 
 
 def american_to_implied_probability(price):
@@ -34,6 +35,7 @@ def analyze_markets():
     try:
         with connection:
             with connection.cursor() as cursor:
+                reject_uncertified036(cursor)
                 cursor.execute(
                     """
                     SELECT

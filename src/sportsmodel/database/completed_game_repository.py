@@ -3,6 +3,8 @@ from collections.abc import Callable
 from typing import Any
 
 from sportsmodel.database.connection import get_connection
+from sportsmodel.database.mlb_canonical_time_repository import CertifiedReader, reject_uncertified036
+from sportsmodel.database.mlb_retirement_guard import OperatorRefusal
 from sportsmodel.models.baseball_game import BaseballGame
 from sportsmodel.models.completed_game import CompletedGame
 
@@ -92,10 +94,14 @@ class PostgresCompletedGameRepository(
         self._connection_factory = connection_factory
 
     def get_all(self) -> list[CompletedGame]:
+        # Current mutable corrected time cannot reconstruct historical cutoffs.
+        if isinstance(self._connection_factory, CertifiedReader):
+            raise OperatorRefusal("036 completed-game training requires unsupported historical reconstruction")
         connection = self._connection_factory()
 
         try:
             with connection.cursor() as cursor:
+                reject_uncertified036(cursor)
                 cursor.execute(GET_COMPLETED_GAMES_QUERY)
                 rows = cursor.fetchall()
 

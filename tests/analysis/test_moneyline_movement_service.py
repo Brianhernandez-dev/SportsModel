@@ -1,5 +1,7 @@
 from datetime import date, datetime, timezone
 from decimal import Decimal
+import pytest
+from sportsmodel.database.mlb_retirement_guard import OperatorRefusal
 
 from sportsmodel.analysis import (
     moneyline_movement_service as service,
@@ -10,7 +12,36 @@ from sportsmodel.models.snapshot import MarketSnapshot
 TARGET_DATE = date(2026, 8, 7)
 
 
+@pytest.mark.parametrize("metadata", [(True,), None, (), (0,), [False], ("false",)])
+def test036_movement_refuses_before_loaded_market_data(metadata, monkeypatch):
+    connection = FakeConnection()
+    connection.cursor_instance.metadata = metadata
+    def blocked(*args, **kwargs): raise AssertionError("Movement data read before036 refusal")
+    monkeypatch.setattr(service, "_load_completed_snapshot_runs", blocked)
+    monkeypatch.setattr(service, "_load_role_snapshots", blocked)
+    with pytest.raises(OperatorRefusal):
+        service.build_moneyline_movement_report(target_date=TARGET_DATE, connection_factory=lambda: connection)
+    assert len(connection.cursor_instance.calls) == 1 and connection.closed
+
+
+def test_current_receipt_cannot_replace_unsupported_movement_analysis_adapter():
+    from sportsmodel.database.mlb_canonical_time_repository import CertifiedReader, KnowledgeReceipt
+    cutoff = datetime(2026, 10, 9, tzinfo=timezone.utc)
+    def blocked(): raise AssertionError("Unsupported analysis connected")
+    reader = CertifiedReader(blocked, KnowledgeReceipt(1, "a"*64, cutoff, "b"*64,
+        ("127.0.0.1", 55572, "synthetic")), cutoff)
+    with pytest.raises(OperatorRefusal, match="certified analysis adapter"):
+        service.build_moneyline_movement_report(target_date=TARGET_DATE, connection_factory=reader)
+
+
 class FakeCursor:
+    def __init__(self):
+        self.metadata = (False,)
+        self.calls = []
+    def execute(self, sql, params=None):
+        assert sql == "SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_namespace WHERE nspname='mlb036_private')"
+        self.calls.append((sql, params))
+    def fetchone(self): return self.metadata
     def __enter__(self):
         return self
 
@@ -26,9 +57,10 @@ class FakeCursor:
 class FakeConnection:
     def __init__(self) -> None:
         self.closed = False
+        self.cursor_instance = FakeCursor()
 
     def cursor(self):
-        return FakeCursor()
+        return self.cursor_instance
 
     def close(self) -> None:
         self.closed = True

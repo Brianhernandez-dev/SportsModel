@@ -1,10 +1,15 @@
 from sportsmodel.database.connection import get_connection
+from sportsmodel.database.mlb_canonical_time_repository import CertifiedReader, aware, reject_uncertified036
+from sportsmodel.database.mlb_retirement_guard import OperatorRefusal
+from decimal import Decimal, InvalidOperation
 from sportsmodel.models import GameResult, MarketSnapshot
 
 
 def get_market_snapshots(
     game_id: int | None = None,
     include_live: bool = False,
+    *,
+    certified_reader: CertifiedReader | None = None,
 ) -> list[MarketSnapshot]:
     """
     Return market snapshots ordered chronologically.
@@ -19,6 +24,15 @@ def get_market_snapshots(
         include_live:
             Include snapshots captured at or after the scheduled start.
     """
+
+    if certified_reader is not None:
+        if not isinstance(certified_reader, CertifiedReader):
+            raise OperatorRefusal("Typed036 certified market reader required")
+        if type(game_id) is not int or game_id <= 0 or type(include_live) is not bool:
+            raise OperatorRefusal("Certified markets require an exact game and boolean live policy")
+        rows = certified_reader.rows("markets", id=game_id, include_live=include_live)
+        return [_certified_market_snapshot(row, game_id=game_id,
+                    cutoff_time=certified_reader.cutoff_time) for row in rows]
 
     conditions: list[str] = []
     parameters: list[object] = []
@@ -59,6 +73,7 @@ def get_market_snapshots(
 
     try:
         with connection.cursor() as cursor:
+            reject_uncertified036(cursor)
             cursor.execute(query, parameters)
             rows = cursor.fetchall()
 
@@ -79,6 +94,32 @@ def get_market_snapshots(
 
     finally:
         connection.close()
+
+
+def _certified_market_snapshot(row, *, game_id, cutoff_time):
+    """Do not reattribute raw quotes or round NUMERIC line values through a float."""
+    if row["effective_game_id"] != game_id or type(row["price"]) is not int:
+        raise OperatorRefusal("Certified market identity/price differs")
+    snapshot_time = aware(row["snapshot_time"])
+    created_at = aware(row["created_at"])
+    observed_at = None if row["observed_at"] is None else aware(row["observed_at"])
+    if any(value > cutoff_time for value in (snapshot_time, created_at) + (() if observed_at is None else (observed_at,))):
+        raise OperatorRefusal("Certified quote was not available at the original cutoff")
+    line_value = row["line_value"]
+    if line_value is not None:
+        if not isinstance(line_value, (str, Decimal)):
+            raise OperatorRefusal("Certified market line requires exact decimal bytes")
+        try:
+            line_value = Decimal(line_value)
+        except InvalidOperation:
+            raise OperatorRefusal("Malformed certified decimal line") from None
+        if not line_value.is_finite():
+            raise OperatorRefusal("Nonfinite certified decimal line")
+    return MarketSnapshot(odds_market_snapshot_id=row["odds_market_snapshot_id"],
+        game_id=row["effective_game_id"], sportsbook_id=row["sportsbook_id"],
+        market_type=row["market_type"], selection_name=row["selection_name"],
+        line_value=line_value, price=row["price"], snapshot_time=snapshot_time,
+        raw_acquisition_game_id=row["raw_acquisition_game_id"])
 
 def get_game_results() -> list[GameResult]:
     """
@@ -107,6 +148,7 @@ def get_game_results() -> list[GameResult]:
 
     try:
         with connection.cursor() as cursor:
+            reject_uncertified036(cursor)
             cursor.execute(query)
             rows = cursor.fetchall()
 
